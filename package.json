@@ -5,7 +5,13 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "typecheck": "tsc -b",
+    "lint": "oxlint --react-plugin --jsx-a11y-plugin --import-plugin --deny-warnings .",
+    "lint:fix": "oxlint --react-plugin --jsx-a11y-plugin --import-plugin --fix .",
+    "format": "oxfmt --write .",
+    "format:check": "oxfmt --check .",
+    "build": "pnpm typecheck && vite build",
+    "check": "pnpm format:check && pnpm lint && pnpm build",
     "preview": "vite preview",
     "tauri": "tauri"
   },
