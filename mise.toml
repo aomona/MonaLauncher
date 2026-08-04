@@ -1,3 +1,43 @@
 [tools]
 node = "24.18.0"
 pnpm = "11.20.0"
+
+[tasks.dev]
+description = "Start the Tauri development app"
+run = "pnpm tauri dev"
+
+[tasks.build]
+description = "Build the Tauri application"
+run = "pnpm tauri build"
+
+[tasks.frontend-check]
+description = "Check and build the frontend"
+run = "pnpm build"
+
+[tasks.rust-format]
+description = "Check Rust formatting"
+run = "cargo fmt --manifest-path src-tauri/Cargo.toml --all --check"
+
+[tasks.rust-lint]
+description = "Run Clippy"
+run = """
+cargo clippy \
+  --manifest-path src-tauri/Cargo.toml \
+  --all-targets \
+  --all-features \
+  -- \
+  -D warnings
+"""
+
+[tasks.rust-test]
+description = "Run Rust tests"
+run = "cargo test --manifest-path src-tauri/Cargo.toml"
+
+[tasks.check]
+description = "Run all project checks"
+depends = [
+  "frontend-check",
+  "rust-format",
+  "rust-lint",
+  "rust-test",
+]
