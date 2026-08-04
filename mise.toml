@@ -20,14 +20,7 @@ run = "cargo fmt --manifest-path src-tauri/Cargo.toml --all --check"
 
 [tasks.rust-lint]
 description = "Run Clippy"
-run = """
-cargo clippy \
-  --manifest-path src-tauri/Cargo.toml \
-  --all-targets \
-  --all-features \
-  -- \
-  -D warnings
-"""
+run = "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features --locked -- -D warnings"
 
 [tasks.rust-test]
 description = "Run Rust tests"
