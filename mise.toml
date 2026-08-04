@@ -24,7 +24,7 @@ run = "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-fea
 
 [tasks.rust-test]
 description = "Run Rust tests"
-run = "cargo test --manifest-path src-tauri/Cargo.toml"
+run = "cargo test --manifest-path src-tauri/Cargo.toml --all-targets --all-features --locked"
 
 [tasks.check]
 description = "Run all project checks"
