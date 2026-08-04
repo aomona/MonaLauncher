@@ -10,8 +10,16 @@ run = "pnpm tauri dev"
 description = "Build the Tauri application"
 run = "pnpm tauri build"
 
-[tasks.frontend-check]
-description = "Check and build the frontend"
+[tasks.frontend-format]
+description = "Check frontend formatting"
+run = "pnpm format:check"
+
+[tasks.frontend-lint]
+description = "Lint frontend"
+run = "pnpm lint"
+
+[tasks.frontend-build]
+description = "Type-check and build frontend"
 run = "pnpm build"
 
 [tasks.rust-format]
@@ -29,7 +37,9 @@ run = "cargo test --manifest-path src-tauri/Cargo.toml --all-targets --all-featu
 [tasks.check]
 description = "Run all project checks"
 depends = [
-  "frontend-check",
+  "frontend-format",
+  "frontend-lint",
+  "frontend-build",
   "rust-format",
   "rust-lint",
   "rust-test",
