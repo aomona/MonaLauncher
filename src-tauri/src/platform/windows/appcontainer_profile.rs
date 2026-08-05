@@ -208,9 +208,25 @@ impl WideCString {
     }
 }
 
+/// 既存プロフィール名から、AppContainer SIDを新たに導出する。
+///
+/// 返したSIDは呼び出し元が所有し、スコープ終了時にFreeSidで解放される。
+pub(crate) fn derive_appcontainer_sid(
+    profile_name: &str,
+) -> Result<OwnedSid, AppContainerProfileError> {
+    let profile_name_wide = WideCString::new(profile_name)?;
+
+    // SAFETY:
+    // - profile_name_wideはNUL終端された有効なUTF-16文字列。
+    // - APIが返すSIDはOwnedSidが所有し、DropでFreeSidを呼ぶ。
+    let sid = unsafe { DeriveAppContainerSidFromAppContainerName(profile_name_wide.as_pcwstr()) }?;
+
+    Ok(OwnedSid::new(sid))
+}
+
 /// FreeSidで解放する必要があるSIDの所有権を表す。
 #[derive(Debug)]
-struct OwnedSid {
+pub(crate) struct OwnedSid {
     sid: PSID,
 }
 
@@ -219,7 +235,7 @@ impl OwnedSid {
         Self { sid }
     }
 
-    fn as_raw(&self) -> PSID {
+    pub(crate) fn as_raw(&self) -> PSID {
         PSID(self.sid.0)
     }
 }

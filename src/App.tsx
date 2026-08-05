@@ -9,23 +9,17 @@ type SandboxProfileInfo = {
 };
 
 export default function App() {
-  const [result, setResult] =
-    useState<SandboxProfileInfo | null>(null);
+  const [result, setResult] = useState<SandboxProfileInfo | null>(null);
 
-  const [error, setError] =
-    useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const createProfile = async () => {
     setError(null);
 
     try {
-      const profile =
-        await invoke<SandboxProfileInfo>(
-          "ensure_sandbox_profile",
-          {
-            instanceId: "sandbox-test",
-          },
-        );
+      const profile = await invoke<SandboxProfileInfo>("ensure_sandbox_profile", {
+        instanceId: "sandbox-test",
+      });
 
       setResult(profile);
     } catch (cause) {
@@ -37,16 +31,11 @@ export default function App() {
     <main>
       <h1>MonaLauncher Sandbox Lab</h1>
 
-      <button
-        type="button"
-        onClick={createProfile}
-      >
+      <button type="button" onClick={createProfile}>
         Ensure AppContainer profile
       </button>
 
-      {error && (
-        <pre>{error}</pre>
-      )}
+      {error && <pre>{error}</pre>}
 
       {result && (
         <dl>
@@ -60,11 +49,7 @@ export default function App() {
           <dd>{result.sid}</dd>
 
           <dt>Status</dt>
-          <dd>
-            {result.created
-              ? "Created"
-              : "Already existed"}
-          </dd>
+          <dd>{result.created ? "Created" : "Already existed"}</dd>
         </dl>
       )}
     </main>
