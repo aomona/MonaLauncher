@@ -166,12 +166,9 @@ pub fn spawn_instance(
     fs::create_dir_all(&physical_natives_directory)?;
     let natives_directory = sandbox_path(&sandbox, &physical_natives_directory)?;
 
-    let client_entry = if let Some(layout) = &sandbox {
-        let client_classes = layout.launch_root.join("client-classes");
-        fs::create_dir(&client_classes)?;
-        extract_archive(&source_client_jar, &client_classes, |_| true)?;
+    let client_entry = if sandbox.is_some() {
         extract_native_libraries(paths, &version, &physical_natives_directory)?;
-        sandbox_path(&sandbox, &client_classes)?
+        sandbox_path(&sandbox, &source_client_jar)?
     } else {
         source_client_jar
     };
