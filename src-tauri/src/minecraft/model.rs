@@ -24,9 +24,21 @@ pub struct VersionSummary {
 #[serde(rename_all = "camelCase")]
 pub struct VersionMetadata {
     pub id: String,
+    #[serde(rename = "type")]
+    pub version_type: String,
+    pub main_class: String,
+    pub assets: String,
     pub asset_index: AssetIndexReference,
     pub downloads: VersionDownloads,
     pub libraries: Vec<Library>,
+    pub arguments: Arguments,
+    pub java_version: Option<JavaVersion>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JavaVersion {
+    pub major_version: u32,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -69,6 +81,29 @@ pub struct DownloadInfo {
     pub sha1: String,
     pub size: u64,
     pub url: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Arguments {
+    pub game: Vec<Argument>,
+    pub jvm: Vec<Argument>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum Argument {
+    Plain(String),
+    Conditional {
+        rules: Vec<Rule>,
+        value: ArgumentValue,
+    },
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum ArgumentValue {
+    One(String),
+    Many(Vec<String>),
 }
 
 #[derive(Debug, Clone, Deserialize)]
