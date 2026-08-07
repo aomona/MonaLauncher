@@ -1,5 +1,5 @@
 mod commands;
-mod minecraft;
+pub mod minecraft;
 mod platform;
 
 #[cfg(windows)]
