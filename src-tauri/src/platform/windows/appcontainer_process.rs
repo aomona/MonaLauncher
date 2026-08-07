@@ -26,6 +26,7 @@ use windows::Win32::System::Threading::{
 };
 
 use super::appcontainer_profile::{derive_appcontainer_sid, AppContainerProfileError, OwnedSid};
+use super::cursor_broker::CursorBroker;
 use super::process_token::{process_token_info, ProcessTokenError, ProcessTokenInfo};
 use super::sandbox_drive::SandboxDrive;
 
@@ -43,6 +44,7 @@ pub struct SpawnedAppContainerProcess {
     stdout: Option<File>,
     stderr: Option<File>,
     sandbox_drive: Option<SandboxDrive>,
+    cursor_broker: Option<CursorBroker>,
     pub token_info: ProcessTokenInfo,
 }
 
@@ -61,6 +63,10 @@ impl SpawnedAppContainerProcess {
 
     pub fn retain_sandbox_drive(&mut self, drive: SandboxDrive) {
         self.sandbox_drive = Some(drive);
+    }
+
+    pub fn retain_cursor_broker(&mut self, broker: CursorBroker) {
+        self.cursor_broker = Some(broker);
     }
 
     pub fn try_wait(&mut self) -> Result<Option<ExitStatus>, AppContainerProcessError> {
@@ -223,6 +229,7 @@ pub fn launch_in_appcontainer(
         stdout: Some(stdout_pipe.into_reader()),
         stderr: Some(stderr_pipe.into_reader()),
         sandbox_drive: None,
+        cursor_broker: None,
         token_info,
     })
 }

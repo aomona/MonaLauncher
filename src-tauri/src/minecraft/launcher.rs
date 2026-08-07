@@ -308,6 +308,9 @@ fn spawn_sandboxed(
         let _ = child.kill();
         return Err(MinecraftLaunchError::SandboxedProcessNotIsolated);
     }
+    child.retain_cursor_broker(
+        crate::platform::windows::cursor_broker::CursorBroker::start(child.id()),
+    );
     child.retain_sandbox_drive(
         sandbox
             .drive
