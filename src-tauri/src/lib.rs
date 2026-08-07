@@ -1,4 +1,5 @@
 mod commands;
+mod minecraft;
 mod platform;
 
 #[cfg(windows)]
@@ -19,6 +20,9 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
+            commands::minecraft::detect_java,
+            commands::minecraft::install_demo_instance,
+            commands::minecraft::list_minecraft_instances,
             commands::sandbox::ensure_sandbox_profile,
         ])
         .run(tauri::generate_context!())
