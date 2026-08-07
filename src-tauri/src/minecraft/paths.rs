@@ -50,6 +50,10 @@ impl MinecraftPaths {
         self.root.join("versions")
     }
 
+    pub fn runtimes(&self) -> PathBuf {
+        self.root.join("runtimes")
+    }
+
     pub fn version_directory(&self, version_id: &str) -> PathBuf {
         self.versions().join(version_id)
     }

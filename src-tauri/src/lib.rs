@@ -5,7 +5,8 @@ mod platform;
 #[cfg(windows)]
 pub mod probe {
     pub use crate::platform::windows::appcontainer_process::{
-        launch_probe_in_appcontainer, SpawnedProcessInfo,
+        launch_in_appcontainer, launch_probe_in_appcontainer, SpawnedAppContainerProcess,
+        SpawnedProcessInfo,
     };
     pub use crate::platform::windows::appcontainer_profile::{
         ensure_appcontainer_profile, profile_name_for_instance,
