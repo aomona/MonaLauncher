@@ -1,68 +1,115 @@
 use std::error::Error;
+use std::ffi::{OsStr, OsString};
 use std::fmt;
+use std::fs::File;
 use std::mem::size_of;
 use std::os::windows::ffi::OsStrExt;
-use std::path::Path;
+use std::os::windows::io::FromRawHandle;
+use std::os::windows::process::ExitStatusExt;
+use std::path::{Path, PathBuf};
+use std::process::ExitStatus;
 
-use windows::core::{Error as WindowsError, PCWSTR, PWSTR};
-use windows::Win32::Foundation::{CloseHandle, ERROR_INSUFFICIENT_BUFFER, HANDLE, WAIT_OBJECT_0};
-use windows::Win32::Security::SECURITY_CAPABILITIES;
+use windows::core::{Error as WindowsError, BOOL, PCWSTR, PWSTR};
+use windows::Win32::Foundation::{
+    CloseHandle, SetHandleInformation, ERROR_INSUFFICIENT_BUFFER, HANDLE, HANDLE_FLAG_INHERIT,
+    STILL_ACTIVE, WAIT_OBJECT_0,
+};
+use windows::Win32::Security::{SECURITY_ATTRIBUTES, SECURITY_CAPABILITIES};
+use windows::Win32::System::Pipes::CreatePipe;
 use windows::Win32::System::Threading::{
-    CreateProcessW, DeleteProcThreadAttributeList, InitializeProcThreadAttributeList,
-    UpdateProcThreadAttribute, WaitForSingleObject, EXTENDED_STARTUPINFO_PRESENT, INFINITE,
+    CreateProcessW, DeleteProcThreadAttributeList, GetExitCodeProcess,
+    InitializeProcThreadAttributeList, TerminateProcess, UpdateProcThreadAttribute,
+    WaitForSingleObject, CREATE_UNICODE_ENVIRONMENT, EXTENDED_STARTUPINFO_PRESENT,
     LPPROC_THREAD_ATTRIBUTE_LIST, PROCESS_INFORMATION, PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES,
-    STARTUPINFOEXW,
+    STARTF_USESTDHANDLES, STARTUPINFOEXW,
 };
 
 use super::appcontainer_profile::{derive_appcontainer_sid, AppContainerProfileError, OwnedSid};
 use super::process_token::{process_token_info, ProcessTokenError, ProcessTokenInfo};
 
-/// AppContainerとして起動したプロセスの検査結果。
 #[derive(Debug)]
 pub struct SpawnedProcessInfo {
     pub process_id: u32,
     pub token_info: ProcessTokenInfo,
 }
 
-/// AppContainerプロセスの起動中に発生し得るエラー。
+pub struct SpawnedAppContainerProcess {
+    process: OwnedHandle,
+    process_id: u32,
+    pub stdout: File,
+    pub stderr: File,
+    pub token_info: ProcessTokenInfo,
+}
+
+impl SpawnedAppContainerProcess {
+    pub fn id(&self) -> u32 {
+        self.process_id
+    }
+
+    pub fn try_wait(&mut self) -> Result<Option<ExitStatus>, AppContainerProcessError> {
+        let mut exit_code = 0_u32;
+
+        // SAFETY: process is a live process handle returned by CreateProcessW.
+        unsafe { GetExitCodeProcess(self.process.as_raw(), &mut exit_code)? };
+
+        if exit_code == STILL_ACTIVE.0 as u32 {
+            Ok(None)
+        } else {
+            Ok(Some(ExitStatus::from_raw(exit_code)))
+        }
+    }
+
+    pub fn kill(&mut self) -> Result<(), AppContainerProcessError> {
+        // SAFETY: process is a process handle with PROCESS_TERMINATE access from CreateProcessW.
+        unsafe { TerminateProcess(self.process.as_raw(), 1)? };
+        Ok(())
+    }
+
+    pub fn wait(&mut self) -> Result<ExitStatus, AppContainerProcessError> {
+        // SAFETY: process is a live process handle returned by CreateProcessW.
+        let wait_result = unsafe { WaitForSingleObject(self.process.as_raw(), u32::MAX) };
+        if wait_result != WAIT_OBJECT_0 {
+            return Err(AppContainerProcessError::Windows(
+                WindowsError::from_thread(),
+            ));
+        }
+
+        self.try_wait()?
+            .ok_or_else(|| AppContainerProcessError::Windows(WindowsError::from_thread()))
+    }
+}
+
 #[derive(Debug)]
 pub enum AppContainerProcessError {
     EmptyExecutablePath,
     InteriorNullCharacter,
+    MissingLocalAppData,
     Profile(AppContainerProfileError),
     ProcessToken(ProcessTokenError),
+    Io(std::io::Error),
     Windows(WindowsError),
 }
 
 impl fmt::Display for AppContainerProcessError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::EmptyExecutablePath => {
-                write!(formatter, "executable path must not be empty")
-            }
+            Self::EmptyExecutablePath => write!(formatter, "executable path must not be empty"),
             Self::InteriorNullCharacter => {
                 write!(
                     formatter,
                     "Windows strings must not contain a null character"
                 )
             }
+            Self::MissingLocalAppData => write!(formatter, "LOCALAPPDATA is not available"),
             Self::Profile(error) => write!(formatter, "AppContainer profile error: {error}"),
             Self::ProcessToken(error) => write!(formatter, "process token error: {error}"),
+            Self::Io(error) => write!(formatter, "process file system error: {error}"),
             Self::Windows(error) => write!(formatter, "Windows API error: {error}"),
         }
     }
 }
 
-impl Error for AppContainerProcessError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            Self::Profile(error) => Some(error),
-            Self::ProcessToken(error) => Some(error),
-            Self::Windows(error) => Some(error),
-            Self::EmptyExecutablePath | Self::InteriorNullCharacter => None,
-        }
-    }
-}
+impl Error for AppContainerProcessError {}
 
 impl From<AppContainerProfileError> for AppContainerProcessError {
     fn from(error: AppContainerProfileError) -> Self {
@@ -76,28 +123,33 @@ impl From<ProcessTokenError> for AppContainerProcessError {
     }
 }
 
+impl From<std::io::Error> for AppContainerProcessError {
+    fn from(error: std::io::Error) -> Self {
+        Self::Io(error)
+    }
+}
+
 impl From<WindowsError> for AppContainerProcessError {
     fn from(error: WindowsError) -> Self {
         Self::Windows(error)
     }
 }
 
-/// Probe自身をAppContainerとして起動し、子プロセスのトークンを検査する。
-///
-/// 引数を自由に受け取る一般的なプロセス起動APIは、コマンドラインのクォート規則を
-/// 含めて別途設計する必要がある。そのため、この段階ではProbe専用の引数だけを使う。
-pub fn launch_probe_in_appcontainer(
+pub fn launch_in_appcontainer(
     profile_name: &str,
-    probe_executable: &Path,
-) -> Result<SpawnedProcessInfo, AppContainerProcessError> {
+    executable: &Path,
+    arguments: &[OsString],
+    current_directory: &Path,
+) -> Result<SpawnedAppContainerProcess, AppContainerProcessError> {
+    if executable.as_os_str().is_empty() {
+        return Err(AppContainerProcessError::EmptyExecutablePath);
+    }
+
     let app_container_sid = derive_appcontainer_sid(profile_name)?;
     let attribute_list = AttributeList::new()?;
     let security_capabilities = security_capabilities(&app_container_sid);
 
-    // SAFETY:
-    // - attribute_listはInitializeProcThreadAttributeListで初期化済み。
-    // - security_capabilitiesはCreateProcessWが呼ばれるまで生存する。
-    // - AppContainer SIDはOwnedSidが所有し、同じ呼び出し中は有効なまま保持される。
+    // SAFETY: all pointers remain valid until CreateProcessW returns.
     unsafe {
         UpdateProcThreadAttribute(
             attribute_list.as_raw(),
@@ -110,29 +162,35 @@ pub fn launch_probe_in_appcontainer(
         )?;
     }
 
-    let executable = WideString::from_path(probe_executable)?;
-    let mut child_command_line = WideString::probe_command_line(probe_executable)?;
+    let stdout_pipe = Pipe::new()?;
+    let stderr_pipe = Pipe::new()?;
+    let executable_wide = WideString::from_os(executable.as_os_str())?;
+    let mut command_line = WideString::command_line(executable.as_os_str(), arguments)?;
+    let current_directory_wide = WideString::from_os(current_directory.as_os_str())?;
+    let mut environment = appcontainer_environment(profile_name)?;
+
     let mut startup_info = STARTUPINFOEXW::default();
     startup_info.StartupInfo.cb = size_of::<STARTUPINFOEXW>() as u32;
+    startup_info.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+    startup_info.StartupInfo.hStdOutput = stdout_pipe.write_handle();
+    startup_info.StartupInfo.hStdError = stderr_pipe.write_handle();
+    startup_info.StartupInfo.hStdInput = HANDLE::default();
     startup_info.lpAttributeList = attribute_list.as_raw();
 
     let mut process_information = PROCESS_INFORMATION::default();
 
-    // SAFETY:
-    // - executableはフルパスのNUL終端UTF-16文字列。
-    // - child_argumentはCreateProcessWが書き換え可能なNUL終端バッファ。
-    // - startup_infoは属性リストを保持し、呼び出し中まで生存する。
-    // - process_informationはWindowsが結果を書き込める初期化済み出力先。
+    // SAFETY: command line and environment are mutable NUL-terminated buffers, handles intended
+    // for the child are inheritable, and startup/process structures are initialized.
     unsafe {
         CreateProcessW(
-            PCWSTR(executable.as_ptr()),
-            Some(PWSTR(child_command_line.as_mut_ptr())),
+            PCWSTR(executable_wide.as_ptr()),
+            Some(PWSTR(command_line.as_mut_ptr())),
             None,
             None,
-            false,
-            EXTENDED_STARTUPINFO_PRESENT,
-            None,
-            PCWSTR::null(),
+            true,
+            EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT,
+            Some(environment.as_mut_ptr().cast()),
+            PCWSTR(current_directory_wide.as_ptr()),
             &startup_info.StartupInfo,
             &mut process_information,
         )?;
@@ -142,22 +200,85 @@ pub fn launch_probe_in_appcontainer(
     let _thread = OwnedHandle::new(process_information.hThread);
     let token_info = process_token_info(process.as_raw())?;
 
-    // 子プロセスを残さないよう、検査後に終了を待つ。
-    // SAFETY:
-    // - processはCreateProcessWが返した有効なプロセスハンドル。
-    // - INFINITEにより子プロセスが終了するまで待機する。
-    let wait_result = unsafe { WaitForSingleObject(process.as_raw(), INFINITE) };
-
-    if wait_result != WAIT_OBJECT_0 {
-        return Err(AppContainerProcessError::Windows(
-            WindowsError::from_thread(),
-        ));
-    }
-
-    Ok(SpawnedProcessInfo {
+    Ok(SpawnedAppContainerProcess {
+        process,
         process_id: process_information.dwProcessId,
+        stdout: stdout_pipe.into_reader(),
+        stderr: stderr_pipe.into_reader(),
         token_info,
     })
+}
+
+pub fn launch_probe_in_appcontainer(
+    profile_name: &str,
+    probe_executable: &Path,
+) -> Result<SpawnedProcessInfo, AppContainerProcessError> {
+    let mut child = launch_in_appcontainer(
+        profile_name,
+        probe_executable,
+        &[OsString::from("--appcontainer-child")],
+        probe_executable.parent().unwrap_or_else(|| Path::new(".")),
+    )?;
+    let process_id = child.id();
+    let token_info = child.token_info.clone();
+    child.wait()?;
+
+    Ok(SpawnedProcessInfo {
+        process_id,
+        token_info,
+    })
+}
+
+fn appcontainer_environment(profile_name: &str) -> Result<Vec<u16>, AppContainerProcessError> {
+    let local_app_data = std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .ok_or(AppContainerProcessError::MissingLocalAppData)?;
+    let profile_root = local_app_data
+        .join("Packages")
+        .join(profile_name)
+        .join("AC");
+    let temp = profile_root.join("Temp");
+    std::fs::create_dir_all(&temp)?;
+
+    let mut variables = std::env::vars_os().collect::<Vec<_>>();
+    variables.retain(|(name, _)| {
+        !matches!(
+            name.to_string_lossy().to_ascii_uppercase().as_str(),
+            "APPDATA" | "LOCALAPPDATA" | "TEMP" | "TMP" | "USERPROFILE"
+        )
+    });
+    variables.extend([
+        (
+            OsString::from("APPDATA"),
+            profile_root.clone().into_os_string(),
+        ),
+        (
+            OsString::from("LOCALAPPDATA"),
+            profile_root.clone().into_os_string(),
+        ),
+        (OsString::from("TEMP"), temp.clone().into_os_string()),
+        (OsString::from("TMP"), temp.into_os_string()),
+        (OsString::from("USERPROFILE"), profile_root.into_os_string()),
+    ]);
+    variables.sort_by_key(|(name, _)| name.to_string_lossy().to_ascii_uppercase());
+
+    let mut block = Vec::new();
+    for (name, value) in variables {
+        let name_units = name.encode_wide().collect::<Vec<_>>();
+        if name_units.contains(&0) {
+            return Err(AppContainerProcessError::InteriorNullCharacter);
+        }
+        block.extend(name_units);
+        block.push('=' as u16);
+        let value_units = value.encode_wide().collect::<Vec<_>>();
+        if value_units.contains(&0) {
+            return Err(AppContainerProcessError::InteriorNullCharacter);
+        }
+        block.extend(value_units);
+        block.push(0);
+    }
+    block.push(0);
+    Ok(block)
 }
 
 fn security_capabilities(app_container_sid: &OwnedSid) -> SECURITY_CAPABILITIES {
@@ -169,7 +290,45 @@ fn security_capabilities(app_container_sid: &OwnedSid) -> SECURITY_CAPABILITIES 
     }
 }
 
-/// PROC_THREAD_ATTRIBUTE_LIST用の、十分なアラインメントを持つ領域を管理する。
+struct Pipe {
+    read: OwnedHandle,
+    write: OwnedHandle,
+}
+
+impl Pipe {
+    fn new() -> Result<Self, AppContainerProcessError> {
+        let mut attributes = SECURITY_ATTRIBUTES {
+            nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
+            lpSecurityDescriptor: std::ptr::null_mut(),
+            bInheritHandle: BOOL(1),
+        };
+        let mut read = HANDLE::default();
+        let mut write = HANDLE::default();
+
+        // SAFETY: output handles and SECURITY_ATTRIBUTES are valid writable values.
+        unsafe { CreatePipe(&mut read, &mut write, Some(&mut attributes), 0)? };
+        let read = OwnedHandle::new(read);
+        let write = OwnedHandle::new(write);
+
+        // SAFETY: the parent-side read handle is valid; clearing inheritance keeps only the child
+        // write endpoint alive after CreateProcessW.
+        unsafe { SetHandleInformation(read.as_raw(), HANDLE_FLAG_INHERIT.0, Default::default())? };
+
+        Ok(Self { read, write })
+    }
+
+    fn write_handle(&self) -> HANDLE {
+        self.write.as_raw()
+    }
+
+    fn into_reader(self) -> File {
+        let raw = self.read.into_raw();
+        drop(self.write);
+        // SAFETY: ownership of the valid read handle is transferred to File.
+        unsafe { File::from_raw_handle(raw.0) }
+    }
+}
+
 struct AttributeList {
     _storage: Vec<usize>,
     raw: LPPROC_THREAD_ATTRIBUTE_LIST,
@@ -178,36 +337,18 @@ struct AttributeList {
 impl AttributeList {
     fn new() -> Result<Self, AppContainerProcessError> {
         let mut required_size = 0_usize;
-
-        // SAFETY:
-        // - NULLの属性リストで必要サイズだけを問い合わせるWin32の標準手順。
-        // - required_sizeはサイズを書き込める出力先。
         let first_result =
             unsafe { InitializeProcThreadAttributeList(None, 1, None, &mut required_size) };
-
         if let Err(error) = first_result {
             if error.code() != ERROR_INSUFFICIENT_BUFFER.to_hresult() {
                 return Err(error.into());
             }
         }
 
-        if required_size == 0 {
-            return Err(AppContainerProcessError::Windows(
-                WindowsError::from_thread(),
-            ));
-        }
-
         let storage_length = required_size.div_ceil(size_of::<usize>());
         let mut storage = vec![0_usize; storage_length];
         let raw = LPPROC_THREAD_ATTRIBUTE_LIST(storage.as_mut_ptr().cast());
-
-        // SAFETY:
-        // - rawはrequired_size以上の書き込み可能な、適切にアラインされた領域を指す。
-        // - 属性数1に必要な領域を確保済み。
-        unsafe {
-            InitializeProcThreadAttributeList(Some(raw), 1, None, &mut required_size)?;
-        }
-
+        unsafe { InitializeProcThreadAttributeList(Some(raw), 1, None, &mut required_size)? };
         Ok(Self {
             _storage: storage,
             raw,
@@ -221,12 +362,7 @@ impl AttributeList {
 
 impl Drop for AttributeList {
     fn drop(&mut self) {
-        // SAFETY:
-        // - rawはこの型のnewで初期化に成功した属性リスト。
-        // - 属性リストの寿命が終わるため、Windows APIの対応する解放処理を一度だけ行う。
-        unsafe {
-            DeleteProcThreadAttributeList(self.raw);
-        }
+        unsafe { DeleteProcThreadAttributeList(self.raw) };
     }
 }
 
@@ -235,44 +371,26 @@ struct WideString {
 }
 
 impl WideString {
-    fn from_path(path: &Path) -> Result<Self, AppContainerProcessError> {
-        if path.as_os_str().is_empty() {
-            return Err(AppContainerProcessError::EmptyExecutablePath);
-        }
-
-        let buffer = path.as_os_str().encode_wide().collect::<Vec<_>>();
-        Self::from_units(buffer)
-    }
-
-    fn probe_command_line(path: &Path) -> Result<Self, AppContainerProcessError> {
-        if path.as_os_str().is_empty() {
-            return Err(AppContainerProcessError::EmptyExecutablePath);
-        }
-
-        let path_units = path.as_os_str().encode_wide().collect::<Vec<_>>();
-
-        if path_units.contains(&0) {
-            return Err(AppContainerProcessError::InteriorNullCharacter);
-        }
-
-        let mut buffer = Vec::with_capacity(path_units.len() + 1 + 1 + 21);
-        buffer.push('"' as u16);
-        buffer.extend(path_units);
-        buffer.push('"' as u16);
-        buffer.push(' ' as u16);
-        buffer.extend("--appcontainer-child".encode_utf16());
-
-        Self::from_units(buffer)
-    }
-
-    fn from_units(mut buffer: Vec<u16>) -> Result<Self, AppContainerProcessError> {
+    fn from_os(value: &OsStr) -> Result<Self, AppContainerProcessError> {
+        let mut buffer = value.encode_wide().collect::<Vec<_>>();
         if buffer.contains(&0) {
             return Err(AppContainerProcessError::InteriorNullCharacter);
         }
-
         buffer.push(0);
-
         Ok(Self { buffer })
+    }
+
+    fn command_line(
+        executable: &OsStr,
+        arguments: &[OsString],
+    ) -> Result<Self, AppContainerProcessError> {
+        let mut command = quote_windows_argument(executable)?;
+        for argument in arguments {
+            command.push(' ' as u16);
+            command.extend(quote_windows_argument(argument)?);
+        }
+        command.push(0);
+        Ok(Self { buffer: command })
     }
 
     fn as_ptr(&self) -> *const u16 {
@@ -284,7 +402,35 @@ impl WideString {
     }
 }
 
-/// CloseHandleが必要なWindowsハンドルを所有する。
+fn quote_windows_argument(value: &OsStr) -> Result<Vec<u16>, AppContainerProcessError> {
+    let units = value.encode_wide().collect::<Vec<_>>();
+    if units.contains(&0) {
+        return Err(AppContainerProcessError::InteriorNullCharacter);
+    }
+    if !units.is_empty() && !units.iter().any(|unit| matches!(*unit, 0x20 | 0x09 | 0x22)) {
+        return Ok(units);
+    }
+
+    let mut quoted = vec!['"' as u16];
+    let mut backslashes = 0;
+    for unit in units {
+        if unit == '\\' as u16 {
+            backslashes += 1;
+        } else if unit == '"' as u16 {
+            quoted.extend(std::iter::repeat_n('\\' as u16, backslashes * 2 + 1));
+            quoted.push(unit);
+            backslashes = 0;
+        } else {
+            quoted.extend(std::iter::repeat_n('\\' as u16, backslashes));
+            quoted.push(unit);
+            backslashes = 0;
+        }
+    }
+    quoted.extend(std::iter::repeat_n('\\' as u16, backslashes * 2));
+    quoted.push('"' as u16);
+    Ok(quoted)
+}
+
 struct OwnedHandle {
     handle: HANDLE,
 }
@@ -297,19 +443,41 @@ impl OwnedHandle {
     fn as_raw(&self) -> HANDLE {
         self.handle
     }
+
+    fn into_raw(mut self) -> HANDLE {
+        let handle = self.handle;
+        self.handle = HANDLE::default();
+        handle
+    }
 }
 
 impl Drop for OwnedHandle {
     fn drop(&mut self) {
-        if self.handle.is_invalid() {
-            return;
+        if !self.handle.is_invalid() {
+            unsafe {
+                let _ = CloseHandle(self.handle);
+            }
         }
+    }
+}
 
-        // SAFETY:
-        // - handleはCreateProcessWから取得し、このOwnedHandleだけが所有している。
-        // - Dropは一度だけ実行されるため、二重解放しない。
-        unsafe {
-            let _ = CloseHandle(self.handle);
-        }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn quoted(value: &str) -> String {
+        String::from_utf16(&quote_windows_argument(OsStr::new(value)).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn quotes_empty_and_spaced_arguments() {
+        assert_eq!(quoted(""), "\"\"");
+        assert_eq!(quoted("hello world"), "\"hello world\"");
+    }
+
+    #[test]
+    fn escapes_quotes_and_trailing_backslashes() {
+        assert_eq!(quoted("a\\\"b"), "\"a\\\\\\\"b\"");
+        assert_eq!(quoted("C:\\space here\\"), "\"C:\\space here\\\\\"");
     }
 }

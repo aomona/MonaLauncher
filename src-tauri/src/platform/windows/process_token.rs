@@ -15,7 +15,7 @@ use windows::Win32::Security::{
 use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
 /// 現在のプロセスのアクセストークンから読み取ったAppContainer情報。
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProcessTokenInfo {
     pub is_app_container: bool,
     pub app_container_sid: Option<String>,
