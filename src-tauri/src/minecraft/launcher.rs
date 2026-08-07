@@ -1,10 +1,14 @@
 use std::collections::HashMap;
 use std::error::Error;
+use std::ffi::OsString;
 use std::fmt;
 use std::fs;
 use std::io::{BufReader, Read};
 use std::path::{Component, Path, PathBuf};
-use std::process::{Child, ChildStderr, ChildStdout, Command, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use zip::ZipArchive;
 
 use super::installer::list_instances;
 use super::model::{rules_allow, Argument, ArgumentValue, InstanceManifest, VersionMetadata};
@@ -19,6 +23,8 @@ pub enum MinecraftLaunchError {
     Io(std::io::Error),
     Json(serde_json::Error),
     Install(super::installer::MinecraftInstallError),
+    Sandbox(String),
+    SandboxedProcessNotIsolated,
 }
 
 impl fmt::Display for MinecraftLaunchError {
@@ -41,6 +47,10 @@ impl fmt::Display for MinecraftLaunchError {
             Self::Io(error) => write!(formatter, "process or file system error: {error}"),
             Self::Json(error) => write!(formatter, "version metadata error: {error}"),
             Self::Install(error) => write!(formatter, "instance metadata error: {error}"),
+            Self::Sandbox(error) => write!(formatter, "AppContainer launch error: {error}"),
+            Self::SandboxedProcessNotIsolated => {
+                write!(formatter, "Minecraft did not receive an AppContainer token")
+            }
         }
     }
 }
@@ -65,10 +75,65 @@ impl From<super::installer::MinecraftInstallError> for MinecraftLaunchError {
     }
 }
 
+pub enum MinecraftProcess {
+    Normal(Child),
+    #[cfg(windows)]
+    Sandboxed(crate::platform::windows::appcontainer_process::SpawnedAppContainerProcess),
+}
+
+impl MinecraftProcess {
+    pub fn id(&self) -> u32 {
+        match self {
+            Self::Normal(child) => child.id(),
+            #[cfg(windows)]
+            Self::Sandboxed(child) => child.id(),
+        }
+    }
+
+    pub fn try_wait(&mut self) -> Result<Option<ExitStatus>, MinecraftLaunchError> {
+        match self {
+            Self::Normal(child) => Ok(child.try_wait()?),
+            #[cfg(windows)]
+            Self::Sandboxed(child) => child
+                .try_wait()
+                .map_err(|error| MinecraftLaunchError::Sandbox(error.to_string())),
+        }
+    }
+
+    pub fn kill(&mut self) -> Result<(), MinecraftLaunchError> {
+        match self {
+            Self::Normal(child) => Ok(child.kill()?),
+            #[cfg(windows)]
+            Self::Sandboxed(child) => child
+                .kill()
+                .map_err(|error| MinecraftLaunchError::Sandbox(error.to_string())),
+        }
+    }
+
+    pub fn wait(&mut self) -> Result<ExitStatus, MinecraftLaunchError> {
+        match self {
+            Self::Normal(child) => Ok(child.wait()?),
+            #[cfg(windows)]
+            Self::Sandboxed(child) => child
+                .wait()
+                .map_err(|error| MinecraftLaunchError::Sandbox(error.to_string())),
+        }
+    }
+}
+
 pub struct SpawnedMinecraft {
-    pub child: Child,
-    pub stdout: ChildStdout,
-    pub stderr: ChildStderr,
+    pub child: MinecraftProcess,
+    pub stdout: Box<dyn Read + Send>,
+    pub stderr: Box<dyn Read + Send>,
+    pub sandboxed: bool,
+}
+
+#[derive(Debug)]
+struct SandboxLayout {
+    profile_name: String,
+    sid: String,
+    root: PathBuf,
+    launch_root: PathBuf,
 }
 
 pub fn spawn_instance(
@@ -83,17 +148,34 @@ pub fn spawn_instance(
     if let Some(java_version) = &version.java_version {
         validate_java_version(Path::new(&instance.java_path), java_version.major_version)?;
     }
+    let sandbox = prepare_sandbox_layout(&instance)?;
     let classpath = build_classpath(paths, &version)?;
-    let client_jar = paths.version_jar(&version.id);
-    require_file(&client_jar)?;
+    let source_client_jar = paths.version_jar(&version.id);
+    require_file(&source_client_jar)?;
 
-    let game_directory = PathBuf::from(&instance.game_directory);
+    let game_directory = sandbox
+        .as_ref()
+        .map(|layout| layout.root.join("game"))
+        .unwrap_or_else(|| PathBuf::from(&instance.game_directory));
     fs::create_dir_all(&game_directory)?;
-    let natives_directory = paths.instance(instance_id).join("natives");
+    let natives_directory = sandbox
+        .as_ref()
+        .map(|layout| layout.launch_root.join("natives"))
+        .unwrap_or_else(|| paths.instance(instance_id).join("natives"));
     fs::create_dir_all(&natives_directory)?;
 
+    let client_entry = if let Some(layout) = &sandbox {
+        let client_classes = layout.launch_root.join("client-classes");
+        fs::create_dir(&client_classes)?;
+        extract_archive(&source_client_jar, &client_classes, |_| true)?;
+        extract_native_libraries(paths, &version, &natives_directory)?;
+        client_classes
+    } else {
+        source_client_jar
+    };
+
     let mut classpath_entries = classpath;
-    classpath_entries.push(client_jar);
+    classpath_entries.push(client_entry);
     let classpath = classpath_entries
         .iter()
         .map(|path| path.to_string_lossy())
@@ -127,7 +209,7 @@ pub fn spawn_instance(
         ),
         ("${launcher_name}", "MonaLauncher".to_owned()),
         ("${launcher_version}", env!("CARGO_PKG_VERSION").to_owned()),
-        ("${classpath}", classpath),
+        ("${classpath}", classpath.clone()),
         ("${classpath_separator}", ";".to_owned()),
         (
             "${library_directory}",
@@ -144,41 +226,252 @@ pub fn spawn_instance(
         ("is_quick_play_realms".to_owned(), false),
     ]);
 
+    let mut arguments = vec![OsString::from("-Xms512M"), OsString::from("-Xmx2G")];
+    let jvm_arguments = if version.arguments.jvm.is_empty() {
+        vec![
+            format!(
+                "-Djava.library.path={}",
+                natives_directory.to_string_lossy()
+            ),
+            "-cp".to_owned(),
+            classpath.clone(),
+        ]
+    } else {
+        expand_arguments(&version.arguments.jvm, &features, &substitutions)
+    };
+    arguments.extend(jvm_arguments.into_iter().map(OsString::from));
+    arguments.push(OsString::from(&version.main_class));
+    let game_arguments = version
+        .minecraft_arguments
+        .as_deref()
+        .map(|value| {
+            value
+                .split_whitespace()
+                .map(|argument| substitute(argument, &substitutions))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_else(|| expand_arguments(&version.arguments.game, &features, &substitutions));
+    arguments.extend(game_arguments.into_iter().map(OsString::from));
+
+    if instance.sandboxed {
+        return spawn_sandboxed(
+            paths,
+            &instance,
+            sandbox.as_ref().expect("sandbox layout is prepared"),
+            &arguments,
+            &game_directory,
+        );
+    }
+
     let mut command = Command::new(&instance.java_path);
     command
-        .arg("-Xms512M")
-        .arg("-Xmx2G")
-        .args(expand_arguments(
-            &version.arguments.jvm,
-            &features,
-            &substitutions,
-        ))
-        .arg(&version.main_class)
-        .args(expand_arguments(
-            &version.arguments.game,
-            &features,
-            &substitutions,
-        ))
+        .args(&arguments)
         .current_dir(&game_directory)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-
     let mut child = command.spawn()?;
-    let stdout = child
-        .stdout
-        .take()
-        .expect("stdout was configured with Stdio::piped");
-    let stderr = child
-        .stderr
-        .take()
-        .expect("stderr was configured with Stdio::piped");
-
+    let stdout = child.stdout.take().expect("stdout is piped");
+    let stderr = child.stderr.take().expect("stderr is piped");
     Ok(SpawnedMinecraft {
-        child,
-        stdout,
-        stderr,
+        child: MinecraftProcess::Normal(child),
+        stdout: Box::new(stdout),
+        stderr: Box::new(stderr),
+        sandboxed: false,
     })
+}
+
+#[cfg(windows)]
+fn spawn_sandboxed(
+    paths: &MinecraftPaths,
+    instance: &InstanceManifest,
+    sandbox: &SandboxLayout,
+    arguments: &[OsString],
+    game_directory: &Path,
+) -> Result<SpawnedMinecraft, MinecraftLaunchError> {
+    use crate::platform::windows::appcontainer_process::launch_in_appcontainer;
+    use crate::platform::windows::sandbox_acl::grant_minecraft_access;
+
+    grant_minecraft_access(paths, instance, &sandbox.sid)
+        .map_err(|error| MinecraftLaunchError::Sandbox(error.to_string()))?;
+    let mut child = launch_in_appcontainer(
+        &sandbox.profile_name,
+        Path::new(&instance.java_path),
+        arguments,
+        game_directory,
+    )
+    .map_err(|error| MinecraftLaunchError::Sandbox(error.to_string()))?;
+    if !child.token_info.is_app_container {
+        let _ = child.kill();
+        return Err(MinecraftLaunchError::SandboxedProcessNotIsolated);
+    }
+    let stdout = child.take_stdout().ok_or_else(|| {
+        MinecraftLaunchError::Sandbox("sandboxed stdout is unavailable".to_owned())
+    })?;
+    let stderr = child.take_stderr().ok_or_else(|| {
+        MinecraftLaunchError::Sandbox("sandboxed stderr is unavailable".to_owned())
+    })?;
+    Ok(SpawnedMinecraft {
+        child: MinecraftProcess::Sandboxed(child),
+        stdout: Box::new(stdout),
+        stderr: Box::new(stderr),
+        sandboxed: true,
+    })
+}
+
+#[cfg(not(windows))]
+fn spawn_sandboxed(
+    _paths: &MinecraftPaths,
+    _instance: &InstanceManifest,
+    _sandbox: &SandboxLayout,
+    _arguments: &[OsString],
+    _game_directory: &Path,
+) -> Result<SpawnedMinecraft, MinecraftLaunchError> {
+    Err(MinecraftLaunchError::Sandbox(
+        "AppContainer is only available on Windows".to_owned(),
+    ))
+}
+
+#[cfg(windows)]
+fn prepare_sandbox_layout(
+    instance: &InstanceManifest,
+) -> Result<Option<SandboxLayout>, MinecraftLaunchError> {
+    use crate::platform::windows::appcontainer_profile::{
+        ensure_appcontainer_profile, profile_name_for_instance,
+    };
+
+    if !instance.sandboxed {
+        return Ok(None);
+    }
+    let profile_name = profile_name_for_instance(&instance.id)
+        .map_err(|error| MinecraftLaunchError::Sandbox(error.to_string()))?;
+    let profile = ensure_appcontainer_profile(&profile_name)
+        .map_err(|error| MinecraftLaunchError::Sandbox(error.to_string()))?;
+    let local_app_data = std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .ok_or_else(|| MinecraftLaunchError::Sandbox("LOCALAPPDATA is unavailable".to_owned()))?;
+    let root = local_app_data
+        .join("Packages")
+        .join(&profile_name)
+        .join("AC")
+        .join("MonaLauncher")
+        .join(&instance.id);
+    fs::create_dir_all(&root)?;
+    let launches = root.join("launches");
+    fs::create_dir_all(&launches)?;
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| MinecraftLaunchError::Sandbox(error.to_string()))?
+        .as_nanos();
+    let launch_root = launches.join(format!("{}-{nonce}", std::process::id()));
+    fs::create_dir(&launch_root)?;
+    crate::platform::windows::sandbox_acl::lock_sandbox_launch_directory(
+        &launch_root,
+        &profile.sid,
+    )
+    .map_err(|error| MinecraftLaunchError::Sandbox(error.to_string()))?;
+    Ok(Some(SandboxLayout {
+        profile_name,
+        sid: profile.sid,
+        root,
+        launch_root,
+    }))
+}
+
+fn extract_native_libraries(
+    paths: &MinecraftPaths,
+    version: &VersionMetadata,
+    destination: &Path,
+) -> Result<(), MinecraftLaunchError> {
+    for library in &version.libraries {
+        if !rules_allow(library.rules.as_deref(), &HashMap::new()) {
+            continue;
+        }
+        let Some(native) = library.windows_native() else {
+            continue;
+        };
+        let Some(relative_path) = native.path.as_deref() else {
+            continue;
+        };
+        let archive = safe_library_path(paths, relative_path)?;
+        require_file(&archive)?;
+        extract_archive(&archive, destination, |path| {
+            path.extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("dll"))
+        })?;
+    }
+    Ok(())
+}
+
+fn safe_library_path(
+    paths: &MinecraftPaths,
+    relative_path: &str,
+) -> Result<PathBuf, MinecraftLaunchError> {
+    let relative = Path::new(relative_path);
+    if relative.is_absolute()
+        || relative
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_) | Component::CurDir))
+    {
+        return Err(MinecraftLaunchError::UnsafeLibraryPath(
+            relative_path.to_owned(),
+        ));
+    }
+    Ok(paths.libraries().join(relative))
+}
+
+fn extract_archive<F>(
+    archive: &Path,
+    destination: &Path,
+    include: F,
+) -> Result<(), MinecraftLaunchError>
+where
+    F: Fn(&Path) -> bool,
+{
+    let input = fs::File::open(archive)?;
+    let mut zip =
+        ZipArchive::new(input).map_err(|error| MinecraftLaunchError::Sandbox(error.to_string()))?;
+    for index in 0..zip.len() {
+        let mut entry = zip
+            .by_index(index)
+            .map_err(|error| MinecraftLaunchError::Sandbox(error.to_string()))?;
+        let Some(relative) = entry.enclosed_name() else {
+            return Err(MinecraftLaunchError::Sandbox(format!(
+                "archive contains an unsafe path: {}",
+                entry.name()
+            )));
+        };
+        if entry.is_dir() || !include(&relative) {
+            continue;
+        }
+        let target =
+            if destination.ends_with("natives") {
+                destination.join(relative.file_name().ok_or_else(|| {
+                    MinecraftLaunchError::UnsafeLibraryPath(entry.name().to_owned())
+                })?)
+            } else {
+                destination.join(relative)
+            };
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let mut output = fs::File::create(target)?;
+        std::io::copy(&mut entry, &mut output)?;
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn prepare_sandbox_layout(
+    instance: &InstanceManifest,
+) -> Result<Option<SandboxLayout>, MinecraftLaunchError> {
+    if instance.sandboxed {
+        Err(MinecraftLaunchError::Sandbox(
+            "AppContainer is only available on Windows".to_owned(),
+        ))
+    } else {
+        Ok(None)
+    }
 }
 
 pub fn read_lines<R, F>(reader: R, mut on_line: F)
@@ -304,7 +597,7 @@ fn validate_java_version(java_path: &Path, required: u32) -> Result<(), Minecraf
         [] => None,
     };
 
-    if detected == Some(required) {
+    if detected.is_some_and(|major| major >= required) {
         Ok(())
     } else {
         Err(MinecraftLaunchError::IncompatibleJava {

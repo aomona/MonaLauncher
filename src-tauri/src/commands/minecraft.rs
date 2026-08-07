@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::process::Child;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -8,13 +7,19 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::minecraft::{
-    installer::{detect_java_path, install_latest_demo_instance, list_instances},
-    launcher::{read_lines, spawn_instance},
+    installer::{
+        detect_java_path, install_latest_demo_instance,
+        install_sandbox_demo_instance as install_sandbox_version, list_instances,
+    },
+    launcher::{read_lines, spawn_instance, MinecraftProcess},
     model::InstanceManifest,
     paths::MinecraftPaths,
+    runtime::install_java_8_runtime,
 };
 
-type SharedChild = Arc<Mutex<Child>>;
+const SANDBOX_MINECRAFT_VERSION: &str = "1.12.2";
+
+type SharedChild = Arc<Mutex<MinecraftProcess>>;
 
 #[derive(Clone, Default)]
 pub struct MinecraftRuntimeState {
@@ -152,6 +157,41 @@ pub async fn install_demo_instance(
 }
 
 #[tauri::command]
+pub async fn install_sandbox_demo_instance(
+    app: AppHandle,
+    instance_id: String,
+    name: String,
+) -> Result<InstanceManifest, String> {
+    let paths = minecraft_paths(&app)?;
+    let event_app = app.clone();
+    let display_name = if name.trim().is_empty() {
+        instance_id.clone()
+    } else {
+        name
+    };
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let java = install_java_8_runtime(&paths, |progress| {
+            let _ = event_app.emit("minecraft-install-progress", progress);
+        })
+        .map_err(|error| error.to_string())?;
+        install_sandbox_version(
+            &paths,
+            &instance_id,
+            &display_name,
+            &java,
+            SANDBOX_MINECRAFT_VERSION,
+            |progress| {
+                let _ = event_app.emit("minecraft-install-progress", progress);
+            },
+        )
+        .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| format!("インストール処理への参加に失敗しました: {error}"))?
+}
+
+#[tauri::command]
 pub fn launch_minecraft_instance(
     app: AppHandle,
     state: State<'_, MinecraftRuntimeState>,
@@ -169,6 +209,14 @@ pub fn launch_minecraft_instance(
 
     let paths = minecraft_paths(&app)?;
     let spawned = spawn_instance(&paths, &instance_id).map_err(|error| error.to_string())?;
+    if spawned.sandboxed {
+        emit_log(
+            &app,
+            &instance_id,
+            "launcher",
+            "AppContainerトークンを確認しました。隔離環境で起動します。",
+        );
+    }
     let pid = spawned.child.id();
     let child = Arc::new(Mutex::new(spawned.child));
 

@@ -8,11 +8,11 @@ use std::path::PathBuf;
 use std::process::Command;
 
 #[cfg(windows)]
+use monalauncher_lib::minecraft::{paths::MinecraftPaths, runtime::install_java_21_runtime};
+#[cfg(windows)]
 use monalauncher_lib::probe::{
     ensure_appcontainer_profile, launch_in_appcontainer, profile_name_for_instance,
 };
-#[cfg(windows)]
-use monalauncher_lib::minecraft::{paths::MinecraftPaths, runtime::install_java_21_runtime};
 
 #[cfg(windows)]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -62,11 +62,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("Java did not receive an AppContainer token".into());
     }
 
+    let mut child_stdout = child.take_stdout().ok_or("Java stdout is unavailable")?;
+    let mut child_stderr = child.take_stderr().ok_or("Java stderr is unavailable")?;
     let status = child.wait()?;
     let mut stdout = String::new();
     let mut stderr = String::new();
-    child.stdout.read_to_string(&mut stdout)?;
-    child.stderr.read_to_string(&mut stderr)?;
+    child_stdout.read_to_string(&mut stdout)?;
+    child_stderr.read_to_string(&mut stderr)?;
     print!("{stdout}{stderr}");
     if !status.success() {
         return Err(format!("Java exited with {status}").into());

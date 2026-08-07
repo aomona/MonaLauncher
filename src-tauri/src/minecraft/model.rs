@@ -31,7 +31,9 @@ pub struct VersionMetadata {
     pub asset_index: AssetIndexReference,
     pub downloads: VersionDownloads,
     pub libraries: Vec<Library>,
+    #[serde(default)]
     pub arguments: Arguments,
+    pub minecraft_arguments: Option<String>,
     pub java_version: Option<JavaVersion>,
 }
 
@@ -68,11 +70,30 @@ pub struct AssetObject {
 pub struct Library {
     pub downloads: LibraryDownloads,
     pub rules: Option<Vec<Rule>>,
+    pub natives: Option<HashMap<String, String>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct LibraryDownloads {
     pub artifact: Option<DownloadInfo>,
+    #[serde(default)]
+    pub classifiers: HashMap<String, DownloadInfo>,
+}
+
+impl Library {
+    pub fn windows_native(&self) -> Option<&DownloadInfo> {
+        let classifier = self.natives.as_ref()?.get("windows")?;
+        let classifier = classifier.replace("${arch}", windows_native_architecture());
+        self.downloads.classifiers.get(&classifier)
+    }
+}
+
+fn windows_native_architecture() -> &'static str {
+    if cfg!(target_pointer_width = "64") {
+        "64"
+    } else {
+        "32"
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -83,7 +104,7 @@ pub struct DownloadInfo {
     pub url: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct Arguments {
     pub game: Vec<Argument>,
     pub jvm: Vec<Argument>,
@@ -129,6 +150,8 @@ pub struct InstanceManifest {
     pub java_path: String,
     pub game_directory: String,
     pub demo: bool,
+    #[serde(default)]
+    pub sandboxed: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -234,5 +257,33 @@ mod tests {
         };
 
         assert!(!rules_allow(Some(&[rule]), &HashMap::new()));
+    }
+
+    #[test]
+    fn selects_windows_native_classifier() {
+        let native = DownloadInfo {
+            path: Some("native.jar".to_owned()),
+            sha1: "hash".to_owned(),
+            size: 1,
+            url: "https://example.invalid/native.jar".to_owned(),
+        };
+        let library = Library {
+            downloads: LibraryDownloads {
+                artifact: None,
+                classifiers: HashMap::from([("natives-windows-64".to_owned(), native)]),
+            },
+            rules: None,
+            natives: Some(HashMap::from([(
+                "windows".to_owned(),
+                "natives-windows-${arch}".to_owned(),
+            )])),
+        };
+
+        assert_eq!(
+            library
+                .windows_native()
+                .and_then(|item| item.path.as_deref()),
+            Some("native.jar")
+        );
     }
 }

@@ -14,6 +14,8 @@ pub enum SandboxAclError {
     MissingPath(PathBuf),
     InvalidJavaPath(PathBuf),
     GrantFailed { path: PathBuf, details: String },
+    IntegrityLevelFailed { path: PathBuf, details: String },
+    LockLaunchDirectoryFailed { path: PathBuf, details: String },
     Io(std::io::Error),
 }
 
@@ -39,9 +41,58 @@ impl fmt::Display for SandboxAclError {
                 "failed to grant AppContainer access to {}: {details}",
                 path.display()
             ),
+            Self::IntegrityLevelFailed { path, details } => write!(
+                formatter,
+                "failed to set low integrity on {}: {details}",
+                path.display()
+            ),
+            Self::LockLaunchDirectoryFailed { path, details } => write!(
+                formatter,
+                "failed to lock sandbox launch directory {}: {details}",
+                path.display()
+            ),
             Self::Io(error) => write!(formatter, "failed to run icacls: {error}"),
         }
     }
+}
+
+/// 起動前に親が配置するクラスとDLLを、AppContainerから読み取り専用にする。
+///
+/// プロフィールの継承ACLにはPackage SIDのフルアクセスが含まれるため、そのままでは
+/// 書き換え可能なDLLとなりWindowsのロード制約に拒否される。継承を明示ACLへ変換し、
+/// 対象SIDの許可だけをRXへ置き換える。ユーザー・SYSTEM・AdministratorsのACLは保持する。
+pub fn lock_sandbox_launch_directory(
+    path: &Path,
+    appcontainer_sid: &str,
+) -> Result<(), SandboxAclError> {
+    if !path.is_dir() {
+        return Err(SandboxAclError::MissingPath(path.to_owned()));
+    }
+    let sid = format!("*{appcontainer_sid}");
+    let principal = format!("*{appcontainer_sid}:(OI)(CI)RX");
+    for arguments in [
+        vec!["/inheritance:d".to_owned(), "/Q".to_owned()],
+        vec!["/remove:g".to_owned(), sid, "/Q".to_owned()],
+        vec!["/grant".to_owned(), principal, "/Q".to_owned()],
+    ] {
+        let output = Command::new("icacls.exe")
+            .arg(path)
+            .args(arguments)
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()?;
+        if !output.status.success() {
+            let details = format!(
+                "{}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return Err(SandboxAclError::LockLaunchDirectoryFailed {
+                path: path.to_owned(),
+                details: details.trim().to_owned(),
+            });
+        }
+    }
+    Ok(())
 }
 
 impl Error for SandboxAclError {}
@@ -75,9 +126,33 @@ pub fn grant_minecraft_access(
         grant(read_execute_path, appcontainer_sid, "RX")?;
     }
 
-    grant(&paths.instance(&instance.id), appcontainer_sid, "M")?;
+    let instance_directory = paths.instance(&instance.id);
+    grant(&instance_directory, appcontainer_sid, "M")?;
+    set_low_integrity(&instance_directory)?;
 
     Ok(())
+}
+
+fn set_low_integrity(path: &Path) -> Result<(), SandboxAclError> {
+    let output = Command::new("icacls.exe")
+        .arg(path)
+        .args(["/setintegritylevel", "(OI)(CI)L", "/Q"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()?;
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let details = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Err(SandboxAclError::IntegrityLevelFailed {
+        path: path.to_owned(),
+        details: details.trim().to_owned(),
+    })
 }
 
 fn grant(path: &Path, sid: &str, permission: &str) -> Result<(), SandboxAclError> {

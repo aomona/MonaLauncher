@@ -36,14 +36,22 @@ pub struct SpawnedProcessInfo {
 pub struct SpawnedAppContainerProcess {
     process: OwnedHandle,
     process_id: u32,
-    pub stdout: File,
-    pub stderr: File,
+    stdout: Option<File>,
+    stderr: Option<File>,
     pub token_info: ProcessTokenInfo,
 }
 
 impl SpawnedAppContainerProcess {
     pub fn id(&self) -> u32 {
         self.process_id
+    }
+
+    pub fn take_stdout(&mut self) -> Option<File> {
+        self.stdout.take()
+    }
+
+    pub fn take_stderr(&mut self) -> Option<File> {
+        self.stderr.take()
     }
 
     pub fn try_wait(&mut self) -> Result<Option<ExitStatus>, AppContainerProcessError> {
@@ -203,8 +211,8 @@ pub fn launch_in_appcontainer(
     Ok(SpawnedAppContainerProcess {
         process,
         process_id: process_information.dwProcessId,
-        stdout: stdout_pipe.into_reader(),
-        stderr: stderr_pipe.into_reader(),
+        stdout: Some(stdout_pipe.into_reader()),
+        stderr: Some(stderr_pipe.into_reader()),
         token_info,
     })
 }
@@ -237,29 +245,12 @@ fn appcontainer_environment(profile_name: &str) -> Result<Vec<u16>, AppContainer
         .join("Packages")
         .join(profile_name)
         .join("AC");
-    let temp = profile_root.join("Temp");
-    std::fs::create_dir_all(&temp)?;
+    std::fs::create_dir_all(profile_root.join("Temp"))?;
 
+    // AppContainerはLOCALAPPDATAやTEMPなどの既知フォルダーを自動的に仮想化する。
+    // ここで既に仮想化済みのパッケージパスを設定すると、Windowsがもう一度変換して
+    // `AC\Packages\...\AC\Temp`という二重パスになるため、通常の親環境を引き継ぐ。
     let mut variables = std::env::vars_os().collect::<Vec<_>>();
-    variables.retain(|(name, _)| {
-        !matches!(
-            name.to_string_lossy().to_ascii_uppercase().as_str(),
-            "APPDATA" | "LOCALAPPDATA" | "TEMP" | "TMP" | "USERPROFILE"
-        )
-    });
-    variables.extend([
-        (
-            OsString::from("APPDATA"),
-            profile_root.clone().into_os_string(),
-        ),
-        (
-            OsString::from("LOCALAPPDATA"),
-            profile_root.clone().into_os_string(),
-        ),
-        (OsString::from("TEMP"), temp.clone().into_os_string()),
-        (OsString::from("TMP"), temp.into_os_string()),
-        (OsString::from("USERPROFILE"), profile_root.into_os_string()),
-    ]);
     variables.sort_by_key(|(name, _)| name.to_string_lossy().to_ascii_uppercase());
 
     let mut block = Vec::new();
@@ -297,7 +288,7 @@ struct Pipe {
 
 impl Pipe {
     fn new() -> Result<Self, AppContainerProcessError> {
-        let mut attributes = SECURITY_ATTRIBUTES {
+        let attributes = SECURITY_ATTRIBUTES {
             nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
             lpSecurityDescriptor: std::ptr::null_mut(),
             bInheritHandle: BOOL(1),
@@ -306,7 +297,7 @@ impl Pipe {
         let mut write = HANDLE::default();
 
         // SAFETY: output handles and SECURITY_ATTRIBUTES are valid writable values.
-        unsafe { CreatePipe(&mut read, &mut write, Some(&mut attributes), 0)? };
+        unsafe { CreatePipe(&mut read, &mut write, Some(&attributes), 0)? };
         let read = OwnedHandle::new(read);
         let write = OwnedHandle::new(write);
 
@@ -337,6 +328,7 @@ struct AttributeList {
 impl AttributeList {
     fn new() -> Result<Self, AppContainerProcessError> {
         let mut required_size = 0_usize;
+        // SAFETY: a null list is the documented size-query call; required_size is writable.
         let first_result =
             unsafe { InitializeProcThreadAttributeList(None, 1, None, &mut required_size) };
         if let Err(error) = first_result {
@@ -348,6 +340,7 @@ impl AttributeList {
         let storage_length = required_size.div_ceil(size_of::<usize>());
         let mut storage = vec![0_usize; storage_length];
         let raw = LPPROC_THREAD_ATTRIBUTE_LIST(storage.as_mut_ptr().cast());
+        // SAFETY: storage has the size returned by the query and remains owned by AttributeList.
         unsafe { InitializeProcThreadAttributeList(Some(raw), 1, None, &mut required_size)? };
         Ok(Self {
             _storage: storage,
@@ -362,6 +355,7 @@ impl AttributeList {
 
 impl Drop for AttributeList {
     fn drop(&mut self) {
+        // SAFETY: raw was initialized successfully and is deleted exactly once here.
         unsafe { DeleteProcThreadAttributeList(self.raw) };
     }
 }
@@ -435,6 +429,10 @@ struct OwnedHandle {
     handle: HANDLE,
 }
 
+// SAFETY: Windows process/pipe handles are kernel object references that may be transferred to
+// another thread. OwnedHandle keeps unique ownership and only closes the handle once in Drop.
+unsafe impl Send for OwnedHandle {}
+
 impl OwnedHandle {
     fn new(handle: HANDLE) -> Self {
         Self { handle }
@@ -454,6 +452,7 @@ impl OwnedHandle {
 impl Drop for OwnedHandle {
     fn drop(&mut self) {
         if !self.handle.is_invalid() {
+            // SAFETY: this object uniquely owns a valid handle and closes it exactly once.
             unsafe {
                 let _ = CloseHandle(self.handle);
             }

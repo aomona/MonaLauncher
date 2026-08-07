@@ -24,6 +24,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::minecraft::detect_java,
             commands::minecraft::install_demo_instance,
+            commands::minecraft::install_sandbox_demo_instance,
             commands::minecraft::launch_minecraft_instance,
             commands::minecraft::list_minecraft_instances,
             commands::minecraft::prepare_instance_sandbox,

@@ -12,11 +12,9 @@ use zip::ZipArchive;
 use super::model::InstallProgress;
 use super::paths::MinecraftPaths;
 
-const TEMURIN_21_ASSETS_URL: &str = "https://api.adoptium.net/v3/assets/latest/21/hotspot?architecture=x64&image_type=jre&os=windows&vendor=eclipse";
-
 #[derive(Debug)]
 pub enum RuntimeInstallError {
-    AssetMissing,
+    AssetMissing(u32),
     UnsafeArchivePath(String),
     JavaMissing(PathBuf),
     HashMismatch { expected: String, actual: String },
@@ -28,7 +26,9 @@ pub enum RuntimeInstallError {
 impl fmt::Display for RuntimeInstallError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::AssetMissing => write!(formatter, "Adoptium did not return a Java 21 runtime"),
+            Self::AssetMissing(major) => {
+                write!(formatter, "Adoptium did not return a Java {major} runtime")
+            }
             Self::UnsafeArchivePath(path) => {
                 write!(formatter, "Java archive contains an unsafe path: {path}")
             }
@@ -92,39 +92,73 @@ pub fn install_java_21_runtime<F>(
 where
     F: Fn(InstallProgress),
 {
-    progress_event(&progress, 0, 1, "Java 21 metadataを取得しています");
+    install_java_runtime(paths, 21, progress)
+}
+
+pub fn install_java_8_runtime<F>(
+    paths: &MinecraftPaths,
+    progress: F,
+) -> Result<PathBuf, RuntimeInstallError>
+where
+    F: Fn(InstallProgress),
+{
+    install_java_runtime(paths, 8, progress)
+}
+
+fn install_java_runtime<F>(
+    paths: &MinecraftPaths,
+    major: u32,
+    progress: F,
+) -> Result<PathBuf, RuntimeInstallError>
+where
+    F: Fn(InstallProgress),
+{
+    progress_event(
+        &progress,
+        0,
+        1,
+        &format!("Java {major} metadataを取得しています"),
+    );
     let client = Client::builder().user_agent("MonaLauncher/0.1.0").build()?;
-    let assets: Vec<AdoptiumAsset> = client
-        .get(TEMURIN_21_ASSETS_URL)
-        .send()?
-        .error_for_status()?
-        .json()?;
+    let assets_url = format!(
+        "https://api.adoptium.net/v3/assets/latest/{major}/hotspot?architecture=x64&image_type=jre&os=windows&vendor=eclipse"
+    );
+    let assets: Vec<AdoptiumAsset> = client.get(assets_url).send()?.error_for_status()?.json()?;
     let package = &assets
         .first()
-        .ok_or(RuntimeInstallError::AssetMissing)?
+        .ok_or(RuntimeInstallError::AssetMissing(major))?
         .binary
         .package;
-    let runtime_directory = paths.runtimes().join("temurin-21").join(&package.checksum);
+    let runtime_family = format!("temurin-{major}");
+    let runtime_directory = paths
+        .runtimes()
+        .join(&runtime_family)
+        .join(&package.checksum);
 
     if let Some(java) = find_java(&runtime_directory)? {
-        progress_event(&progress, 1, 1, "Java 21は準備済みです");
+        progress_event(&progress, 1, 1, &format!("Java {major}は準備済みです"));
         return Ok(java);
     }
 
     fs::create_dir_all(paths.runtimes().join("downloads"))?;
     let archive = paths.runtimes().join("downloads").join(&package.name);
-    progress_event(&progress, 0, 1, "Java 21をダウンロードしています");
+    progress_event(
+        &progress,
+        0,
+        1,
+        &format!("Java {major}をダウンロードしています"),
+    );
     download_and_verify(&client, &package.link, &package.checksum, &archive)?;
 
     let temporary = paths
         .runtimes()
-        .join("temurin-21")
+        .join(&runtime_family)
         .join(format!("{}.part", package.checksum));
     if temporary.exists() {
         fs::remove_dir_all(&temporary)?;
     }
     fs::create_dir_all(&temporary)?;
-    progress_event(&progress, 0, 1, "Java 21を展開しています");
+    progress_event(&progress, 0, 1, &format!("Java {major}を展開しています"));
     extract_archive(&archive, &temporary)?;
     let java = find_java(&temporary)?
         .ok_or_else(|| RuntimeInstallError::JavaMissing(temporary.clone()))?;
@@ -137,7 +171,7 @@ where
     }
     fs::rename(&temporary, &runtime_directory)?;
     let java = runtime_directory.join(relative_java);
-    progress_event(&progress, 1, 1, "Java 21の準備ができました");
+    progress_event(&progress, 1, 1, &format!("Java {major}の準備ができました"));
     Ok(java)
 }
 

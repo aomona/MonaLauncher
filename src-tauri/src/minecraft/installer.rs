@@ -30,6 +30,7 @@ pub enum MinecraftInstallError {
     InvalidAssetHash(String),
     JavaNotFound(PathBuf),
     LatestReleaseMissing(String),
+    VersionMissing(String),
     HashMismatch {
         path: PathBuf,
         expected: String,
@@ -63,6 +64,12 @@ impl fmt::Display for MinecraftInstallError {
             }
             Self::LatestReleaseMissing(version) => {
                 write!(formatter, "latest release metadata is missing: {version}")
+            }
+            Self::VersionMissing(version) => {
+                write!(
+                    formatter,
+                    "Minecraft version metadata is missing: {version}"
+                )
             }
             Self::HashMismatch {
                 path,
@@ -127,6 +134,51 @@ pub fn install_latest_demo_instance<F>(
 where
     F: Fn(InstallProgress) + Send + Sync,
 {
+    install_demo_instance_from_manifest(
+        paths,
+        instance_id,
+        instance_name,
+        java_path,
+        None,
+        false,
+        progress,
+    )
+}
+
+pub fn install_sandbox_demo_instance<F>(
+    paths: &MinecraftPaths,
+    instance_id: &str,
+    instance_name: &str,
+    java_path: &Path,
+    version_id: &str,
+    progress: F,
+) -> Result<InstanceManifest, MinecraftInstallError>
+where
+    F: Fn(InstallProgress) + Send + Sync,
+{
+    install_demo_instance_from_manifest(
+        paths,
+        instance_id,
+        instance_name,
+        java_path,
+        Some(version_id),
+        true,
+        progress,
+    )
+}
+
+fn install_demo_instance_from_manifest<F>(
+    paths: &MinecraftPaths,
+    instance_id: &str,
+    instance_name: &str,
+    java_path: &Path,
+    requested_version: Option<&str>,
+    sandboxed: bool,
+    progress: F,
+) -> Result<InstanceManifest, MinecraftInstallError>
+where
+    F: Fn(InstallProgress) + Send + Sync,
+{
     validate_instance_id(instance_id)?;
 
     if !java_path.is_file() {
@@ -139,12 +191,20 @@ where
 
     progress_event(&progress, "metadata", 0, 1, "Fetching version manifest");
     let manifest: VersionManifest = fetch_json(&client, VERSION_MANIFEST_URL)?;
-    let release_id = manifest.latest.release;
+    let release_id = requested_version
+        .map(str::to_owned)
+        .unwrap_or(manifest.latest.release);
     let release = manifest
         .versions
         .into_iter()
         .find(|version| version.id == release_id)
-        .ok_or_else(|| MinecraftInstallError::LatestReleaseMissing(release_id.clone()))?;
+        .ok_or_else(|| {
+            if requested_version.is_some() {
+                MinecraftInstallError::VersionMissing(release_id.clone())
+            } else {
+                MinecraftInstallError::LatestReleaseMissing(release_id.clone())
+            }
+        })?;
 
     progress_event(
         &progress,
@@ -180,17 +240,23 @@ where
             continue;
         }
 
-        let Some(artifact) = &library.downloads.artifact else {
-            continue;
-        };
-        let Some(relative_path) = artifact.path.as_deref() else {
-            continue;
-        };
+        if let Some(native) = library.windows_native() {
+            if let Some(relative_path) = native.path.as_deref() {
+                let target = safe_metadata_join(&paths.libraries(), relative_path)?;
+                library_tasks
+                    .entry(target.clone())
+                    .or_insert_with(|| DownloadTask::from_info(native, target));
+            }
+        }
 
-        let target = safe_metadata_join(&paths.libraries(), relative_path)?;
-        library_tasks
-            .entry(target.clone())
-            .or_insert_with(|| DownloadTask::from_info(artifact, target));
+        if let Some(artifact) = &library.downloads.artifact {
+            if let Some(relative_path) = artifact.path.as_deref() {
+                let target = safe_metadata_join(&paths.libraries(), relative_path)?;
+                library_tasks
+                    .entry(target.clone())
+                    .or_insert_with(|| DownloadTask::from_info(artifact, target));
+            }
+        }
     }
 
     download_tasks(
@@ -252,6 +318,7 @@ where
         java_path: java_path.to_string_lossy().into_owned(),
         game_directory: game_directory.to_string_lossy().into_owned(),
         demo: true,
+        sandboxed,
     };
 
     let instance_directory = paths.instance(instance_id);
