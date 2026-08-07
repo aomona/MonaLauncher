@@ -21,7 +21,8 @@ body {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -242,7 +243,8 @@ button:disabled {
   font-size: 11px;
 }
 
-.install-form input {
+.install-form input,
+.install-form select {
   width: 100%;
   margin-top: 5px;
   padding: 9px 10px;
@@ -256,7 +258,8 @@ button:disabled {
     monospace;
 }
 
-.install-form input:focus {
+.install-form input:focus,
+.install-form select:focus {
   border-color: #5eae70;
 }
 

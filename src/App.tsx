@@ -40,7 +40,7 @@ const stageLabels: Record<string, string> = {
   libraries: "ライブラリ",
   "assets-index": "アセット一覧",
   assets: "ゲーム素材",
-  runtime: "隔離用Java 8",
+  runtime: "隔離用Java",
   complete: "完了",
 };
 
@@ -63,6 +63,7 @@ export default function App() {
   const [selectedId, setSelectedId] = useState("");
   const [instanceId, setInstanceId] = useState("demo");
   const [instanceName, setInstanceName] = useState("Minecraft Demo");
+  const [releaseChannel, setReleaseChannel] = useState<"latest" | "compatible">("latest");
   const [progress, setProgress] = useState<InstallProgress | null>(null);
   const [logs, setLogs] = useState<LogLine[]>([]);
   const [runningIds, setRunningIds] = useState<Set<string>>(new Set());
@@ -142,6 +143,7 @@ export default function App() {
       const installed = await invoke<MinecraftInstance>("install_sandbox_demo_instance", {
         instanceId,
         name: instanceName,
+        releaseChannel,
       });
       await refreshInstances();
       setSelectedId(installed.id);
@@ -250,6 +252,18 @@ export default function App() {
             }}
           >
             <p className="eyebrow">NEW SANDBOX INSTANCE</p>
+            <label>
+              バージョン
+              <select
+                value={releaseChannel}
+                onChange={(event) =>
+                  setReleaseChannel(event.target.value as "latest" | "compatible")
+                }
+              >
+                <option value="latest">最新版（推奨）</option>
+                <option value="compatible">互換版 1.12.2</option>
+              </select>
+            </label>
             <label>
               表示名
               <input
