@@ -13,8 +13,10 @@
     "windows": [
       {
         "title": "monalauncher",
-        "width": 800,
-        "height": 600
+        "width": 1120,
+        "height": 760,
+        "minWidth": 780,
+        "minHeight": 620
       }
     ],
     "security": {
