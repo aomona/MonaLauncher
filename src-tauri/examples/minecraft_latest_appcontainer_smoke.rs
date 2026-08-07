@@ -12,7 +12,7 @@ use monalauncher_lib::minecraft::launcher::{read_lines, spawn_instance};
 #[cfg(windows)]
 use monalauncher_lib::minecraft::paths::MinecraftPaths;
 #[cfg(windows)]
-use monalauncher_lib::minecraft::runtime::install_java_8_runtime;
+use monalauncher_lib::minecraft::runtime::install_java_25_runtime;
 
 #[cfg(windows)]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -22,17 +22,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .join("me.aomona.monalauncher")
         .join("minecraft");
     let paths = MinecraftPaths::new(root);
-    let instance_id = "appcontainer-demo";
+    let instance_id = "appcontainer-latest-demo";
     if std::env::var_os("MONALAUNCHER_SKIP_INSTALL").is_none() {
-        let java = install_java_8_runtime(&paths, |progress| {
+        let java = install_java_25_runtime(&paths, |progress| {
             println!("[runtime] {}", progress.message);
         })?;
         install_sandbox_demo_instance(
             &paths,
             instance_id,
-            "AppContainer Demo",
+            "Latest AppContainer Demo",
             &java,
-            "1.12.2",
+            "26.2",
             |progress| {
                 if progress.completed == 0 || progress.completed == progress.total {
                     println!(
@@ -44,7 +44,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )?;
     }
 
-    println!("[launcher] starting Minecraft in AppContainer");
+    println!("[launcher] starting latest Minecraft in AppContainer");
     let spawned = spawn_instance(&paths, instance_id)?;
     if !spawned.sandboxed {
         return Err("launcher did not use AppContainer".into());
@@ -63,17 +63,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             stdout_thread.join().ok();
             stderr_thread.join().ok();
             return Err(format!(
-                "sandboxed Minecraft exited before the smoke window elapsed: {status}"
+                "latest sandboxed Minecraft exited before the smoke window elapsed: {status}"
             )
             .into());
         }
         if Instant::now() >= deadline {
-            println!("[launcher] sandboxed Minecraft stayed alive for 30 seconds");
+            println!("[launcher] latest sandboxed Minecraft stayed alive for 30 seconds");
             child.kill()?;
             child.wait()?;
             stdout_thread.join().ok();
             stderr_thread.join().ok();
-            println!("[launcher] AppContainer Minecraft smoke test passed");
+            println!("[launcher] latest AppContainer Minecraft smoke test passed");
             return Ok(());
         }
         thread::sleep(Duration::from_millis(250));

@@ -30,6 +30,7 @@ pub enum MinecraftInstallError {
     InvalidAssetHash(String),
     JavaNotFound(PathBuf),
     LatestReleaseMissing(String),
+    JavaVersionMissing(String),
     VersionMissing(String),
     HashMismatch {
         path: PathBuf,
@@ -64,6 +65,9 @@ impl fmt::Display for MinecraftInstallError {
             }
             Self::LatestReleaseMissing(version) => {
                 write!(formatter, "latest release metadata is missing: {version}")
+            }
+            Self::JavaVersionMissing(version) => {
+                write!(formatter, "Minecraft {version} does not declare a Java version")
             }
             Self::VersionMissing(version) => {
                 write!(
@@ -165,6 +169,43 @@ where
         true,
         progress,
     )
+}
+
+pub fn install_latest_sandbox_demo_instance<F>(
+    paths: &MinecraftPaths,
+    instance_id: &str,
+    instance_name: &str,
+    java_path: &Path,
+    progress: F,
+) -> Result<InstanceManifest, MinecraftInstallError>
+where
+    F: Fn(InstallProgress) + Send + Sync,
+{
+    install_demo_instance_from_manifest(
+        paths,
+        instance_id,
+        instance_name,
+        java_path,
+        None,
+        true,
+        progress,
+    )
+}
+
+pub fn latest_release_java_major() -> Result<u32, MinecraftInstallError> {
+    let client = Client::builder().user_agent("MonaLauncher/0.1.0").build()?;
+    let manifest: VersionManifest = fetch_json(&client, VERSION_MANIFEST_URL)?;
+    let release_id = manifest.latest.release;
+    let release = manifest
+        .versions
+        .into_iter()
+        .find(|version| version.id == release_id)
+        .ok_or_else(|| MinecraftInstallError::LatestReleaseMissing(release_id.clone()))?;
+    let version: VersionMetadata = fetch_json(&client, &release.url)?;
+    version
+        .java_version
+        .map(|java| java.major_version)
+        .ok_or(MinecraftInstallError::JavaVersionMissing(version.id))
 }
 
 fn install_demo_instance_from_manifest<F>(

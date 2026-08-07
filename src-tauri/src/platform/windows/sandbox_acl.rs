@@ -56,11 +56,10 @@ impl fmt::Display for SandboxAclError {
     }
 }
 
-/// 起動前に親が配置するクラスとDLLを、AppContainerから読み取り専用にする。
+/// 起動ごとに作る専用ディレクトリを、そのAppContainerだけが変更できるようにする。
 ///
-/// プロフィールの継承ACLにはPackage SIDのフルアクセスが含まれるため、そのままでは
-/// 書き換え可能なDLLとなりWindowsのロード制約に拒否される。継承を明示ACLへ変換し、
-/// 対象SIDの許可だけをRXへ置き換える。ユーザー・SYSTEM・AdministratorsのACLは保持する。
+/// インスタンス側から継承したACLを明示ACLへ変換し、対象SIDの許可をMへ統一する。
+/// ユーザー・SYSTEM・AdministratorsのACLは保持する。
 pub fn lock_sandbox_launch_directory(
     path: &Path,
     appcontainer_sid: &str,
@@ -69,7 +68,7 @@ pub fn lock_sandbox_launch_directory(
         return Err(SandboxAclError::MissingPath(path.to_owned()));
     }
     let sid = format!("*{appcontainer_sid}");
-    let principal = format!("*{appcontainer_sid}:(OI)(CI)RX");
+    let principal = format!("*{appcontainer_sid}:(OI)(CI)M");
     for arguments in [
         vec!["/inheritance:d".to_owned(), "/Q".to_owned()],
         vec!["/remove:g".to_owned(), sid, "/Q".to_owned()],
@@ -118,6 +117,7 @@ pub fn grant_minecraft_access(
         .ok_or_else(|| SandboxAclError::InvalidJavaPath(java_path.to_owned()))?;
 
     for read_execute_path in [
+        paths.root(),
         java_root,
         paths.assets().as_path(),
         paths.libraries().as_path(),

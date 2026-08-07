@@ -132,8 +132,11 @@ pub struct SpawnedMinecraft {
 struct SandboxLayout {
     profile_name: String,
     sid: String,
-    root: PathBuf,
     launch_root: PathBuf,
+    physical_root: PathBuf,
+    virtual_root: PathBuf,
+    #[cfg(windows)]
+    drive: Option<crate::platform::windows::sandbox_drive::SandboxDrive>,
 }
 
 pub fn spawn_instance(
@@ -148,33 +151,35 @@ pub fn spawn_instance(
     if let Some(java_version) = &version.java_version {
         validate_java_version(Path::new(&instance.java_path), java_version.major_version)?;
     }
-    let sandbox = prepare_sandbox_layout(&instance)?;
+    let mut sandbox = prepare_sandbox_layout(paths, &instance)?;
     let classpath = build_classpath(paths, &version)?;
     let source_client_jar = paths.version_jar(&version.id);
     require_file(&source_client_jar)?;
 
-    let game_directory = sandbox
-        .as_ref()
-        .map(|layout| layout.root.join("game"))
-        .unwrap_or_else(|| PathBuf::from(&instance.game_directory));
-    fs::create_dir_all(&game_directory)?;
-    let natives_directory = sandbox
+    let physical_game_directory = PathBuf::from(&instance.game_directory);
+    fs::create_dir_all(&physical_game_directory)?;
+    let game_directory = sandbox_path(&sandbox, &physical_game_directory)?;
+    let physical_natives_directory = sandbox
         .as_ref()
         .map(|layout| layout.launch_root.join("natives"))
         .unwrap_or_else(|| paths.instance(instance_id).join("natives"));
-    fs::create_dir_all(&natives_directory)?;
+    fs::create_dir_all(&physical_natives_directory)?;
+    let natives_directory = sandbox_path(&sandbox, &physical_natives_directory)?;
 
     let client_entry = if let Some(layout) = &sandbox {
         let client_classes = layout.launch_root.join("client-classes");
         fs::create_dir(&client_classes)?;
         extract_archive(&source_client_jar, &client_classes, |_| true)?;
-        extract_native_libraries(paths, &version, &natives_directory)?;
-        client_classes
+        extract_native_libraries(paths, &version, &physical_natives_directory)?;
+        sandbox_path(&sandbox, &client_classes)?
     } else {
         source_client_jar
     };
 
-    let mut classpath_entries = classpath;
+    let mut classpath_entries = classpath
+        .iter()
+        .map(|path| sandbox_path(&sandbox, path))
+        .collect::<Result<Vec<_>, _>>()?;
     classpath_entries.push(client_entry);
     let classpath = classpath_entries
         .iter()
@@ -191,7 +196,9 @@ pub fn spawn_instance(
         ),
         (
             "${assets_root}",
-            paths.assets().to_string_lossy().into_owned(),
+            sandbox_path(&sandbox, &paths.assets())?
+                .to_string_lossy()
+                .into_owned(),
         ),
         ("${assets_index_name}", version.assets.clone()),
         (
@@ -213,7 +220,9 @@ pub fn spawn_instance(
         ("${classpath_separator}", ";".to_owned()),
         (
             "${library_directory}",
-            paths.libraries().to_string_lossy().into_owned(),
+            sandbox_path(&sandbox, &paths.libraries())?
+                .to_string_lossy()
+                .into_owned(),
         ),
     ]);
 
@@ -257,7 +266,7 @@ pub fn spawn_instance(
         return spawn_sandboxed(
             paths,
             &instance,
-            sandbox.as_ref().expect("sandbox layout is prepared"),
+            sandbox.as_mut().expect("sandbox layout is prepared"),
             &arguments,
             &game_directory,
         );
@@ -285,7 +294,7 @@ pub fn spawn_instance(
 fn spawn_sandboxed(
     paths: &MinecraftPaths,
     instance: &InstanceManifest,
-    sandbox: &SandboxLayout,
+    sandbox: &mut SandboxLayout,
     arguments: &[OsString],
     game_directory: &Path,
 ) -> Result<SpawnedMinecraft, MinecraftLaunchError> {
@@ -294,17 +303,20 @@ fn spawn_sandboxed(
 
     grant_minecraft_access(paths, instance, &sandbox.sid)
         .map_err(|error| MinecraftLaunchError::Sandbox(error.to_string()))?;
-    let mut child = launch_in_appcontainer(
-        &sandbox.profile_name,
-        Path::new(&instance.java_path),
-        arguments,
-        game_directory,
-    )
-    .map_err(|error| MinecraftLaunchError::Sandbox(error.to_string()))?;
+    let java_path = sandbox_alias(sandbox, Path::new(&instance.java_path))?;
+    let mut child =
+        launch_in_appcontainer(&sandbox.profile_name, &java_path, arguments, game_directory)
+            .map_err(|error| MinecraftLaunchError::Sandbox(error.to_string()))?;
     if !child.token_info.is_app_container {
         let _ = child.kill();
         return Err(MinecraftLaunchError::SandboxedProcessNotIsolated);
     }
+    child.retain_sandbox_drive(
+        sandbox
+            .drive
+            .take()
+            .expect("sandbox drive exists while launching"),
+    );
     let stdout = child.take_stdout().ok_or_else(|| {
         MinecraftLaunchError::Sandbox("sandboxed stdout is unavailable".to_owned())
     })?;
@@ -323,7 +335,7 @@ fn spawn_sandboxed(
 fn spawn_sandboxed(
     _paths: &MinecraftPaths,
     _instance: &InstanceManifest,
-    _sandbox: &SandboxLayout,
+    _sandbox: &mut SandboxLayout,
     _arguments: &[OsString],
     _game_directory: &Path,
 ) -> Result<SpawnedMinecraft, MinecraftLaunchError> {
@@ -334,6 +346,7 @@ fn spawn_sandboxed(
 
 #[cfg(windows)]
 fn prepare_sandbox_layout(
+    paths: &MinecraftPaths,
     instance: &InstanceManifest,
 ) -> Result<Option<SandboxLayout>, MinecraftLaunchError> {
     use crate::platform::windows::appcontainer_profile::{
@@ -347,17 +360,11 @@ fn prepare_sandbox_layout(
         .map_err(|error| MinecraftLaunchError::Sandbox(error.to_string()))?;
     let profile = ensure_appcontainer_profile(&profile_name)
         .map_err(|error| MinecraftLaunchError::Sandbox(error.to_string()))?;
-    let local_app_data = std::env::var_os("LOCALAPPDATA")
-        .map(PathBuf::from)
-        .ok_or_else(|| MinecraftLaunchError::Sandbox("LOCALAPPDATA is unavailable".to_owned()))?;
-    let root = local_app_data
-        .join("Packages")
-        .join(&profile_name)
-        .join("AC")
-        .join("MonaLauncher")
-        .join(&instance.id);
-    fs::create_dir_all(&root)?;
-    let launches = root.join("launches");
+    let physical_root = paths.root().to_owned();
+    let drive = crate::platform::windows::sandbox_drive::SandboxDrive::create(&physical_root)
+        .map_err(|error| MinecraftLaunchError::Sandbox(error.to_string()))?;
+    let virtual_root = drive.root().to_owned();
+    let launches = paths.instance(&instance.id).join("sandbox-launches");
     fs::create_dir_all(&launches)?;
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -373,9 +380,34 @@ fn prepare_sandbox_layout(
     Ok(Some(SandboxLayout {
         profile_name,
         sid: profile.sid,
-        root,
         launch_root,
+        physical_root,
+        virtual_root,
+        drive: Some(drive),
     }))
+}
+
+fn sandbox_path(
+    sandbox: &Option<SandboxLayout>,
+    physical: &Path,
+) -> Result<PathBuf, MinecraftLaunchError> {
+    sandbox.as_ref().map_or_else(
+        || Ok(physical.to_owned()),
+        |layout| sandbox_alias(layout, physical),
+    )
+}
+
+fn sandbox_alias(
+    sandbox: &SandboxLayout,
+    physical: &Path,
+) -> Result<PathBuf, MinecraftLaunchError> {
+    let relative = physical.strip_prefix(&sandbox.physical_root).map_err(|_| {
+        MinecraftLaunchError::Sandbox(format!(
+            "sandbox path is outside Minecraft storage: {}",
+            physical.display()
+        ))
+    })?;
+    Ok(sandbox.virtual_root.join(relative))
 }
 
 fn extract_native_libraries(
@@ -463,6 +495,7 @@ where
 
 #[cfg(not(windows))]
 fn prepare_sandbox_layout(
+    _paths: &MinecraftPaths,
     instance: &InstanceManifest,
 ) -> Result<Option<SandboxLayout>, MinecraftLaunchError> {
     if instance.sandboxed {

@@ -8,13 +8,14 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::minecraft::{
     installer::{
-        detect_java_path, install_latest_demo_instance,
+        detect_java_path, install_latest_demo_instance, install_latest_sandbox_demo_instance,
         install_sandbox_demo_instance as install_sandbox_version, list_instances,
+        latest_release_java_major,
     },
     launcher::{read_lines, spawn_instance, MinecraftProcess},
     model::InstanceManifest,
     paths::MinecraftPaths,
-    runtime::install_java_8_runtime,
+    runtime::{install_java_8_runtime, install_java_runtime},
 };
 
 const SANDBOX_MINECRAFT_VERSION: &str = "1.12.2";
@@ -161,6 +162,7 @@ pub async fn install_sandbox_demo_instance(
     app: AppHandle,
     instance_id: String,
     name: String,
+    release_channel: String,
 ) -> Result<InstanceManifest, String> {
     let paths = minecraft_paths(&app)?;
     let event_app = app.clone();
@@ -171,21 +173,39 @@ pub async fn install_sandbox_demo_instance(
     };
 
     tauri::async_runtime::spawn_blocking(move || {
-        let java = install_java_8_runtime(&paths, |progress| {
-            let _ = event_app.emit("minecraft-install-progress", progress);
-        })
-        .map_err(|error| error.to_string())?;
-        install_sandbox_version(
-            &paths,
-            &instance_id,
-            &display_name,
-            &java,
-            SANDBOX_MINECRAFT_VERSION,
-            |progress| {
+        if release_channel == "latest" {
+            let java_major = latest_release_java_major().map_err(|error| error.to_string())?;
+            let java = install_java_runtime(&paths, java_major, |progress| {
                 let _ = event_app.emit("minecraft-install-progress", progress);
-            },
-        )
-        .map_err(|error| error.to_string())
+            })
+            .map_err(|error| error.to_string())?;
+            install_latest_sandbox_demo_instance(
+                &paths,
+                &instance_id,
+                &display_name,
+                &java,
+                |progress| {
+                    let _ = event_app.emit("minecraft-install-progress", progress);
+                },
+            )
+            .map_err(|error| error.to_string())
+        } else {
+            let java = install_java_8_runtime(&paths, |progress| {
+                let _ = event_app.emit("minecraft-install-progress", progress);
+            })
+            .map_err(|error| error.to_string())?;
+            install_sandbox_version(
+                &paths,
+                &instance_id,
+                &display_name,
+                &java,
+                SANDBOX_MINECRAFT_VERSION,
+                |progress| {
+                    let _ = event_app.emit("minecraft-install-progress", progress);
+                },
+            )
+            .map_err(|error| error.to_string())
+        }
     })
     .await
     .map_err(|error| format!("インストール処理への参加に失敗しました: {error}"))?

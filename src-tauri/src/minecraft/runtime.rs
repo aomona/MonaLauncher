@@ -95,6 +95,16 @@ where
     install_java_runtime(paths, 21, progress)
 }
 
+pub fn install_java_25_runtime<F>(
+    paths: &MinecraftPaths,
+    progress: F,
+) -> Result<PathBuf, RuntimeInstallError>
+where
+    F: Fn(InstallProgress),
+{
+    install_java_runtime(paths, 25, progress)
+}
+
 pub fn install_java_8_runtime<F>(
     paths: &MinecraftPaths,
     progress: F,
@@ -105,7 +115,7 @@ where
     install_java_runtime(paths, 8, progress)
 }
 
-fn install_java_runtime<F>(
+pub fn install_java_runtime<F>(
     paths: &MinecraftPaths,
     major: u32,
     progress: F,
