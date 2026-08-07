@@ -2,6 +2,7 @@ use std::error::Error;
 use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::fs::File;
+use std::io::Read;
 use std::mem::size_of;
 use std::os::windows::ffi::OsStrExt;
 use std::os::windows::io::FromRawHandle;
@@ -32,6 +33,8 @@ use super::sandbox_drive::SandboxDrive;
 pub struct SpawnedProcessInfo {
     pub process_id: u32,
     pub token_info: ProcessTokenInfo,
+    pub stdout: String,
+    pub stderr: String,
 }
 
 pub struct SpawnedAppContainerProcess {
@@ -236,11 +239,23 @@ pub fn launch_probe_in_appcontainer(
     )?;
     let process_id = child.id();
     let token_info = child.token_info.clone();
+    let mut stdout = child.take_stdout().ok_or_else(|| {
+        AppContainerProcessError::Io(std::io::Error::other("probe stdout is unavailable"))
+    })?;
+    let mut stderr = child.take_stderr().ok_or_else(|| {
+        AppContainerProcessError::Io(std::io::Error::other("probe stderr is unavailable"))
+    })?;
     child.wait()?;
+    let mut stdout_text = String::new();
+    let mut stderr_text = String::new();
+    stdout.read_to_string(&mut stdout_text)?;
+    stderr.read_to_string(&mut stderr_text)?;
 
     Ok(SpawnedProcessInfo {
         process_id,
         token_info,
+        stdout: stdout_text,
+        stderr: stderr_text,
     })
 }
 
