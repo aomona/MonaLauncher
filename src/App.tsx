@@ -10,10 +10,7 @@ type MinecraftInstance = {
   javaPath: string;
   gameDirectory: string;
   demo: boolean;
-};
-
-type JavaDetection = {
-  path: string;
+  sandboxed: boolean;
 };
 
 type InstallProgress = {
@@ -43,6 +40,7 @@ const stageLabels: Record<string, string> = {
   libraries: "ライブラリ",
   "assets-index": "アセット一覧",
   assets: "ゲーム素材",
+  runtime: "隔離用Java 8",
   complete: "完了",
 };
 
@@ -65,7 +63,6 @@ export default function App() {
   const [selectedId, setSelectedId] = useState("");
   const [instanceId, setInstanceId] = useState("demo");
   const [instanceName, setInstanceName] = useState("Minecraft Demo");
-  const [javaPath, setJavaPath] = useState("");
   const [progress, setProgress] = useState<InstallProgress | null>(null);
   const [logs, setLogs] = useState<LogLine[]>([]);
   const [runningIds, setRunningIds] = useState<Set<string>>(new Set());
@@ -97,10 +94,6 @@ export default function App() {
     if (!hasTauriRuntime()) return;
 
     void refreshInstances().catch((cause) => setError(String(cause)));
-    void invoke<JavaDetection>("detect_java")
-      .then((java) => setJavaPath(java.path))
-      .catch((cause) => setError(String(cause)));
-
     const unlistenProgress = listen<InstallProgress>("minecraft-install-progress", (event) => {
       setProgress(event.payload);
     });
@@ -146,10 +139,9 @@ export default function App() {
     setBusy("install");
 
     try {
-      const installed = await invoke<MinecraftInstance>("install_demo_instance", {
+      const installed = await invoke<MinecraftInstance>("install_sandbox_demo_instance", {
         instanceId,
         name: instanceName,
-        javaPath,
       });
       await refreshInstances();
       setSelectedId(installed.id);
@@ -211,8 +203,8 @@ export default function App() {
           <h1>MonaLauncher</h1>
         </div>
         <div className="security-badge">
-          <span className="status-dot warning" />
-          通常起動 MVP
+          <span className="status-dot running" />
+          AppContainer対応
         </div>
       </header>
 
@@ -241,7 +233,9 @@ export default function App() {
                 <span className="instance-icon">{instance.name.slice(0, 1).toUpperCase()}</span>
                 <span>
                   <strong>{instance.name}</strong>
-                  <small>Minecraft {instance.versionId} · Demo</small>
+                  <small>
+                    Minecraft {instance.versionId} · {instance.sandboxed ? "AppContainer" : "通常"}
+                  </small>
                 </span>
                 {runningIds.has(instance.id) && <span className="status-dot running" />}
               </button>
@@ -255,7 +249,7 @@ export default function App() {
               void install();
             }}
           >
-            <p className="eyebrow">NEW DEMO INSTANCE</p>
+            <p className="eyebrow">NEW SANDBOX INSTANCE</p>
             <label>
               表示名
               <input
@@ -274,16 +268,8 @@ export default function App() {
                 required
               />
             </label>
-            <label>
-              Java
-              <input
-                value={javaPath}
-                onChange={(event) => setJavaPath(event.target.value)}
-                required
-              />
-            </label>
             <button className="secondary-button" disabled={busy !== null} type="submit">
-              {busy === "install" ? "インストール中…" : "デモ版を追加"}
+              {busy === "install" ? "インストール中…" : "隔離デモ版を追加"}
             </button>
           </form>
         </aside>
@@ -295,7 +281,7 @@ export default function App() {
               <h2>{selected?.name ?? "インスタンスを選択"}</h2>
               <p className="hero-copy">
                 {selected
-                  ? `Minecraft ${selected.versionId} をオフラインのデモユーザーとして起動します。`
+                  ? `Minecraft ${selected.versionId} を${selected.sandboxed ? "AppContainer内" : "通常プロセス"}で起動します。`
                   : "左側で新しいデモ用インスタンスを作成してください。"}
               </p>
             </div>
@@ -380,8 +366,8 @@ export default function App() {
           </div>
 
           <footer className="security-note">
-            <span>SECURITY ROADMAP</span>
-            現在は通常プロセスで起動確認します。次にファイルACLを設定してAppContainer起動へ切り替えます。
+            <span>SECURITY</span>
+            新しいインスタンスは専用SIDと最小限のファイルACLを持つAppContainer内で起動します。
           </footer>
         </section>
       </section>
