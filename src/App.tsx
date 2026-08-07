@@ -69,6 +69,7 @@ export default function App() {
   const [runningIds, setRunningIds] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState<"install" | "launch" | "stop" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showCreator, setShowCreator] = useState(false);
 
   const selected = useMemo(
     () => instances.find((instance) => instance.id === selectedId) ?? null,
@@ -147,6 +148,7 @@ export default function App() {
       });
       await refreshInstances();
       setSelectedId(installed.id);
+      setShowCreator(false);
     } catch (cause) {
       setError(String(cause));
     } finally {
@@ -197,160 +199,211 @@ export default function App() {
   return (
     <main className="app-shell">
       <header className="topbar">
-        <div className="brand-mark" aria-hidden="true">
-          M
+        <div className="brand">
+          <div className="brand-mark" aria-hidden="true">
+            <span />
+          </div>
+          <div>
+            <h1>MonaLauncher</h1>
+            <p>Secure Minecraft launcher</p>
+          </div>
         </div>
-        <div>
-          <p className="eyebrow">MONA PROJECT</p>
-          <h1>MonaLauncher</h1>
+        <div className="toolbar" aria-label="ランチャー操作">
+          <button
+            className="toolbar-button accent"
+            onClick={() => setShowCreator(true)}
+            type="button"
+          >
+            <span aria-hidden="true">＋</span>インスタンスを追加
+          </button>
+          <button
+            className="toolbar-button"
+            onClick={() => void refreshInstances().catch((cause) => setError(String(cause)))}
+            type="button"
+          >
+            <span aria-hidden="true">↻</span>更新
+          </button>
         </div>
-        <div className="security-badge">
-          <span className="status-dot running" />
-          AppContainer対応
+        <div className="account-chip">
+          <span className="account-avatar">M</span>
+          <span>
+            <strong>オフライン</strong>
+            <small>Demo profile</small>
+          </span>
+          <span className="chevron">⌄</span>
         </div>
       </header>
 
       <section className="workspace">
-        <aside className="sidebar panel">
-          <div className="section-heading">
+        <nav className="rail" aria-label="メインメニュー">
+          <button className="rail-button active" type="button">
+            <span>▦</span>ライブラリ
+          </button>
+          <button className="rail-button" type="button">
+            <span>◫</span>ニュース
+          </button>
+          <div className="rail-spacer" />
+          <div className="security-pill" title="AppContainerによる隔離が有効です">
+            <span className="shield">◆</span>
+            <span>
+              <strong>保護中</strong>
+              <small>AppContainer</small>
+            </span>
+          </div>
+          <button className="rail-button" type="button">
+            <span>⚙</span>設定
+          </button>
+        </nav>
+
+        <section className="library">
+          <div className="library-heading">
             <div>
-              <p className="eyebrow">INSTANCES</p>
+              <p className="eyebrow">YOUR LIBRARY</p>
               <h2>インスタンス</h2>
+              <p>{instances.length}個のMinecraft環境</p>
             </div>
-            <span className="count">{instances.length}</span>
+            <div className="view-controls" aria-label="表示切り替え">
+              <button className="active" type="button" aria-label="グリッド表示">
+                ▦
+              </button>
+              <button type="button" aria-label="リスト表示">
+                ☷
+              </button>
+            </div>
           </div>
 
-          <div className="instance-list" aria-label="Minecraftインスタンス">
+          <div className="instance-grid" aria-label="Minecraftインスタンス">
             {instances.length === 0 && (
-              <p className="empty-state">まだありません。下のフォームからデモ版を作成できます。</p>
+              <button className="empty-library" onClick={() => setShowCreator(true)} type="button">
+                <span className="empty-cube">＋</span>
+                <strong>最初のインスタンスを作成</strong>
+                <small>最新版または互換版のMinecraftを追加できます</small>
+              </button>
             )}
             {instances.map((instance) => (
               <button
-                className={`instance-card ${selectedId === instance.id ? "selected" : ""}`}
+                className={"instance-tile " + (selectedId === instance.id ? "selected" : "")}
                 key={instance.id}
                 onClick={() => setSelectedId(instance.id)}
                 aria-pressed={selectedId === instance.id}
                 type="button"
               >
-                <span className="instance-icon">{instance.name.slice(0, 1).toUpperCase()}</span>
-                <span>
-                  <strong>{instance.name}</strong>
-                  <small>
-                    Minecraft {instance.versionId} · {instance.sandboxed ? "AppContainer" : "通常"}
-                  </small>
+                <span className="instance-art">
+                  <span className="grass-cube">{instance.name.slice(0, 1).toUpperCase()}</span>
+                  {runningIds.has(instance.id) && <span className="playing-badge">PLAYING</span>}
                 </span>
-                {runningIds.has(instance.id) && <span className="status-dot running" />}
+                <span className="tile-copy">
+                  <strong>{instance.name}</strong>
+                  <small>Minecraft {instance.versionId}</small>
+                </span>
+                <span className="tile-menu" aria-hidden="true">
+                  •••
+                </span>
               </button>
             ))}
           </div>
 
-          <form
-            className="install-form"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void install();
-            }}
-          >
-            <p className="eyebrow">NEW SANDBOX INSTANCE</p>
-            <label>
-              バージョン
-              <select
-                value={releaseChannel}
-                onChange={(event) =>
-                  setReleaseChannel(event.target.value as "latest" | "compatible")
-                }
-              >
-                <option value="latest">最新版（推奨）</option>
-                <option value="compatible">互換版 1.12.2</option>
-              </select>
-            </label>
-            <label>
-              表示名
-              <input
-                value={instanceName}
-                onChange={(event) => setInstanceName(event.target.value)}
-                required
-              />
-            </label>
-            <label>
-              ID
-              <input
-                value={instanceId}
-                onChange={(event) => setInstanceId(event.target.value)}
-                pattern="[A-Za-z0-9_-]+"
-                title="英数字、_、- が使えます"
-                required
-              />
-            </label>
-            <button className="secondary-button" disabled={busy !== null} type="submit">
-              {busy === "install" ? "インストール中…" : "隔離デモ版を追加"}
-            </button>
-          </form>
-        </aside>
-
-        <section className="content">
-          <div className="hero panel">
-            <div>
-              <p className="eyebrow">SELECTED INSTANCE</p>
-              <h2>{selected?.name ?? "インスタンスを選択"}</h2>
-              <p className="hero-copy">
-                {selected
-                  ? `Minecraft ${selected.versionId} を${selected.sandboxed ? "AppContainer内" : "通常プロセス"}で起動します。`
-                  : "左側で新しいデモ用インスタンスを作成してください。"}
-              </p>
-            </div>
-            <div className="launch-actions">
-              <span className={`state-label ${isRunning ? "online" : ""}`}>
-                <span className={`status-dot ${isRunning ? "running" : ""}`} />
-                {isRunning ? "実行中" : "停止中"}
-              </span>
-              {isRunning ? (
-                <button
-                  className="danger-button"
-                  disabled={busy !== null}
-                  onClick={stop}
-                  type="button"
-                >
-                  {busy === "stop" ? "停止中…" : "停止"}
-                </button>
-              ) : (
-                <button
-                  className="primary-button"
-                  disabled={!selected || busy !== null}
-                  onClick={launch}
-                  type="button"
-                >
-                  {busy === "launch" ? "起動中…" : "▶ ゲームを起動"}
-                </button>
-              )}
-            </div>
-          </div>
-
           {progress && progress.stage !== "complete" && (
-            <div className="progress-card panel" aria-live="polite">
-              <div className="progress-copy">
-                <strong>{stageLabels[progress.stage] ?? progress.stage}</strong>
-                <span>{progress.message}</span>
-                <b>{progressPercent}%</b>
-              </div>
-              <div className="progress-track">
-                <div className="progress-value" style={{ width: `${progressPercent}%` }} />
+            <div className="progress-card" aria-live="polite">
+              <div className="progress-icon">↓</div>
+              <div className="progress-body">
+                <div className="progress-copy">
+                  <strong>{stageLabels[progress.stage] ?? progress.stage}</strong>
+                  <span>{progress.message}</span>
+                  <b>{progressPercent}%</b>
+                </div>
+                <div className="progress-track">
+                  <div className="progress-value" style={{ width: progressPercent + "%" }} />
+                </div>
               </div>
             </div>
           )}
 
           {error && (
             <div className="error-card" role="alert">
-              <strong>処理を完了できませんでした</strong>
-              <span>{error}</span>
+              <span>!</span>
+              <div>
+                <strong>処理を完了できませんでした</strong>
+                <small>{error}</small>
+              </div>
             </div>
           )}
+        </section>
 
-          <div className="console panel">
+        <aside className="details-panel">
+          <div className="details-hero">
+            <div className="detail-icon">{selected?.name.slice(0, 1).toUpperCase() ?? "?"}</div>
+            <div>
+              <span className={"state-label " + (isRunning ? "online" : "")}>
+                <span className={"status-dot " + (isRunning ? "running" : "")} />
+                {isRunning ? "実行中" : "起動準備完了"}
+              </span>
+              <h2>{selected?.name ?? "未選択"}</h2>
+              <p>
+                {selected ? "Minecraft " + selected.versionId : "インスタンスを選択してください"}
+              </p>
+            </div>
+          </div>
+
+          <div className="launch-actions">
+            {isRunning ? (
+              <button
+                className="danger-button"
+                disabled={busy !== null}
+                onClick={stop}
+                type="button"
+              >
+                {busy === "stop" ? "停止中…" : "■ 停止"}
+              </button>
+            ) : (
+              <button
+                className="primary-button"
+                disabled={!selected || busy !== null}
+                onClick={launch}
+                type="button"
+              >
+                <span aria-hidden="true">▶</span>
+                {busy === "launch" ? "起動中…" : "起動"}
+              </button>
+            )}
+            <button
+              className="icon-button"
+              disabled={!selected}
+              type="button"
+              aria-label="インスタンス設定"
+            >
+              ⚙
+            </button>
+            <button
+              className="icon-button"
+              disabled={!selected}
+              type="button"
+              aria-label="その他の操作"
+            >
+              •••
+            </button>
+          </div>
+
+          <dl className="instance-facts">
+            <div>
+              <dt>実行方式</dt>
+              <dd>{selected?.sandboxed ? "AppContainer" : selected ? "通常" : "—"}</dd>
+            </div>
+            <div>
+              <dt>ゲームモード</dt>
+              <dd>{selected?.demo ? "デモ" : selected ? "通常" : "—"}</dd>
+            </div>
+            <div>
+              <dt>インスタンスID</dt>
+              <dd>{selected?.id ?? "—"}</dd>
+            </div>
+          </dl>
+
+          <div className="console">
             <div className="console-heading">
               <div>
-                <p className="eyebrow">LIVE OUTPUT</p>
-                <h2>ゲームログ</h2>
+                <span className="status-dot" />
+                <strong>ライブコンソール</strong>
               </div>
               <button
                 className="text-button"
@@ -365,12 +418,10 @@ export default function App() {
             </div>
             <div className="log-output" aria-live="polite">
               {visibleLogs.length === 0 ? (
-                <span className="log-placeholder">
-                  起動すると、Minecraftのログがここに表示されます。
-                </span>
+                <span className="log-placeholder">ゲームを起動するとログが表示されます。</span>
               ) : (
                 visibleLogs.map((entry) => (
-                  <div className={`log-line ${entry.stream}`} key={entry.id}>
+                  <div className={"log-line " + entry.stream} key={entry.id}>
                     <span>{entry.stream}</span>
                     <code>{entry.line}</code>
                   </div>
@@ -379,11 +430,85 @@ export default function App() {
             </div>
           </div>
 
-          <footer className="security-note">
-            <span>SECURITY</span>
-            新しいインスタンスは専用SIDと最小限のファイルACLを持つAppContainer内で起動します。
-          </footer>
-        </section>
+          <div className="isolation-note">
+            <span>◆</span>
+            <p>
+              <strong>サンドボックス保護</strong>
+              <small>専用SIDと最小限の権限で実行されます</small>
+            </p>
+          </div>
+        </aside>
+
+        {showCreator && (
+          <div className="modal-backdrop">
+            <form
+              className="creator-modal"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void install();
+              }}
+            >
+              <div className="modal-heading">
+                <div>
+                  <p className="eyebrow">NEW INSTANCE</p>
+                  <h2>インスタンスを追加</h2>
+                </div>
+                <button
+                  onClick={() => setShowCreator(false)}
+                  disabled={busy !== null}
+                  type="button"
+                  aria-label="閉じる"
+                >
+                  ×
+                </button>
+              </div>
+              <p className="modal-copy">独立したMinecraft環境をAppContainer内に作成します。</p>
+              <label>
+                バージョン
+                <select
+                  value={releaseChannel}
+                  onChange={(event) =>
+                    setReleaseChannel(event.target.value as "latest" | "compatible")
+                  }
+                >
+                  <option value="latest">最新版（推奨）</option>
+                  <option value="compatible">互換版 1.12.2</option>
+                </select>
+              </label>
+              <label>
+                表示名
+                <input
+                  value={instanceName}
+                  onChange={(event) => setInstanceName(event.target.value)}
+                  required
+                />
+              </label>
+              <label>
+                ID
+                <input
+                  value={instanceId}
+                  onChange={(event) => setInstanceId(event.target.value)}
+                  pattern="[A-Za-z0-9_-]+"
+                  title="英数字、_、- が使えます"
+                  required
+                />
+              </label>
+              <div className="modal-actions">
+                <button
+                  className="secondary-button"
+                  onClick={() => setShowCreator(false)}
+                  disabled={busy !== null}
+                  type="button"
+                >
+                  キャンセル
+                </button>
+                <button className="primary-button" disabled={busy !== null} type="submit">
+                  {busy === "install" ? "インストール中…" : "作成する"}
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
       </section>
     </main>
   );
