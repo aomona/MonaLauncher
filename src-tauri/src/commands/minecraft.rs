@@ -43,6 +43,14 @@ pub struct JavaDetection {
     path: String,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SandboxPreparation {
+    profile_name: String,
+    sid: String,
+    profile_created: bool,
+}
+
 fn minecraft_paths(app: &AppHandle) -> Result<MinecraftPaths, String> {
     let app_data = app
         .path()
@@ -66,6 +74,50 @@ pub fn detect_java() -> Result<JavaDetection, String> {
 #[tauri::command]
 pub fn list_minecraft_instances(app: AppHandle) -> Result<Vec<InstanceManifest>, String> {
     list_instances(&minecraft_paths(&app)?).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn prepare_instance_sandbox(
+    app: AppHandle,
+    instance_id: String,
+) -> Result<SandboxPreparation, String> {
+    prepare_instance_sandbox_for_platform(&app, &instance_id)
+}
+
+#[cfg(windows)]
+fn prepare_instance_sandbox_for_platform(
+    app: &AppHandle,
+    instance_id: &str,
+) -> Result<SandboxPreparation, String> {
+    use crate::platform::windows::appcontainer_profile::{
+        ensure_appcontainer_profile, profile_name_for_instance,
+    };
+    use crate::platform::windows::sandbox_acl::grant_minecraft_access;
+
+    let paths = minecraft_paths(app)?;
+    let instance = list_instances(&paths)
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .find(|instance| instance.id == instance_id)
+        .ok_or_else(|| format!("Instance was not found: {instance_id}"))?;
+    let profile_name = profile_name_for_instance(instance_id).map_err(|error| error.to_string())?;
+    let profile = ensure_appcontainer_profile(&profile_name).map_err(|error| error.to_string())?;
+
+    grant_minecraft_access(&paths, &instance, &profile.sid).map_err(|error| error.to_string())?;
+
+    Ok(SandboxPreparation {
+        profile_name: profile.name,
+        sid: profile.sid,
+        profile_created: profile.created,
+    })
+}
+
+#[cfg(not(windows))]
+fn prepare_instance_sandbox_for_platform(
+    _app: &AppHandle,
+    _instance_id: &str,
+) -> Result<SandboxPreparation, String> {
+    Err("AppContainer is only available on Windows".to_owned())
 }
 
 #[tauri::command]
