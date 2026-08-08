@@ -67,7 +67,10 @@ impl fmt::Display for MinecraftInstallError {
                 write!(formatter, "latest release metadata is missing: {version}")
             }
             Self::JavaVersionMissing(version) => {
-                write!(formatter, "Minecraft {version} does not declare a Java version")
+                write!(
+                    formatter,
+                    "Minecraft {version} does not declare a Java version"
+                )
             }
             Self::VersionMissing(version) => {
                 write!(
@@ -128,6 +131,13 @@ struct DownloadTask {
     target: PathBuf,
 }
 
+#[derive(Clone, Copy)]
+struct InstanceInstallOptions<'a> {
+    requested_version: Option<&'a str>,
+    sandboxed: bool,
+    demo: bool,
+}
+
 pub fn install_latest_demo_instance<F>(
     paths: &MinecraftPaths,
     instance_id: &str,
@@ -138,13 +148,16 @@ pub fn install_latest_demo_instance<F>(
 where
     F: Fn(InstallProgress) + Send + Sync,
 {
-    install_demo_instance_from_manifest(
+    install_instance_from_manifest(
         paths,
         instance_id,
         instance_name,
         java_path,
-        None,
-        false,
+        InstanceInstallOptions {
+            requested_version: None,
+            sandboxed: false,
+            demo: true,
+        },
         progress,
     )
 }
@@ -160,13 +173,39 @@ pub fn install_sandbox_demo_instance<F>(
 where
     F: Fn(InstallProgress) + Send + Sync,
 {
-    install_demo_instance_from_manifest(
+    install_sandbox_instance(
         paths,
         instance_id,
         instance_name,
         java_path,
-        Some(version_id),
+        version_id,
         true,
+        progress,
+    )
+}
+
+pub fn install_sandbox_instance<F>(
+    paths: &MinecraftPaths,
+    instance_id: &str,
+    instance_name: &str,
+    java_path: &Path,
+    version_id: &str,
+    demo: bool,
+    progress: F,
+) -> Result<InstanceManifest, MinecraftInstallError>
+where
+    F: Fn(InstallProgress) + Send + Sync,
+{
+    install_instance_from_manifest(
+        paths,
+        instance_id,
+        instance_name,
+        java_path,
+        InstanceInstallOptions {
+            requested_version: Some(version_id),
+            sandboxed: true,
+            demo,
+        },
         progress,
     )
 }
@@ -181,13 +220,30 @@ pub fn install_latest_sandbox_demo_instance<F>(
 where
     F: Fn(InstallProgress) + Send + Sync,
 {
-    install_demo_instance_from_manifest(
+    install_latest_sandbox_instance(paths, instance_id, instance_name, java_path, true, progress)
+}
+
+pub fn install_latest_sandbox_instance<F>(
+    paths: &MinecraftPaths,
+    instance_id: &str,
+    instance_name: &str,
+    java_path: &Path,
+    demo: bool,
+    progress: F,
+) -> Result<InstanceManifest, MinecraftInstallError>
+where
+    F: Fn(InstallProgress) + Send + Sync,
+{
+    install_instance_from_manifest(
         paths,
         instance_id,
         instance_name,
         java_path,
-        None,
-        true,
+        InstanceInstallOptions {
+            requested_version: None,
+            sandboxed: true,
+            demo,
+        },
         progress,
     )
 }
@@ -208,13 +264,12 @@ pub fn latest_release_java_major() -> Result<u32, MinecraftInstallError> {
         .ok_or(MinecraftInstallError::JavaVersionMissing(version.id))
 }
 
-fn install_demo_instance_from_manifest<F>(
+fn install_instance_from_manifest<F>(
     paths: &MinecraftPaths,
     instance_id: &str,
     instance_name: &str,
     java_path: &Path,
-    requested_version: Option<&str>,
-    sandboxed: bool,
+    options: InstanceInstallOptions<'_>,
     progress: F,
 ) -> Result<InstanceManifest, MinecraftInstallError>
 where
@@ -232,7 +287,8 @@ where
 
     progress_event(&progress, "metadata", 0, 1, "Fetching version manifest");
     let manifest: VersionManifest = fetch_json(&client, VERSION_MANIFEST_URL)?;
-    let release_id = requested_version
+    let release_id = options
+        .requested_version
         .map(str::to_owned)
         .unwrap_or(manifest.latest.release);
     let release = manifest
@@ -240,7 +296,7 @@ where
         .into_iter()
         .find(|version| version.id == release_id)
         .ok_or_else(|| {
-            if requested_version.is_some() {
+            if options.requested_version.is_some() {
                 MinecraftInstallError::VersionMissing(release_id.clone())
             } else {
                 MinecraftInstallError::LatestReleaseMissing(release_id.clone())
@@ -273,7 +329,7 @@ where
     )?;
     progress_event(&progress, "client", 1, 1, "Minecraft client ready");
 
-    let features = HashMap::from([("is_demo_user".to_owned(), true)]);
+    let features = HashMap::from([("is_demo_user".to_owned(), options.demo)]);
     let mut library_tasks = BTreeMap::<PathBuf, DownloadTask>::new();
 
     for library in &version.libraries {
@@ -358,8 +414,8 @@ where
         version_id: version.id,
         java_path: java_path.to_string_lossy().into_owned(),
         game_directory: game_directory.to_string_lossy().into_owned(),
-        demo: true,
-        sandboxed,
+        demo: options.demo,
+        sandboxed: options.sandboxed,
     };
 
     let instance_directory = paths.instance(instance_id);
@@ -369,7 +425,17 @@ where
         serde_json::to_vec_pretty(&instance)?,
     )?;
 
-    progress_event(&progress, "complete", 1, 1, "Demo instance is ready");
+    progress_event(
+        &progress,
+        "complete",
+        1,
+        1,
+        if options.demo {
+            "Demo instance is ready"
+        } else {
+            "Offline instance is ready"
+        },
+    );
 
     Ok(instance)
 }

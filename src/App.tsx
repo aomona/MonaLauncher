@@ -67,9 +67,10 @@ function hasTauriRuntime() {
 export default function App() {
   const [instances, setInstances] = useState<MinecraftInstance[]>([]);
   const [selectedId, setSelectedId] = useState("");
-  const [instanceId, setInstanceId] = useState("demo");
-  const [instanceName, setInstanceName] = useState("Minecraft Demo");
+  const [instanceId, setInstanceId] = useState("minecraft");
+  const [instanceName, setInstanceName] = useState("Minecraft");
   const [releaseChannel, setReleaseChannel] = useState<"latest" | "compatible">("latest");
+  const [gameMode, setGameMode] = useState<"offline" | "demo">("offline");
   const [progress, setProgress] = useState<InstallProgress | null>(null);
   const [launchProgress, setLaunchProgress] = useState<MinecraftLaunchProgress | null>(null);
   const [logs, setLogs] = useState<LogLine[]>([]);
@@ -153,10 +154,11 @@ export default function App() {
     setBusy("install");
 
     try {
-      const installed = await invoke<MinecraftInstance>("install_sandbox_demo_instance", {
+      const installed = await invoke<MinecraftInstance>("install_sandbox_instance", {
         instanceId,
         name: instanceName,
         releaseChannel,
+        demo: gameMode === "demo",
       });
       await refreshInstances();
       setSelectedId(installed.id);
@@ -503,6 +505,22 @@ export default function App() {
                   <option value="compatible">互換版 1.12.2</option>
                 </select>
               </label>
+              <label>
+                プレイモード
+                <select
+                  value={gameMode}
+                  onChange={(event) => setGameMode(event.target.value as "offline" | "demo")}
+                >
+                  <option value="offline">通常版（オフライン）</option>
+                  <option value="demo">公式デモ版</option>
+                </select>
+              </label>
+              <div className="mode-note">
+                <span aria-hidden="true">i</span>
+                {gameMode === "offline"
+                  ? "ワールド作成とシングルプレイができます。オンライン機能にはMicrosoft認証が必要です。"
+                  : "時間制限付きの公式デモワールドを起動します。"}
+              </div>
               <label>
                 表示名
                 <input

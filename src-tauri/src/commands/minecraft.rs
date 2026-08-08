@@ -8,9 +8,10 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::minecraft::{
     installer::{
-        detect_java_path, install_latest_demo_instance, install_latest_sandbox_demo_instance,
-        install_sandbox_demo_instance as install_sandbox_version, list_instances,
-        latest_release_java_major,
+        detect_java_path, install_latest_demo_instance,
+        install_latest_sandbox_instance as install_latest_sandbox_mode,
+        install_sandbox_instance as install_sandbox_mode, latest_release_java_major,
+        list_instances,
     },
     launcher::{read_lines, spawn_instance, MinecraftProcess},
     model::InstanceManifest,
@@ -166,11 +167,12 @@ pub async fn install_demo_instance(
 }
 
 #[tauri::command]
-pub async fn install_sandbox_demo_instance(
+pub async fn install_sandbox_instance(
     app: AppHandle,
     instance_id: String,
     name: String,
     release_channel: String,
+    demo: bool,
 ) -> Result<InstanceManifest, String> {
     let paths = minecraft_paths(&app)?;
     let event_app = app.clone();
@@ -187,11 +189,12 @@ pub async fn install_sandbox_demo_instance(
                 let _ = event_app.emit("minecraft-install-progress", progress);
             })
             .map_err(|error| error.to_string())?;
-            install_latest_sandbox_demo_instance(
+            install_latest_sandbox_mode(
                 &paths,
                 &instance_id,
                 &display_name,
                 &java,
+                demo,
                 |progress| {
                     let _ = event_app.emit("minecraft-install-progress", progress);
                 },
@@ -202,12 +205,13 @@ pub async fn install_sandbox_demo_instance(
                 let _ = event_app.emit("minecraft-install-progress", progress);
             })
             .map_err(|error| error.to_string())?;
-            install_sandbox_version(
+            install_sandbox_mode(
                 &paths,
                 &instance_id,
                 &display_name,
                 &java,
                 SANDBOX_MINECRAFT_VERSION,
+                demo,
                 |progress| {
                     let _ = event_app.emit("minecraft-install-progress", progress);
                 },

@@ -6,7 +6,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 #[cfg(windows)]
-use monalauncher_lib::minecraft::installer::install_sandbox_demo_instance;
+use monalauncher_lib::minecraft::installer::install_sandbox_instance;
 #[cfg(windows)]
 use monalauncher_lib::minecraft::launcher::{read_lines, spawn_instance};
 #[cfg(windows)]
@@ -22,17 +22,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .join("me.aomona.monalauncher")
         .join("minecraft");
     let paths = MinecraftPaths::new(root);
-    let instance_id = "appcontainer-latest-demo";
+    let demo = std::env::var_os("MONALAUNCHER_OFFLINE").is_none();
+    let (instance_id, instance_name, mode_name) = if demo {
+        (
+            "appcontainer-latest-demo",
+            "Latest AppContainer Demo",
+            "demo",
+        )
+    } else {
+        (
+            "appcontainer-latest-offline",
+            "Latest AppContainer Offline",
+            "offline",
+        )
+    };
     if std::env::var_os("MONALAUNCHER_SKIP_INSTALL").is_none() {
         let java = install_java_25_runtime(&paths, |progress| {
             println!("[runtime] {}", progress.message);
         })?;
-        install_sandbox_demo_instance(
+        install_sandbox_instance(
             &paths,
             instance_id,
-            "Latest AppContainer Demo",
+            instance_name,
             &java,
             "26.2",
+            demo,
             |progress| {
                 if progress.completed == 0 || progress.completed == progress.total {
                     println!(
@@ -44,7 +58,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )?;
     }
 
-    println!("[launcher] starting latest Minecraft in AppContainer");
+    println!("[launcher] starting latest Minecraft ({mode_name}) in AppContainer");
     let spawned = spawn_instance(&paths, instance_id)?;
     if !spawned.sandboxed {
         return Err("launcher did not use AppContainer".into());
@@ -73,7 +87,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             child.wait()?;
             stdout_thread.join().ok();
             stderr_thread.join().ok();
-            println!("[launcher] latest AppContainer Minecraft smoke test passed");
+            println!("[launcher] latest AppContainer Minecraft ({mode_name}) smoke test passed");
             return Ok(());
         }
         thread::sleep(Duration::from_millis(250));

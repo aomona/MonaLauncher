@@ -1032,6 +1032,33 @@ button:disabled {
   box-shadow: 0 0 0 2px rgba(104, 155, 81, 0.13);
 }
 
+.mode-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: -4px;
+  padding: 8px 9px;
+  border: 1px solid #303943;
+  border-radius: 7px;
+  color: #788391;
+  background: #171b20;
+  font-size: 8px;
+  line-height: 1.55;
+}
+
+.mode-note span {
+  display: grid;
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 50%;
+  color: #a8c5dc;
+  background: #263744;
+  font-size: 8px;
+  font-weight: 700;
+}
+
 .modal-actions {
   display: flex;
   justify-content: flex-end;

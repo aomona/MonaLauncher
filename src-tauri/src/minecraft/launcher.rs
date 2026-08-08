@@ -152,7 +152,7 @@ pub fn spawn_instance(
         validate_java_version(Path::new(&instance.java_path), java_version.major_version)?;
     }
     let mut sandbox = prepare_sandbox_layout(paths, &instance)?;
-    let classpath = build_classpath(paths, &version)?;
+    let classpath = build_classpath(paths, &version, instance.demo)?;
     let source_client_jar = paths.version_jar(&version.id);
     require_file(&source_client_jar)?;
 
@@ -185,7 +185,15 @@ pub fn spawn_instance(
         .join(";");
 
     let substitutions = HashMap::from([
-        ("${auth_player_name}", "DemoPlayer".to_owned()),
+        (
+            "${auth_player_name}",
+            if instance.demo {
+                "DemoPlayer"
+            } else {
+                "Player"
+            }
+            .to_owned(),
+        ),
         ("${version_name}", version.id.clone()),
         (
             "${game_directory}",
@@ -532,8 +540,9 @@ fn load_instance(
 fn build_classpath(
     paths: &MinecraftPaths,
     version: &VersionMetadata,
+    demo: bool,
 ) -> Result<Vec<PathBuf>, MinecraftLaunchError> {
-    let features = HashMap::from([("is_demo_user".to_owned(), true)]);
+    let features = HashMap::from([("is_demo_user".to_owned(), demo)]);
     let mut classpath = Vec::new();
 
     for library in &version.libraries {
