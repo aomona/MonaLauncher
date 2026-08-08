@@ -4,7 +4,14 @@ import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 
 final class LauncherNarrator implements Narrator {
-    private static final String PREFIX = "MONALAUNCHER_NARRATOR\t";
+    private static final String TOKEN = System.getProperty("monalauncher.narrator.token", "");
+    private static final String PREFIX = "MONALAUNCHER_NARRATOR\t" + TOKEN + "\t";
+
+    LauncherNarrator() {
+        if (Boolean.getBoolean("monalauncher.narrator.smoke")) {
+            say("MonaLauncher narrator smoke test", true, 0.5f);
+        }
+    }
 
     @Override
     public void say(String text, boolean interrupt, float volume) {

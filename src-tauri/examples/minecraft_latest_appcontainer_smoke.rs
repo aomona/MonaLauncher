@@ -69,11 +69,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if !spawned.sandboxed {
         return Err("launcher did not use AppContainer".into());
     }
+    let narrator_token = spawned
+        .narrator_token
+        .clone()
+        .ok_or("sandboxed launch did not return a narrator token")?;
     let mut child = spawned.child;
     let narrator_failed = Arc::new(AtomicBool::new(false));
     let narration_requested = Arc::new(AtomicBool::new(false));
     let stdout_narration_requested = Arc::clone(&narration_requested);
-    let narrator_broker = NarratorBroker::start()?;
+    let narrator_broker = NarratorBroker::start(narrator_token)?;
     let stdout_narrator_failed = Arc::clone(&narrator_failed);
     let stdout_thread = thread::spawn(move || {
         read_lines(spawned.stdout, |line| {

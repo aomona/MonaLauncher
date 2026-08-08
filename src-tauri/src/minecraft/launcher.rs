@@ -126,6 +126,7 @@ pub struct SpawnedMinecraft {
     pub stdout: Box<dyn Read + Send>,
     pub stderr: Box<dyn Read + Send>,
     pub sandboxed: bool,
+    pub narrator_token: Option<String>,
 }
 
 #[derive(Debug)]
@@ -152,6 +153,10 @@ pub fn spawn_instance(
         validate_java_version(Path::new(&instance.java_path), java_version.major_version)?;
     }
     let mut sandbox = prepare_sandbox_layout(paths, &instance)?;
+    let narrator_token = sandbox
+        .as_ref()
+        .map(|_| generate_narrator_token())
+        .transpose()?;
     let classpath = build_classpath(paths, &version, instance.demo)?;
     let source_client_jar = paths.version_jar(&version.id);
     require_file(&source_client_jar)?;
@@ -267,6 +272,15 @@ pub fn spawn_instance(
             natives_directory.join("jna").display()
         )));
         arguments.push(OsString::from("-Djna.nounpack=true"));
+        arguments.push(OsString::from(format!(
+            "-Dmonalauncher.narrator.token={}",
+            narrator_token
+                .as_deref()
+                .expect("sandboxed launches have a narrator token")
+        )));
+        if std::env::var_os("MONALAUNCHER_EXPECT_NARRATOR").is_some() {
+            arguments.push(OsString::from("-Dmonalauncher.narrator.smoke=true"));
+        }
     }
     arguments.push(OsString::from(&version.main_class));
     let game_arguments = version
@@ -288,6 +302,9 @@ pub fn spawn_instance(
             sandbox.as_mut().expect("sandbox layout is prepared"),
             &arguments,
             &game_directory,
+            narrator_token
+                .as_deref()
+                .expect("sandboxed launches have a narrator token"),
         );
     }
 
@@ -306,6 +323,7 @@ pub fn spawn_instance(
         stdout: Box::new(stdout),
         stderr: Box::new(stderr),
         sandboxed: false,
+        narrator_token: None,
     })
 }
 
@@ -316,6 +334,7 @@ fn spawn_sandboxed(
     sandbox: &mut SandboxLayout,
     arguments: &[OsString],
     game_directory: &Path,
+    narrator_token: &str,
 ) -> Result<SpawnedMinecraft, MinecraftLaunchError> {
     use crate::platform::windows::appcontainer_process::launch_in_appcontainer;
     use crate::platform::windows::sandbox_acl::grant_minecraft_access;
@@ -350,6 +369,7 @@ fn spawn_sandboxed(
         stdout: Box::new(stdout),
         stderr: Box::new(stderr),
         sandboxed: true,
+        narrator_token: Some(narrator_token.to_owned()),
     })
 }
 
@@ -360,6 +380,7 @@ fn spawn_sandboxed(
     _sandbox: &mut SandboxLayout,
     _arguments: &[OsString],
     _game_directory: &Path,
+    _narrator_token: &str,
 ) -> Result<SpawnedMinecraft, MinecraftLaunchError> {
     Err(MinecraftLaunchError::Sandbox(
         "AppContainer is only available on Windows".to_owned(),
@@ -601,8 +622,49 @@ where
 {
     use std::io::BufRead;
 
-    for line in BufReader::new(reader).lines().map_while(Result::ok) {
-        on_line(line);
+    const MAX_LOG_LINE_BYTES: usize = 256 * 1024;
+    let mut reader = BufReader::new(reader);
+    loop {
+        let mut line = Vec::new();
+        let mut saw_data = false;
+        let mut truncated = false;
+        loop {
+            let (consumed, newline) = {
+                let available = match reader.fill_buf() {
+                    Ok(available) => available,
+                    Err(_) => return,
+                };
+                if available.is_empty() {
+                    if !saw_data {
+                        return;
+                    }
+                    break;
+                }
+                saw_data = true;
+                let newline = available.iter().position(|byte| *byte == b'\n');
+                let content_length = newline.unwrap_or(available.len());
+                let remaining = MAX_LOG_LINE_BYTES.saturating_sub(line.len());
+                let copied = content_length.min(remaining);
+                line.extend_from_slice(&available[..copied]);
+                truncated |= copied < content_length;
+                (
+                    newline.map_or(available.len(), |position| position + 1),
+                    newline.is_some(),
+                )
+            };
+            reader.consume(consumed);
+            if newline {
+                break;
+            }
+        }
+        if line.last() == Some(&b'\r') {
+            line.pop();
+        }
+        let mut text = String::from_utf8_lossy(&line).into_owned();
+        if truncated {
+            text.push_str(" …[line truncated]");
+        }
+        on_line(text);
     }
 }
 
@@ -690,6 +752,19 @@ fn substitute(value: &str, substitutions: &HashMap<&str, String>) -> String {
         })
 }
 
+fn generate_narrator_token() -> Result<String, MinecraftLaunchError> {
+    let mut bytes = [0_u8; 32];
+    getrandom::fill(&mut bytes)
+        .map_err(|error| MinecraftLaunchError::Sandbox(format!("random token error: {error}")))?;
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut token = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        token.push(HEX[(byte >> 4) as usize] as char);
+        token.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    Ok(token)
+}
+
 fn require_file(path: &Path) -> Result<(), MinecraftLaunchError> {
     if path.is_file() {
         Ok(())
@@ -770,5 +845,26 @@ mod tests {
         assert!(!is_jna_core_library_path(
             "net/java/dev/jna/jna-platform/5.17.0/jna-platform-5.17.0.jar"
         ));
+    }
+
+    #[test]
+    fn bounds_oversized_log_lines_and_continues_reading() {
+        let input = format!("{}\nnext\n", "x".repeat(300 * 1024));
+        let mut lines = Vec::new();
+
+        read_lines(input.as_bytes(), |line| lines.push(line));
+
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].ends_with(" …[line truncated]"));
+        assert!(lines[0].len() < 257 * 1024);
+        assert_eq!(lines[1], "next");
+    }
+
+    #[test]
+    fn generates_a_256_bit_hex_narrator_token() {
+        let token = generate_narrator_token().unwrap();
+
+        assert_eq!(token.len(), 64);
+        assert!(token.bytes().all(|byte| byte.is_ascii_hexdigit()));
     }
 }

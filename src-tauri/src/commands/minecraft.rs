@@ -276,7 +276,12 @@ pub async fn launch_minecraft_instance(
         .insert(instance_id.clone(), Arc::clone(&child));
 
     emit_status(&app, &instance_id, "running", None);
-    spawn_stdout_reader(app.clone(), instance_id.clone(), spawned.stdout);
+    spawn_stdout_reader(
+        app.clone(),
+        instance_id.clone(),
+        spawned.stdout,
+        spawned.narrator_token,
+    );
     spawn_log_reader(app.clone(), instance_id.clone(), "stderr", spawned.stderr);
 
     let processes = Arc::clone(&state.processes);
@@ -336,15 +341,23 @@ where
     });
 }
 
-fn spawn_stdout_reader<R>(app: AppHandle, instance_id: String, reader: R)
-where
+fn spawn_stdout_reader<R>(
+    app: AppHandle,
+    instance_id: String,
+    reader: R,
+    narrator_token: Option<String>,
+) where
     R: std::io::Read + Send + 'static,
 {
     #[cfg(windows)]
     {
         use crate::platform::windows::narrator_broker::NarratorBroker;
 
-        match NarratorBroker::start() {
+        let Some(narrator_token) = narrator_token else {
+            spawn_log_reader(app, instance_id, "stdout", reader);
+            return;
+        };
+        match NarratorBroker::start(narrator_token) {
             Ok(broker) => {
                 std::thread::spawn(move || {
                     read_lines(reader, |line| {
@@ -367,7 +380,10 @@ where
     }
 
     #[cfg(not(windows))]
-    spawn_log_reader(app, instance_id, "stdout", reader);
+    {
+        let _ = narrator_token;
+        spawn_log_reader(app, instance_id, "stdout", reader);
+    }
 }
 
 fn emit_log(app: &AppHandle, instance_id: &str, stream: &str, line: &str) {
