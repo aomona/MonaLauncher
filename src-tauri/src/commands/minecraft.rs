@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -8,8 +7,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::minecraft::{
     installer::{
-        detect_java_path, install_latest_demo_instance,
-        install_latest_sandbox_instance as install_latest_sandbox_mode,
+        detect_java_path, install_latest_sandbox_instance as install_latest_sandbox_mode,
         install_sandbox_instance as install_sandbox_mode, latest_release_java_major,
         list_instances,
     },
@@ -133,37 +131,6 @@ fn prepare_instance_sandbox_for_platform(
     _instance_id: &str,
 ) -> Result<SandboxPreparation, String> {
     Err("AppContainer is only available on Windows".to_owned())
-}
-
-#[tauri::command]
-pub async fn install_demo_instance(
-    app: AppHandle,
-    instance_id: String,
-    name: String,
-    java_path: String,
-) -> Result<InstanceManifest, String> {
-    let paths = minecraft_paths(&app)?;
-    let event_app = app.clone();
-    let display_name = if name.trim().is_empty() {
-        instance_id.clone()
-    } else {
-        name
-    };
-
-    tauri::async_runtime::spawn_blocking(move || {
-        install_latest_demo_instance(
-            &paths,
-            &instance_id,
-            &display_name,
-            &PathBuf::from(java_path),
-            |progress| {
-                let _ = event_app.emit("minecraft-install-progress", progress);
-            },
-        )
-    })
-    .await
-    .map_err(|error| format!("インストール処理への参加に失敗しました: {error}"))?
-    .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
