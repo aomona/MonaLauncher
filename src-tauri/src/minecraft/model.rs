@@ -18,7 +18,7 @@ pub struct LatestVersions {
 #[serde(rename_all = "camelCase")]
 pub struct VersionSummary {
     pub id: String,
-    #[serde(rename = "type")]
+    #[serde(rename(deserialize = "type", serialize = "versionType"))]
     pub version_type: String,
     pub url: String,
     pub sha1: String,
@@ -250,6 +250,8 @@ mod tests {
         assert_eq!(catalog.latest.release, "1.21.8");
         assert_eq!(catalog.versions[0].version_type, "release");
         let tauri_payload = serde_json::to_value(catalog).unwrap();
+        assert_eq!(tauri_payload["versions"][0]["versionType"], "release");
+        assert!(tauri_payload["versions"][0].get("type").is_none());
         assert_eq!(
             tauri_payload["versions"][0]["releaseTime"],
             "2025-07-17T12:00:00+00:00"
