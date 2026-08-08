@@ -704,6 +704,53 @@ button:disabled {
   margin: 19px 0;
 }
 
+.launch-loading {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  margin: -7px 0 16px;
+  padding: 10px 11px;
+  border: 1px solid #385034;
+  border-radius: 8px;
+  color: #a6d397;
+  background: rgba(48, 75, 43, 0.2);
+}
+
+.launch-loading strong,
+.launch-loading small {
+  display: block;
+}
+
+.launch-loading strong {
+  font-size: 9px;
+}
+
+.launch-loading small {
+  overflow: hidden;
+  max-width: 270px;
+  margin-top: 3px;
+  color: #71836f;
+  font-size: 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.loading-spinner {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  border: 2px solid rgba(118, 182, 91, 0.2);
+  border-top-color: #76b65b;
+  border-radius: 50%;
+  animation: loading-spin 700ms linear infinite;
+}
+
+@keyframes loading-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .primary-button,
 .secondary-button,
 .danger-button,

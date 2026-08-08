@@ -32,6 +32,12 @@ type MinecraftStatusEvent = {
   exitCode: number | null;
 };
 
+type MinecraftLaunchProgress = {
+  instanceId: string;
+  stage: string;
+  message: string;
+};
+
 type LogLine = MinecraftLogEvent & { id: number };
 
 const stageLabels: Record<string, string> = {
@@ -65,6 +71,7 @@ export default function App() {
   const [instanceName, setInstanceName] = useState("Minecraft Demo");
   const [releaseChannel, setReleaseChannel] = useState<"latest" | "compatible">("latest");
   const [progress, setProgress] = useState<InstallProgress | null>(null);
+  const [launchProgress, setLaunchProgress] = useState<MinecraftLaunchProgress | null>(null);
   const [logs, setLogs] = useState<LogLine[]>([]);
   const [runningIds, setRunningIds] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState<"install" | "launch" | "stop" | null>(null);
@@ -105,6 +112,10 @@ export default function App() {
         { ...event.payload, id: Date.now() + Math.random() },
       ]);
     });
+    const unlistenLaunchProgress = listen<MinecraftLaunchProgress>(
+      "minecraft-launch-progress",
+      (event) => setLaunchProgress(event.payload),
+    );
     const unlistenStatus = listen<MinecraftStatusEvent>("minecraft-status", (event) => {
       setRunningIds((current) => {
         const next = new Set(current);
@@ -131,6 +142,7 @@ export default function App() {
     return () => {
       void unlistenProgress.then((unlisten) => unlisten());
       void unlistenLogs.then((unlisten) => unlisten());
+      void unlistenLaunchProgress.then((unlisten) => unlisten());
       void unlistenStatus.then((unlisten) => unlisten());
     };
   }, []);
@@ -160,6 +172,11 @@ export default function App() {
     if (!selected) return;
     setError(null);
     setBusy("launch");
+    setLaunchProgress({
+      instanceId: selected.id,
+      stage: "queued",
+      message: "起動処理を開始しています…",
+    });
     setLogs((current) => current.filter((line) => line.instanceId !== selected.id));
 
     try {
@@ -178,6 +195,7 @@ export default function App() {
     } catch (cause) {
       setError(String(cause));
     } finally {
+      setLaunchProgress(null);
       setBusy(null);
     }
   };
@@ -383,6 +401,16 @@ export default function App() {
               •••
             </button>
           </div>
+
+          {busy === "launch" && launchProgress?.instanceId === selected?.id && (
+            <div className="launch-loading" aria-live="polite">
+              <span className="loading-spinner" aria-hidden="true" />
+              <div>
+                <strong>起動準備中</strong>
+                <small>{launchProgress?.message ?? "起動処理を開始しています…"}</small>
+              </div>
+            </div>
+          )}
 
           <dl className="instance-facts">
             <div>

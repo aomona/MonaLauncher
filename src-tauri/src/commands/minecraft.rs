@@ -43,6 +43,14 @@ struct MinecraftStatusEvent {
     exit_code: Option<i32>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MinecraftLaunchProgressEvent {
+    instance_id: String,
+    stage: String,
+    message: String,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JavaDetection {
@@ -212,7 +220,7 @@ pub async fn install_sandbox_demo_instance(
 }
 
 #[tauri::command]
-pub fn launch_minecraft_instance(
+pub async fn launch_minecraft_instance(
     app: AppHandle,
     state: State<'_, MinecraftRuntimeState>,
     instance_id: String,
@@ -228,7 +236,24 @@ pub fn launch_minecraft_instance(
     }
 
     let paths = minecraft_paths(&app)?;
-    let spawned = spawn_instance(&paths, &instance_id).map_err(|error| error.to_string())?;
+    emit_launch_progress(
+        &app,
+        &instance_id,
+        "preparing",
+        "AppContainerとゲームファイルを準備しています…",
+    );
+    let launch_instance_id = instance_id.clone();
+    let spawned = tauri::async_runtime::spawn_blocking(move || {
+        spawn_instance(&paths, &launch_instance_id).map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| format!("起動準備への参加に失敗しました: {error}"))??;
+    emit_launch_progress(
+        &app,
+        &instance_id,
+        "starting",
+        "Minecraftプロセスを開始しました。ウィンドウを待っています…",
+    );
     if spawned.sandboxed {
         emit_log(
             &app,
@@ -325,6 +350,17 @@ fn emit_status(app: &AppHandle, instance_id: &str, status: &str, exit_code: Opti
             instance_id: instance_id.to_owned(),
             status: status.to_owned(),
             exit_code,
+        },
+    );
+}
+
+fn emit_launch_progress(app: &AppHandle, instance_id: &str, stage: &str, message: &str) {
+    let _ = app.emit(
+        "minecraft-launch-progress",
+        MinecraftLaunchProgressEvent {
+            instance_id: instance_id.to_owned(),
+            stage: stage.to_owned(),
+            message: message.to_owned(),
         },
     );
 }
