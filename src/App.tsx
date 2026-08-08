@@ -13,6 +13,20 @@ type MinecraftInstance = {
   sandboxed: boolean;
 };
 
+type MinecraftVersion = {
+  id: string;
+  versionType: "release" | "snapshot" | "old_beta" | "old_alpha" | string;
+  releaseTime: string;
+};
+
+type MinecraftVersionCatalog = {
+  latest: {
+    release: string;
+    snapshot: string;
+  };
+  versions: MinecraftVersion[];
+};
+
 type InstallProgress = {
   stage: string;
   completed: number;
@@ -69,7 +83,10 @@ export default function App() {
   const [selectedId, setSelectedId] = useState("");
   const [instanceId, setInstanceId] = useState("minecraft");
   const [instanceName, setInstanceName] = useState("Minecraft");
-  const [releaseChannel, setReleaseChannel] = useState<"latest" | "compatible">("latest");
+  const [versionCatalog, setVersionCatalog] = useState<MinecraftVersionCatalog | null>(null);
+  const [selectedVersionId, setSelectedVersionId] = useState("");
+  const [versionQuery, setVersionQuery] = useState("");
+  const [versionsLoading, setVersionsLoading] = useState(false);
   const [gameMode, setGameMode] = useState<"offline" | "demo">("offline");
   const [progress, setProgress] = useState<InstallProgress | null>(null);
   const [launchProgress, setLaunchProgress] = useState<MinecraftLaunchProgress | null>(null);
@@ -85,6 +102,26 @@ export default function App() {
   );
   const isRunning = selected ? runningIds.has(selected.id) : false;
   const visibleLogs = selected ? logs.filter((line) => line.instanceId === selected.id) : [];
+  const versionGroups = useMemo(() => {
+    const groups = [
+      { type: "release", label: "正式リリース" },
+      { type: "snapshot", label: "スナップショット" },
+      { type: "old_beta", label: "旧Beta" },
+      { type: "old_alpha", label: "旧Alpha" },
+    ];
+    const query = versionQuery.trim().toLowerCase();
+
+    return groups.map((group) => ({
+      ...group,
+      versions: (versionCatalog?.versions ?? []).filter(
+        (version) =>
+          version.versionType === group.type &&
+          (!query ||
+            version.id.toLowerCase().includes(query) ||
+            version.id === selectedVersionId),
+      ),
+    }));
+  }, [selectedVersionId, versionCatalog, versionQuery]);
   const progressPercent = progress
     ? progress.total === 0
       ? 0
@@ -100,10 +137,26 @@ export default function App() {
     });
   };
 
+  const refreshVersions = async () => {
+    setVersionsLoading(true);
+    try {
+      const catalog = await invoke<MinecraftVersionCatalog>("list_minecraft_versions");
+      setVersionCatalog(catalog);
+      setSelectedVersionId((current) =>
+        catalog.versions.some((version) => version.id === current)
+          ? current
+          : catalog.latest.release,
+      );
+    } finally {
+      setVersionsLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (!hasTauriRuntime()) return;
 
     void refreshInstances().catch((cause) => setError(String(cause)));
+    void refreshVersions().catch((cause) => setError(String(cause)));
     const unlistenProgress = listen<InstallProgress>("minecraft-install-progress", (event) => {
       setProgress(event.payload);
     });
@@ -157,7 +210,7 @@ export default function App() {
       const installed = await invoke<MinecraftInstance>("install_sandbox_instance", {
         instanceId,
         name: instanceName,
-        releaseChannel,
+        versionId: selectedVersionId,
         demo: gameMode === "demo",
       });
       await refreshInstances();
@@ -297,7 +350,7 @@ export default function App() {
               <button className="empty-library" onClick={() => setShowCreator(true)} type="button">
                 <span className="empty-cube">＋</span>
                 <strong>最初のインスタンスを作成</strong>
-                <small>最新版または互換版のMinecraftを追加できます</small>
+                <small>公式の全バージョンからMinecraftを追加できます</small>
               </button>
             )}
             {instances.map((instance) => (
@@ -494,17 +547,60 @@ export default function App() {
               </div>
               <p className="modal-copy">独立したMinecraft環境をAppContainer内に作成します。</p>
               <label>
+                バージョン検索
+                <input
+                  value={versionQuery}
+                  onChange={(event) => setVersionQuery(event.target.value)}
+                  placeholder="例: 1.21、24w、beta"
+                  disabled={versionsLoading}
+                />
+              </label>
+              <label>
                 バージョン
                 <select
-                  value={releaseChannel}
-                  onChange={(event) =>
-                    setReleaseChannel(event.target.value as "latest" | "compatible")
-                  }
+                  value={selectedVersionId}
+                  onChange={(event) => setSelectedVersionId(event.target.value)}
+                  disabled={versionsLoading || !versionCatalog}
+                  required
                 >
-                  <option value="latest">最新版（推奨）</option>
-                  <option value="compatible">互換版 1.12.2</option>
+                  {!versionCatalog && <option value="">バージョン一覧を取得中…</option>}
+                  {versionGroups.map(
+                    (group) =>
+                      group.versions.length > 0 && (
+                        <optgroup label={`${group.label} (${group.versions.length})`} key={group.type}>
+                          {group.versions.map((version) => (
+                            <option value={version.id} key={version.id}>
+                              {version.id}
+                              {version.id === versionCatalog?.latest.release
+                                ? " — 最新リリース"
+                                : version.id === versionCatalog?.latest.snapshot
+                                  ? " — 最新スナップショット"
+                                  : ` — ${version.releaseTime.slice(0, 10)}`}
+                            </option>
+                          ))}
+                        </optgroup>
+                      ),
+                  )}
                 </select>
               </label>
+              <div className="version-summary" aria-live="polite">
+                <span aria-hidden="true">↓</span>
+                <span>
+                  {versionsLoading
+                    ? "公式バージョン一覧を取得しています…"
+                    : versionCatalog
+                      ? `${versionCatalog.versions.length}件から選択できます`
+                      : "バージョン一覧を取得できませんでした"}
+                </span>
+                {!versionsLoading && !versionCatalog && (
+                  <button
+                    type="button"
+                    onClick={() => void refreshVersions().catch((cause) => setError(String(cause)))}
+                  >
+                    再試行
+                  </button>
+                )}
+              </div>
               <label>
                 プレイモード
                 <select
@@ -548,7 +644,11 @@ export default function App() {
                 >
                   キャンセル
                 </button>
-                <button className="primary-button" disabled={busy !== null} type="submit">
+                <button
+                  className="primary-button"
+                  disabled={busy !== null || !selectedVersionId}
+                  type="submit"
+                >
                   {busy === "install" ? "インストール中…" : "作成する"}
                 </button>
               </div>

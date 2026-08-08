@@ -1032,6 +1032,33 @@ button:disabled {
   box-shadow: 0 0 0 2px rgba(104, 155, 81, 0.13);
 }
 
+.version-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 8px 10px;
+  border: 1px solid #303943;
+  border-radius: 8px;
+  color: #788391;
+  font-size: 12px;
+  background: #171b20;
+}
+
+.version-summary span:nth-child(2) {
+  flex: 1;
+}
+
+.version-summary button {
+  border: 0;
+  padding: 2px 4px;
+  color: #86b96f;
+  background: transparent;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
 .mode-note {
   display: flex;
   align-items: flex-start;

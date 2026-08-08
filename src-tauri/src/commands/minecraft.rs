@@ -7,17 +7,14 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::minecraft::{
     installer::{
-        detect_java_path, install_latest_sandbox_instance as install_latest_sandbox_mode,
-        install_sandbox_instance as install_sandbox_mode, latest_release_java_major,
-        list_instances,
+        detect_java_path, install_sandbox_instance as install_sandbox_mode,
+        list_available_versions, list_instances, version_java_major,
     },
     launcher::{read_lines, spawn_instance, MinecraftProcess},
-    model::InstanceManifest,
+    model::{InstanceManifest, VersionManifest},
     paths::MinecraftPaths,
-    runtime::{install_java_8_runtime, install_java_runtime},
+    runtime::install_java_runtime,
 };
-
-const SANDBOX_MINECRAFT_VERSION: &str = "1.12.2";
 
 type SharedChild = Arc<Mutex<MinecraftProcess>>;
 
@@ -90,6 +87,14 @@ pub fn list_minecraft_instances(app: AppHandle) -> Result<Vec<InstanceManifest>,
 }
 
 #[tauri::command]
+pub async fn list_minecraft_versions() -> Result<VersionManifest, String> {
+    tauri::async_runtime::spawn_blocking(list_available_versions)
+        .await
+        .map_err(|error| format!("バージョン一覧の取得処理への参加に失敗しました: {error}"))?
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 pub fn prepare_instance_sandbox(
     app: AppHandle,
     instance_id: String,
@@ -138,7 +143,7 @@ pub async fn install_sandbox_instance(
     app: AppHandle,
     instance_id: String,
     name: String,
-    release_channel: String,
+    version_id: String,
     demo: bool,
 ) -> Result<InstanceManifest, String> {
     let paths = minecraft_paths(&app)?;
@@ -150,41 +155,23 @@ pub async fn install_sandbox_instance(
     };
 
     tauri::async_runtime::spawn_blocking(move || {
-        if release_channel == "latest" {
-            let java_major = latest_release_java_major().map_err(|error| error.to_string())?;
-            let java = install_java_runtime(&paths, java_major, |progress| {
+        let java_major = version_java_major(&version_id).map_err(|error| error.to_string())?;
+        let java = install_java_runtime(&paths, java_major, |progress| {
+            let _ = event_app.emit("minecraft-install-progress", progress);
+        })
+        .map_err(|error| error.to_string())?;
+        install_sandbox_mode(
+            &paths,
+            &instance_id,
+            &display_name,
+            &java,
+            &version_id,
+            demo,
+            |progress| {
                 let _ = event_app.emit("minecraft-install-progress", progress);
-            })
-            .map_err(|error| error.to_string())?;
-            install_latest_sandbox_mode(
-                &paths,
-                &instance_id,
-                &display_name,
-                &java,
-                demo,
-                |progress| {
-                    let _ = event_app.emit("minecraft-install-progress", progress);
-                },
-            )
-            .map_err(|error| error.to_string())
-        } else {
-            let java = install_java_8_runtime(&paths, |progress| {
-                let _ = event_app.emit("minecraft-install-progress", progress);
-            })
-            .map_err(|error| error.to_string())?;
-            install_sandbox_mode(
-                &paths,
-                &instance_id,
-                &display_name,
-                &java,
-                SANDBOX_MINECRAFT_VERSION,
-                demo,
-                |progress| {
-                    let _ = event_app.emit("minecraft-install-progress", progress);
-                },
-            )
-            .map_err(|error| error.to_string())
-        }
+            },
+        )
+        .map_err(|error| error.to_string())
     })
     .await
     .map_err(|error| format!("インストール処理への参加に失敗しました: {error}"))?

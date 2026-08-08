@@ -2,22 +2,27 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct VersionManifest {
     pub latest: LatestVersions,
     pub versions: Vec<VersionSummary>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct LatestVersions {
     pub release: String,
+    pub snapshot: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct VersionSummary {
     pub id: String,
+    #[serde(rename = "type")]
+    pub version_type: String,
     pub url: String,
     pub sha1: String,
+    pub release_time: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -224,6 +229,31 @@ mod tests {
     #[test]
     fn allows_items_without_rules() {
         assert!(rules_allow(None, &HashMap::new()));
+    }
+
+    #[test]
+    fn maps_the_official_version_catalog_for_tauri() {
+        let catalog: VersionManifest = serde_json::from_str(
+            r#"{
+                "latest": { "release": "1.21.8", "snapshot": "25w31a" },
+                "versions": [{
+                    "id": "1.21.8",
+                    "type": "release",
+                    "url": "https://example.invalid/1.21.8.json",
+                    "sha1": "0123456789012345678901234567890123456789",
+                    "releaseTime": "2025-07-17T12:00:00+00:00"
+                }]
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(catalog.latest.release, "1.21.8");
+        assert_eq!(catalog.versions[0].version_type, "release");
+        let tauri_payload = serde_json::to_value(catalog).unwrap();
+        assert_eq!(
+            tauri_payload["versions"][0]["releaseTime"],
+            "2025-07-17T12:00:00+00:00"
+        );
     }
 
     #[test]

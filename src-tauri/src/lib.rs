@@ -27,6 +27,7 @@ pub fn run() {
             commands::minecraft::install_sandbox_instance,
             commands::minecraft::launch_minecraft_instance,
             commands::minecraft::list_minecraft_instances,
+            commands::minecraft::list_minecraft_versions,
             commands::minecraft::prepare_instance_sandbox,
             commands::minecraft::stop_minecraft_instance,
             commands::sandbox::ensure_sandbox_profile,

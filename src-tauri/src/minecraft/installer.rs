@@ -30,7 +30,6 @@ pub enum MinecraftInstallError {
     InvalidAssetHash(String),
     JavaNotFound(PathBuf),
     LatestReleaseMissing(String),
-    JavaVersionMissing(String),
     VersionMissing(String),
     HashMismatch {
         path: PathBuf,
@@ -65,12 +64,6 @@ impl fmt::Display for MinecraftInstallError {
             }
             Self::LatestReleaseMissing(version) => {
                 write!(formatter, "latest release metadata is missing: {version}")
-            }
-            Self::JavaVersionMissing(version) => {
-                write!(
-                    formatter,
-                    "Minecraft {version} does not declare a Java version"
-                )
             }
             Self::VersionMissing(version) => {
                 write!(
@@ -248,20 +241,24 @@ where
     )
 }
 
-pub fn latest_release_java_major() -> Result<u32, MinecraftInstallError> {
+pub fn list_available_versions() -> Result<VersionManifest, MinecraftInstallError> {
+    let client = Client::builder().user_agent("MonaLauncher/0.1.0").build()?;
+    fetch_json(&client, VERSION_MANIFEST_URL)
+}
+
+pub fn version_java_major(version_id: &str) -> Result<u32, MinecraftInstallError> {
     let client = Client::builder().user_agent("MonaLauncher/0.1.0").build()?;
     let manifest: VersionManifest = fetch_json(&client, VERSION_MANIFEST_URL)?;
-    let release_id = manifest.latest.release;
-    let release = manifest
+    let selected = manifest
         .versions
         .into_iter()
-        .find(|version| version.id == release_id)
-        .ok_or_else(|| MinecraftInstallError::LatestReleaseMissing(release_id.clone()))?;
-    let version: VersionMetadata = fetch_json(&client, &release.url)?;
-    version
+        .find(|version| version.id == version_id)
+        .ok_or_else(|| MinecraftInstallError::VersionMissing(version_id.to_owned()))?;
+    let version: VersionMetadata = fetch_json(&client, &selected.url)?;
+    Ok(version
         .java_version
         .map(|java| java.major_version)
-        .ok_or(MinecraftInstallError::JavaVersionMissing(version.id))
+        .unwrap_or(8))
 }
 
 fn install_instance_from_manifest<F>(
