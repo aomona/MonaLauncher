@@ -276,7 +276,7 @@ pub async fn launch_minecraft_instance(
         .insert(instance_id.clone(), Arc::clone(&child));
 
     emit_status(&app, &instance_id, "running", None);
-    spawn_log_reader(app.clone(), instance_id.clone(), "stdout", spawned.stdout);
+    spawn_stdout_reader(app.clone(), instance_id.clone(), spawned.stdout);
     spawn_log_reader(app.clone(), instance_id.clone(), "stderr", spawned.stderr);
 
     let processes = Arc::clone(&state.processes);
@@ -334,6 +334,40 @@ where
     std::thread::spawn(move || {
         read_lines(reader, |line| emit_log(&app, &instance_id, stream, &line));
     });
+}
+
+fn spawn_stdout_reader<R>(app: AppHandle, instance_id: String, reader: R)
+where
+    R: std::io::Read + Send + 'static,
+{
+    #[cfg(windows)]
+    {
+        use crate::platform::windows::narrator_broker::NarratorBroker;
+
+        match NarratorBroker::start() {
+            Ok(broker) => {
+                std::thread::spawn(move || {
+                    read_lines(reader, |line| {
+                        if !broker.handle_line(&line) {
+                            emit_log(&app, &instance_id, "stdout", &line);
+                        }
+                    });
+                });
+            }
+            Err(error) => {
+                emit_log(
+                    &app,
+                    &instance_id,
+                    "launcher",
+                    &format!("ナレーターブローカーを開始できませんでした: {error}"),
+                );
+                spawn_log_reader(app, instance_id, "stdout", reader);
+            }
+        }
+    }
+
+    #[cfg(not(windows))]
+    spawn_log_reader(app, instance_id, "stdout", reader);
 }
 
 fn emit_log(app: &AppHandle, instance_id: &str, stream: &str, line: &str) {

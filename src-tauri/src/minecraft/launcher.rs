@@ -174,10 +174,14 @@ pub fn spawn_instance(
         source_client_jar
     };
 
-    let mut classpath_entries = classpath
-        .iter()
-        .map(|path| sandbox_path(&sandbox, path))
-        .collect::<Result<Vec<_>, _>>()?;
+    let narrator_bridge = prepare_narrator_bridge(&sandbox)?;
+    let mut classpath_entries = narrator_bridge.into_iter().collect::<Vec<_>>();
+    classpath_entries.extend(
+        classpath
+            .iter()
+            .map(|path| sandbox_path(&sandbox, path))
+            .collect::<Result<Vec<_>, _>>()?,
+    );
     classpath_entries.push(client_entry);
     let classpath = classpath_entries
         .iter()
@@ -426,6 +430,28 @@ fn sandbox_alias(
         ))
     })?;
     Ok(sandbox.virtual_root.join(relative))
+}
+
+#[cfg(windows)]
+fn prepare_narrator_bridge(
+    sandbox: &Option<SandboxLayout>,
+) -> Result<Option<PathBuf>, MinecraftLaunchError> {
+    let Some(layout) = sandbox else {
+        return Ok(None);
+    };
+    let physical = layout.launch_root.join("narrator-bridge.jar");
+    fs::write(
+        &physical,
+        include_bytes!(concat!(env!("OUT_DIR"), "/narrator-bridge.jar")),
+    )?;
+    Ok(Some(sandbox_alias(layout, &physical)?))
+}
+
+#[cfg(not(windows))]
+fn prepare_narrator_bridge(
+    _sandbox: &Option<SandboxLayout>,
+) -> Result<Option<PathBuf>, MinecraftLaunchError> {
+    Ok(None)
 }
 
 fn extract_native_libraries(

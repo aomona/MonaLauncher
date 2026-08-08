@@ -11,6 +11,7 @@ pub mod probe {
     pub use crate::platform::windows::appcontainer_profile::{
         ensure_appcontainer_profile, profile_name_for_instance,
     };
+    pub use crate::platform::windows::narrator_broker::NarratorBroker;
     pub use crate::platform::windows::process_token::{
         current_process_token_info, ProcessTokenError, ProcessTokenInfo,
     };

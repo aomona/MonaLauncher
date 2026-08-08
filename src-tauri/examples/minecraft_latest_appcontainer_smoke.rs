@@ -17,6 +17,8 @@ use monalauncher_lib::minecraft::launcher::{read_lines, spawn_instance};
 use monalauncher_lib::minecraft::paths::MinecraftPaths;
 #[cfg(windows)]
 use monalauncher_lib::minecraft::runtime::install_java_25_runtime;
+#[cfg(windows)]
+use monalauncher_lib::probe::NarratorBroker;
 
 #[cfg(windows)]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -69,9 +71,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let mut child = spawned.child;
     let narrator_failed = Arc::new(AtomicBool::new(false));
+    let narration_requested = Arc::new(AtomicBool::new(false));
+    let stdout_narration_requested = Arc::clone(&narration_requested);
+    let narrator_broker = NarratorBroker::start()?;
     let stdout_narrator_failed = Arc::clone(&narrator_failed);
     let stdout_thread = thread::spawn(move || {
         read_lines(spawned.stdout, |line| {
+            if narrator_broker.handle_line(&line) {
+                if !stdout_narration_requested.swap(true, Ordering::Relaxed) {
+                    println!("[narrator] request forwarded to the trusted SAPI broker");
+                }
+                return;
+            }
             record_narrator_failure(&stdout_narrator_failed, &line);
             println!("[stdout] {line}");
         });
@@ -102,6 +113,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             stderr_thread.join().ok();
             if narrator_failed.load(Ordering::Relaxed) {
                 return Err("Minecraft reported a JNA or narrator initialization failure".into());
+            }
+            if std::env::var_os("MONALAUNCHER_EXPECT_NARRATOR").is_some()
+                && !narration_requested.load(Ordering::Relaxed)
+            {
+                return Err("Minecraft did not send a narrator request to the launcher".into());
             }
             println!("[launcher] latest AppContainer Minecraft ({mode_name}) smoke test passed");
             return Ok(());
