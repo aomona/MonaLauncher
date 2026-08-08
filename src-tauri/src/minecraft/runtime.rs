@@ -130,15 +130,7 @@ where
         &format!("Java {major} metadataを取得しています"),
     );
     let client = Client::builder().user_agent("MonaLauncher/0.1.0").build()?;
-    let assets_url = format!(
-        "https://api.adoptium.net/v3/assets/latest/{major}/hotspot?architecture=x64&image_type=jre&os=windows&vendor=eclipse"
-    );
-    let assets: Vec<AdoptiumAsset> = client.get(assets_url).send()?.error_for_status()?.json()?;
-    let package = &assets
-        .first()
-        .ok_or(RuntimeInstallError::AssetMissing(major))?
-        .binary
-        .package;
+    let package = fetch_runtime_package(&client, major)?;
     let runtime_family = format!("temurin-{major}");
     let runtime_directory = paths
         .runtimes()
@@ -183,6 +175,25 @@ where
     let java = runtime_directory.join(relative_java);
     progress_event(&progress, 1, 1, &format!("Java {major}の準備ができました"));
     Ok(java)
+}
+
+fn fetch_runtime_package(
+    client: &Client,
+    major: u32,
+) -> Result<AdoptiumPackage, RuntimeInstallError> {
+    for image_type in ["jre", "jdk"] {
+        let assets_url = format!(
+            "https://api.adoptium.net/v3/assets/latest/{major}/hotspot?architecture=x64&image_type={image_type}&os=windows&vendor=eclipse"
+        );
+        let assets: Vec<AdoptiumAsset> =
+            client.get(assets_url).send()?.error_for_status()?.json()?;
+
+        if let Some(asset) = assets.into_iter().next() {
+            return Ok(asset.binary.package);
+        }
+    }
+
+    Err(RuntimeInstallError::AssetMissing(major))
 }
 
 fn download_and_verify(
