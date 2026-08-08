@@ -1,6 +1,10 @@
 #[cfg(windows)]
 use std::path::PathBuf;
 #[cfg(windows)]
+use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(windows)]
+use std::sync::Arc;
+#[cfg(windows)]
 use std::thread;
 #[cfg(windows)]
 use std::time::{Duration, Instant};
@@ -64,11 +68,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("launcher did not use AppContainer".into());
     }
     let mut child = spawned.child;
+    let narrator_failed = Arc::new(AtomicBool::new(false));
+    let stdout_narrator_failed = Arc::clone(&narrator_failed);
     let stdout_thread = thread::spawn(move || {
-        read_lines(spawned.stdout, |line| println!("[stdout] {line}"));
+        read_lines(spawned.stdout, |line| {
+            record_narrator_failure(&stdout_narrator_failed, &line);
+            println!("[stdout] {line}");
+        });
     });
+    let stderr_narrator_failed = Arc::clone(&narrator_failed);
     let stderr_thread = thread::spawn(move || {
-        read_lines(spawned.stderr, |line| eprintln!("[stderr] {line}"));
+        read_lines(spawned.stderr, |line| {
+            record_narrator_failure(&stderr_narrator_failed, &line);
+            eprintln!("[stderr] {line}");
+        });
     });
 
     let deadline = Instant::now() + Duration::from_secs(30);
@@ -87,10 +100,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             child.wait()?;
             stdout_thread.join().ok();
             stderr_thread.join().ok();
+            if narrator_failed.load(Ordering::Relaxed) {
+                return Err("Minecraft reported a JNA or narrator initialization failure".into());
+            }
             println!("[launcher] latest AppContainer Minecraft ({mode_name}) smoke test passed");
             return Ok(());
         }
         thread::sleep(Duration::from_millis(250));
+    }
+}
+
+#[cfg(windows)]
+fn record_narrator_failure(failed: &AtomicBool, line: &str) {
+    if line.contains("Error while loading the narrator")
+        || line.contains("Failed to create temporary file for /com/sun/jna")
+    {
+        failed.store(true, Ordering::Relaxed);
     }
 }
 

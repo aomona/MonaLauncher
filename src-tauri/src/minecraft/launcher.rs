@@ -168,6 +168,7 @@ pub fn spawn_instance(
 
     let client_entry = if sandbox.is_some() {
         extract_native_libraries(paths, &version, &physical_natives_directory)?;
+        extract_jna_dispatch(paths, &version, &physical_natives_directory.join("jna"))?;
         sandbox_path(&sandbox, &source_client_jar)?
     } else {
         source_client_jar
@@ -254,6 +255,15 @@ pub fn spawn_instance(
         expand_arguments(&version.arguments.jvm, &features, &substitutions)
     };
     arguments.extend(jvm_arguments.into_iter().map(OsString::from));
+    if sandbox.is_some() {
+        // JNA cannot safely unpack through a SUBST alias in an AppContainer. The trusted launcher
+        // extracts jnidispatch.dll first, then the child only loads it from its sandbox drive.
+        arguments.push(OsString::from(format!(
+            "-Djna.boot.library.path={}",
+            natives_directory.join("jna").display()
+        )));
+        arguments.push(OsString::from("-Djna.nounpack=true"));
+    }
     arguments.push(OsString::from(&version.main_class));
     let game_arguments = version
         .minecraft_arguments
@@ -441,6 +451,49 @@ fn extract_native_libraries(
         })?;
     }
     Ok(())
+}
+
+fn extract_jna_dispatch(
+    paths: &MinecraftPaths,
+    version: &VersionMetadata,
+    destination: &Path,
+) -> Result<(), MinecraftLaunchError> {
+    let jna = version
+        .libraries
+        .iter()
+        .filter_map(|library| library.downloads.artifact.as_ref())
+        .filter_map(|artifact| artifact.path.as_deref())
+        .find(|path| is_jna_core_library_path(path))
+        .ok_or_else(|| MinecraftLaunchError::Sandbox("JNA core library is missing".to_owned()))?;
+    let archive = safe_library_path(paths, jna)?;
+    require_file(&archive)?;
+
+    let platform = if cfg!(target_arch = "x86_64") {
+        "win32-x86-64"
+    } else if cfg!(target_arch = "x86") {
+        "win32-x86"
+    } else if cfg!(target_arch = "aarch64") {
+        "win32-aarch64"
+    } else {
+        return Err(MinecraftLaunchError::Sandbox(
+            "JNA does not provide jnidispatch.dll for this architecture".to_owned(),
+        ));
+    };
+    let resource = format!("com/sun/jna/{platform}/jnidispatch.dll");
+    let input = fs::File::open(archive)?;
+    let mut jar =
+        ZipArchive::new(input).map_err(|error| MinecraftLaunchError::Sandbox(error.to_string()))?;
+    let mut entry = jar
+        .by_name(&resource)
+        .map_err(|error| MinecraftLaunchError::Sandbox(error.to_string()))?;
+    fs::create_dir_all(destination)?;
+    let mut output = fs::File::create(destination.join("jnidispatch.dll"))?;
+    std::io::copy(&mut entry, &mut output)?;
+    Ok(())
+}
+
+fn is_jna_core_library_path(path: &str) -> bool {
+    path.replace('\\', "/").contains("/jna/jna/")
 }
 
 fn safe_library_path(
@@ -681,5 +734,15 @@ mod tests {
             ),
             ["--name", "DemoPlayer", "--windows"]
         );
+    }
+
+    #[test]
+    fn identifies_jna_core_without_matching_jna_platform() {
+        assert!(is_jna_core_library_path(
+            "net/java/dev/jna/jna/5.17.0/jna-5.17.0.jar"
+        ));
+        assert!(!is_jna_core_library_path(
+            "net/java/dev/jna/jna-platform/5.17.0/jna-platform-5.17.0.jar"
+        ));
     }
 }
