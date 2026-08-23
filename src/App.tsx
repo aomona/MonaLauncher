@@ -71,6 +71,11 @@ type MicrosoftSignInPoll = {
   retryAfter: number | null;
 };
 
+type MinecraftAccountProfile = {
+  name: string;
+  uuid: string;
+};
+
 type LogLine = MinecraftLogEvent & { id: number };
 
 const stageLabels: Record<string, string> = {
@@ -148,6 +153,8 @@ export default function App() {
   const [authChallenge, setAuthChallenge] = useState<MicrosoftSignInChallenge | null>(null);
   const [authBusy, setAuthBusy] = useState<"begin" | "signout" | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [minecraftProfile, setMinecraftProfile] = useState<MinecraftAccountProfile | null>(null);
+  const [minecraftProfileLoading, setMinecraftProfileLoading] = useState(false);
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const creatorDialogRef = useRef<HTMLDialogElement>(null);
   const creatorSearchRef = useRef<HTMLInputElement>(null);
@@ -251,8 +258,24 @@ export default function App() {
     }
   };
 
+  const refreshMinecraftProfile = async () => {
+    setMinecraftProfileLoading(true);
+    try {
+      const profile = await invoke<MinecraftAccountProfile>("refresh_minecraft_account");
+      setMinecraftProfile(profile);
+      setAuthError(null);
+    } catch (cause) {
+      setMinecraftProfile(null);
+      setAuthError(String(cause));
+    } finally {
+      setMinecraftProfileLoading(false);
+    }
+  };
+
   const refreshAuthStatus = async () => {
-    setAuthStatus(await invoke<MicrosoftAuthStatus>("microsoft_auth_status"));
+    const status = await invoke<MicrosoftAuthStatus>("microsoft_auth_status");
+    setAuthStatus(status);
+    if (status.authorized) void refreshMinecraftProfile();
   };
 
   useEffect(() => {
@@ -391,6 +414,7 @@ export default function App() {
           setAuthStatus((current) => ({ ...current, authorized: true }));
           setAuthChallenge(null);
           setAuthError(null);
+          void refreshMinecraftProfile();
           return;
         }
         timer = setTimeout(poll, (result.retryAfter ?? authChallenge.interval) * 1000);
@@ -556,6 +580,7 @@ export default function App() {
     try {
       await invoke("sign_out_microsoft");
       setAuthChallenge(null);
+      setMinecraftProfile(null);
       setAuthStatus((current) => ({ ...current, authorized: false }));
     } catch (cause) {
       setAuthError(String(cause));
@@ -593,13 +618,20 @@ export default function App() {
             M
           </span>
           <span>
-            <strong>{authStatus.authorized ? "Microsoft認証済み" : "オフライン"}</strong>
+            <strong>
+              {minecraftProfile?.name ??
+                (authStatus.authorized ? "Microsoft認証済み" : "オフライン")}
+            </strong>
             <small>
-              {authStatus.authorized
-                ? "Minecraft連携準備中"
-                : authStatus.configured
-                  ? "サインインできます"
-                  : "認証設定が必要です"}
+              {minecraftProfile
+                ? "Minecraft: Java Edition"
+                : minecraftProfileLoading
+                  ? "プロフィール確認中…"
+                  : authStatus.authorized
+                    ? "Minecraftを確認してください"
+                    : authStatus.configured
+                      ? "サインインできます"
+                      : "認証設定が必要です"}
             </small>
           </span>
           <span className="chevron" aria-hidden="true">
@@ -949,14 +981,18 @@ export default function App() {
                     value={gameMode}
                     onChange={(event) => setGameMode(event.target.value as "offline" | "demo")}
                   >
-                    <option value="offline">通常版（オフライン）</option>
+                    <option value="offline">
+                      {minecraftProfile ? "通常版（Microsoftアカウント）" : "通常版（オフライン）"}
+                    </option>
                     <option value="demo">公式デモ版</option>
                   </select>
                 </label>
                 <div className="mode-note">
                   <span aria-hidden="true">i</span>
                   {gameMode === "offline"
-                    ? "ワールド作成とシングルプレイができます。オンライン機能にはMicrosoft認証が必要です。"
+                    ? minecraftProfile
+                      ? `${minecraftProfile.name}のMinecraftプロフィールで起動します。`
+                      : "ワールド作成とシングルプレイができます。オンライン機能にはMicrosoft認証が必要です。"
                     : "時間制限付きの公式デモワールドを起動します。"}
                 </div>
                 <label>
@@ -1039,9 +1075,17 @@ export default function App() {
 
                 {authStatus.authorized && (
                   <div className="auth-state-card auth-state-success">
-                    <strong>Microsoft認証情報を安全に保存しました</strong>
+                    <strong>
+                      {minecraftProfile
+                        ? `${minecraftProfile.name} として接続しました`
+                        : minecraftProfileLoading
+                          ? "Minecraftプロフィールを確認しています"
+                          : "Microsoft認証情報を安全に保存しました"}
+                    </strong>
                     <p>
-                      更新トークンはWindows資格情報マネージャーにあります。Minecraftプロフィールとの接続は次の実装段階です。
+                      {minecraftProfile
+                        ? `UUID: ${minecraftProfile.uuid}`
+                        : "更新トークンはWindows資格情報マネージャーにあります。"}
                     </p>
                   </div>
                 )}
@@ -1079,15 +1123,27 @@ export default function App() {
                     閉じる
                   </button>
                   {authStatus.authorized ? (
-                    <button
-                      className="signout-button"
-                      disabled={authBusy !== null}
-                      onClick={() => void signOutMicrosoft()}
-                      ref={authPrimaryRef}
-                      type="button"
-                    >
-                      {authBusy === "signout" ? "削除中…" : "サインアウト"}
-                    </button>
+                    <>
+                      {!minecraftProfile && (
+                        <button
+                          className="primary-button"
+                          disabled={authBusy !== null || minecraftProfileLoading}
+                          onClick={() => void refreshMinecraftProfile()}
+                          type="button"
+                        >
+                          {minecraftProfileLoading ? "確認中…" : "Minecraftを確認"}
+                        </button>
+                      )}
+                      <button
+                        className="signout-button"
+                        disabled={authBusy !== null || minecraftProfileLoading}
+                        onClick={() => void signOutMicrosoft()}
+                        ref={authPrimaryRef}
+                        type="button"
+                      >
+                        {authBusy === "signout" ? "削除中…" : "サインアウト"}
+                      </button>
+                    </>
                   ) : authChallenge ? (
                     <button
                       className="primary-button"
