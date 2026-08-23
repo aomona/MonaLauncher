@@ -221,6 +221,10 @@ impl ModrinthClient {
         self.get_json(api_url(&["project", project_id])?)
     }
 
+    pub(crate) fn download(&self, url: Url) -> Result<Response, ModrinthError> {
+        Ok(self.client.get(url).send()?.error_for_status()?)
+    }
+
     fn get_json<T: for<'de> Deserialize<'de>>(&self, url: Url) -> Result<T, ModrinthError> {
         let response = self.client.get(url).send()?;
         let status = response.status();

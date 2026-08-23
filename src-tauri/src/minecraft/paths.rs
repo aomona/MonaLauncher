@@ -34,6 +34,18 @@ impl MinecraftPaths {
         self.instance(instance_id).join("fabric-profile.json")
     }
 
+    pub fn instance_mods_directory(&self, instance_id: &str) -> PathBuf {
+        self.instance_game_directory(instance_id).join("mods")
+    }
+
+    pub fn instance_mod_registry(&self, instance_id: &str) -> PathBuf {
+        self.instance(instance_id).join("modrinth-mods.json")
+    }
+
+    pub fn instance_mod_staging(&self, instance_id: &str) -> PathBuf {
+        self.instance(instance_id).join("modrinth-staging")
+    }
+
     pub fn libraries(&self) -> PathBuf {
         self.root.join("libraries")
     }
