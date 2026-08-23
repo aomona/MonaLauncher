@@ -8,15 +8,15 @@ MonaLauncherはデスクトップのpublic clientとしてMicrosoft Device Code 
 
 1. Microsoft Entraでアプリを登録し、個人用Microsoftアカウントを対象に含めます。
 2. 「パブリック クライアント フローを許可する」を有効にします。
-3. アプリケーション（クライアント）IDを環境変数へ設定してからビルドします。
+3. アプリケーション（クライアント）IDをMonaLauncherの既定IDとして設定します。
 
 ```powershell
-$env:MONALAUNCHER_MICROSOFT_CLIENT_ID = "00000000-0000-0000-0000-000000000000"
+$env:MONALAUNCHER_MICROSOFT_CLIENT_ID = "別の開発用クライアントID"
 mise run dev
 ```
 
-クライアントIDは公開情報で、ビルドへ埋め込まれます。Microsoftのアクセストークン、device code、更新トークンはReactへ返しません。更新トークンは現在のWindowsユーザーの資格情報マネージャーへ保存します。
+既定ではMonaLauncher用のクライアントIDがビルドへ組み込まれているため、環境変数の設定は不要です。環境変数は別のアプリ登録で開発するときの上書き用です。クライアントIDは公開情報です。Microsoftのアクセストークン、device code、更新トークンはReactへ返しません。更新トークンは現在のWindowsユーザーの資格情報マネージャーへ保存します。
 
 認証プロトコルについては、[Microsoft Device Code Flow](https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-device-code)を参照してください。
 
-現在はMicrosoft OAuthの認証と安全な保存まで実装済みです。Minecraft Servicesへの交換とMinecraftプロフィール取得には、そのサービスで利用可能なアプリ登録が必要で、次の実装段階で起動処理へ接続します。
+Microsoft OAuth、Xbox Live、XSTS、Minecraft Services、Minecraftプロフィール取得までを実装しています。Microsoftアプリ登録がMinecraft Servicesで利用できない場合は、認証時に`Invalid app registration`が返されます。

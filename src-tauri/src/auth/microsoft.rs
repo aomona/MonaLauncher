@@ -10,11 +10,11 @@ const DEVICE_CODE_URL: &str =
     "https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode?mkt=ja-JP";
 const TOKEN_URL: &str = "https://login.microsoftonline.com/consumers/oauth2/v2.0/token";
 const MINECRAFT_SCOPES: &str = "XboxLive.signin offline_access";
+const DEFAULT_CLIENT_ID: &str = "f8d68570-e721-4aba-9c3e-1052d41e431a";
 const MAX_AUTH_RESPONSE_SIZE: u64 = 64 * 1024;
 
 #[derive(Debug)]
 pub enum MicrosoftAuthError {
-    NotConfigured,
     InvalidClientId,
     Request(reqwest::Error),
     ResponseTooLarge,
@@ -29,19 +29,38 @@ pub enum MicrosoftAuthError {
 impl fmt::Display for MicrosoftAuthError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::NotConfigured => write!(
+            Self::InvalidClientId => {
+                write!(formatter, "Microsoft client IDの形式が正しくありません")
+            }
+            Self::Request(error) => write!(
                 formatter,
-                "Microsoft認証が未設定です。MONALAUNCHER_MICROSOFT_CLIENT_IDを設定して再ビルドしてください"
+                "Microsoft認証サービスへ接続できませんでした: {error}"
             ),
-            Self::InvalidClientId => write!(formatter, "Microsoft client IDの形式が正しくありません"),
-            Self::Request(error) => write!(formatter, "Microsoft認証サービスへ接続できませんでした: {error}"),
-            Self::ResponseTooLarge => write!(formatter, "Microsoft認証サービスの応答が大きすぎます"),
-            Self::InvalidResponse(error) => write!(formatter, "Microsoft認証サービスの応答を解釈できませんでした: {error}"),
-            Self::ServiceStatus(status) => write!(formatter, "Microsoft認証サービスがHTTP {status}を返しました"),
-            Self::AuthorizationDeclined => write!(formatter, "Microsoftアカウントでの認証がキャンセルされました"),
-            Self::AuthorizationExpired => write!(formatter, "Microsoft認証コードの有効期限が切れました"),
-            Self::ServiceError(code) => write!(formatter, "Microsoft認証サービスがエラーを返しました: {code}"),
-            Self::RefreshTokenMissing => write!(formatter, "Microsoft認証応答に更新トークンがありません"),
+            Self::ResponseTooLarge => {
+                write!(formatter, "Microsoft認証サービスの応答が大きすぎます")
+            }
+            Self::InvalidResponse(error) => write!(
+                formatter,
+                "Microsoft認証サービスの応答を解釈できませんでした: {error}"
+            ),
+            Self::ServiceStatus(status) => write!(
+                formatter,
+                "Microsoft認証サービスがHTTP {status}を返しました"
+            ),
+            Self::AuthorizationDeclined => write!(
+                formatter,
+                "Microsoftアカウントでの認証がキャンセルされました"
+            ),
+            Self::AuthorizationExpired => {
+                write!(formatter, "Microsoft認証コードの有効期限が切れました")
+            }
+            Self::ServiceError(code) => write!(
+                formatter,
+                "Microsoft認証サービスがエラーを返しました: {code}"
+            ),
+            Self::RefreshTokenMissing => {
+                write!(formatter, "Microsoft認証応答に更新トークンがありません")
+            }
         }
     }
 }
@@ -209,11 +228,15 @@ impl MicrosoftOAuthClient {
 }
 
 fn configured_client_id() -> Result<String, MicrosoftAuthError> {
-    let client_id = option_env!("MONALAUNCHER_MICROSOFT_CLIENT_ID")
-        .map(str::to_owned)
-        .or_else(|| std::env::var("MONALAUNCHER_MICROSOFT_CLIENT_ID").ok())
+    let client_id = std::env::var("MONALAUNCHER_MICROSOFT_CLIENT_ID")
+        .ok()
         .filter(|value| !value.trim().is_empty())
-        .ok_or(MicrosoftAuthError::NotConfigured)?;
+        .or_else(|| {
+            option_env!("MONALAUNCHER_MICROSOFT_CLIENT_ID")
+                .filter(|value| !value.trim().is_empty())
+                .map(str::to_owned)
+        })
+        .unwrap_or_else(|| DEFAULT_CLIENT_ID.to_owned());
 
     if is_guid(&client_id) {
         Ok(client_id)
@@ -287,6 +310,7 @@ mod tests {
 
     #[test]
     fn validates_microsoft_client_ids() {
+        assert!(is_guid(DEFAULT_CLIENT_ID));
         assert!(is_guid("01234567-89ab-cdef-0123-456789abcdef"));
         assert!(!is_guid("not-a-client-id"));
         assert!(!is_guid("01234567-89ab-cdef-0123-456789abcdeg"));
