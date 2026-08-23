@@ -8,7 +8,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use crate::minecraft::{
     installer::{
         detect_java_path, install_sandbox_instance as install_sandbox_mode,
-        list_available_versions, list_instances, version_java_major,
+        list_available_versions, list_instances, rename_instance, version_java_major,
     },
     launcher::{read_lines, spawn_instance, MinecraftProcess},
     model::{InstanceManifest, VersionManifest},
@@ -84,6 +84,15 @@ pub fn detect_java() -> Result<JavaDetection, String> {
 #[tauri::command]
 pub fn list_minecraft_instances(app: AppHandle) -> Result<Vec<InstanceManifest>, String> {
     list_instances(&minecraft_paths(&app)?).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn rename_minecraft_instance(
+    app: AppHandle,
+    instance_id: String,
+    name: String,
+) -> Result<InstanceManifest, String> {
+    rename_instance(&minecraft_paths(&app)?, &instance_id, &name).map_err(|error| error.to_string())
 }
 
 #[tauri::command]

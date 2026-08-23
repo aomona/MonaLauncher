@@ -21,11 +21,19 @@ use super::paths::MinecraftPaths;
 const VERSION_MANIFEST_URL: &str =
     "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json";
 const ASSET_OBJECT_BASE_URL: &str = "https://resources.download.minecraft.net";
+const MAX_INSTANCE_NAME_LENGTH: usize = 80;
 
 #[derive(Debug)]
 pub enum MinecraftInstallError {
     EmptyInstanceId,
+    EmptyInstanceName,
     InvalidInstanceIdCharacter(char),
+    InstanceNameTooLong(usize),
+    InstanceMissing(String),
+    InstanceIdMismatch {
+        expected: String,
+        actual: String,
+    },
     InvalidMetadataPath(String),
     InvalidAssetHash(String),
     JavaNotFound(PathBuf),
@@ -45,9 +53,21 @@ impl fmt::Display for MinecraftInstallError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::EmptyInstanceId => write!(formatter, "instance ID must not be empty"),
+            Self::EmptyInstanceName => write!(formatter, "instance name must not be empty"),
             Self::InvalidInstanceIdCharacter(character) => write!(
                 formatter,
                 "instance ID contains an invalid character: {character:?}"
+            ),
+            Self::InstanceNameTooLong(length) => write!(
+                formatter,
+                "instance name must not exceed {MAX_INSTANCE_NAME_LENGTH} characters (got {length})"
+            ),
+            Self::InstanceMissing(instance_id) => {
+                write!(formatter, "Minecraft instance was not found: {instance_id}")
+            }
+            Self::InstanceIdMismatch { expected, actual } => write!(
+                formatter,
+                "instance manifest ID mismatch: expected {expected}, got {actual}"
             ),
             Self::InvalidMetadataPath(path) => {
                 write!(formatter, "metadata contains an unsafe path: {path}")
@@ -462,6 +482,33 @@ pub fn list_instances(
     Ok(instances)
 }
 
+pub fn rename_instance(
+    paths: &MinecraftPaths,
+    instance_id: &str,
+    name: &str,
+) -> Result<InstanceManifest, MinecraftInstallError> {
+    validate_instance_id(instance_id)?;
+    let name = validate_instance_name(name)?;
+    let manifest_path = paths.instance_manifest(instance_id);
+    if !manifest_path.is_file() {
+        return Err(MinecraftInstallError::InstanceMissing(
+            instance_id.to_owned(),
+        ));
+    }
+
+    let mut instance: InstanceManifest = serde_json::from_slice(&fs::read(&manifest_path)?)?;
+    if instance.id != instance_id {
+        return Err(MinecraftInstallError::InstanceIdMismatch {
+            expected: instance_id.to_owned(),
+            actual: instance.id,
+        });
+    }
+
+    instance.name = name.to_owned();
+    fs::write(manifest_path, serde_json::to_vec_pretty(&instance)?)?;
+    Ok(instance)
+}
+
 pub fn detect_java_path() -> Option<PathBuf> {
     let mut candidates = Vec::<PathBuf>::new();
 
@@ -664,6 +711,20 @@ fn validate_instance_id(instance_id: &str) -> Result<(), MinecraftInstallError> 
     Ok(())
 }
 
+fn validate_instance_name(name: &str) -> Result<&str, MinecraftInstallError> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err(MinecraftInstallError::EmptyInstanceName);
+    }
+
+    let length = name.chars().count();
+    if length > MAX_INSTANCE_NAME_LENGTH {
+        return Err(MinecraftInstallError::InstanceNameTooLong(length));
+    }
+
+    Ok(name)
+}
+
 fn validate_asset_hash(hash: &str) -> Result<(), MinecraftInstallError> {
     if hash.len() != 40 || !hash.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return Err(MinecraftInstallError::InvalidAssetHash(hash.to_owned()));
@@ -734,5 +795,18 @@ mod tests {
     fn validates_sha1_asset_hash() {
         assert!(validate_asset_hash("0123456789abcdef0123456789abcdef01234567").is_ok());
         assert!(validate_asset_hash("../bad").is_err());
+    }
+
+    #[test]
+    fn validates_and_trims_instance_names() {
+        assert_eq!(validate_instance_name("  My World  ").unwrap(), "My World");
+        assert!(matches!(
+            validate_instance_name("   "),
+            Err(MinecraftInstallError::EmptyInstanceName)
+        ));
+        assert!(matches!(
+            validate_instance_name(&"a".repeat(MAX_INSTANCE_NAME_LENGTH + 1)),
+            Err(MinecraftInstallError::InstanceNameTooLong(_))
+        ));
     }
 }

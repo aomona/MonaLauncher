@@ -78,6 +78,27 @@ function hasTauriRuntime() {
   );
 }
 
+function keepFocusInsideDialog(event: KeyboardEvent, dialog: HTMLDialogElement | null) {
+  if (event.key !== "Tab") return;
+
+  const focusable = Array.from(
+    dialog?.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    ) ?? [],
+  );
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (!first || !last) return;
+
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
 export default function App() {
   const [instances, setInstances] = useState<MinecraftInstance[]>([]);
   const [selectedId, setSelectedId] = useState("");
@@ -92,13 +113,18 @@ export default function App() {
   const [launchProgress, setLaunchProgress] = useState<MinecraftLaunchProgress | null>(null);
   const [logs, setLogs] = useState<LogLine[]>([]);
   const [runningIds, setRunningIds] = useState<Set<string>>(new Set());
-  const [busy, setBusy] = useState<"install" | "launch" | "stop" | null>(null);
+  const [busy, setBusy] = useState<"install" | "launch" | "stop" | "rename" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showCreator, setShowCreator] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [settingsName, setSettingsName] = useState("");
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const creatorDialogRef = useRef<HTMLDialogElement>(null);
   const creatorSearchRef = useRef<HTMLInputElement>(null);
   const creatorPreviousFocusRef = useRef<HTMLElement | null>(null);
+  const settingsDialogRef = useRef<HTMLDialogElement>(null);
+  const settingsNameRef = useRef<HTMLInputElement>(null);
+  const settingsPreviousFocusRef = useRef<HTMLElement | null>(null);
 
   const selected = useMemo(
     () => instances.find((instance) => instance.id === selectedId) ?? null,
@@ -138,6 +164,19 @@ export default function App() {
 
   const closeCreator = () => {
     if (busy === null) setShowCreator(false);
+  };
+
+  const openSettings = () => {
+    if (!selected) return;
+    settingsPreviousFocusRef.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setSettingsName(selected.name);
+    setError(null);
+    setShowSettings(true);
+  };
+
+  const closeSettings = () => {
+    if (busy === null) setShowSettings(false);
   };
 
   const refreshInstances = async () => {
@@ -229,29 +268,36 @@ export default function App() {
         setShowCreator(false);
         return;
       }
-      if (event.key !== "Tab") return;
-
-      const focusable = Array.from(
-        creatorDialogRef.current?.querySelectorAll<HTMLElement>(
-          'button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
-        ) ?? [],
-      );
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      if (!first || !last) return;
-
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
+      keepFocusInsideDialog(event, creatorDialogRef.current);
     };
 
     document.addEventListener("keydown", handleCreatorKeyDown);
     return () => document.removeEventListener("keydown", handleCreatorKeyDown);
   }, [busy, showCreator]);
+
+  useEffect(() => {
+    if (!showSettings) return;
+
+    settingsNameRef.current?.focus();
+    settingsNameRef.current?.select();
+    return () => settingsPreviousFocusRef.current?.focus();
+  }, [showSettings]);
+
+  useEffect(() => {
+    if (!showSettings) return;
+
+    const handleSettingsKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && busy === null) {
+        event.preventDefault();
+        setShowSettings(false);
+        return;
+      }
+      keepFocusInsideDialog(event, settingsDialogRef.current);
+    };
+
+    document.addEventListener("keydown", handleSettingsKeyDown);
+    return () => document.removeEventListener("keydown", handleSettingsKeyDown);
+  }, [busy, showSettings]);
 
   const install = async () => {
     setError(null);
@@ -314,6 +360,29 @@ export default function App() {
 
     try {
       await invoke("stop_minecraft_instance", { instanceId: selected.id });
+    } catch (cause) {
+      setError(String(cause));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const renameSelected = async () => {
+    if (!selected) return;
+    setError(null);
+    setBusy("rename");
+
+    try {
+      const renamed = await invoke<MinecraftInstance>("rename_minecraft_instance", {
+        instanceId: selected.id,
+        name: settingsName,
+      });
+      setInstances((current) =>
+        current
+          .map((instance) => (instance.id === renamed.id ? renamed : instance))
+          .sort((left, right) => left.name.localeCompare(right.name, "ja")),
+      );
+      setShowSettings(false);
     } catch (cause) {
       setError(String(cause));
     } finally {
@@ -511,10 +580,10 @@ export default function App() {
               </button>
             )}
             <button
-              aria-label="インスタンス設定（準備中）"
+              aria-label="インスタンス設定"
               className="icon-button"
-              disabled
-              title="インスタンス設定は準備中です"
+              disabled={!selected || busy !== null}
+              onClick={openSettings}
               type="button"
             >
               ⚙
@@ -738,6 +807,86 @@ export default function App() {
                     type="submit"
                   >
                     {busy === "install" ? "インストール中…" : "作成する"}
+                  </button>
+                </div>
+              </form>
+            </dialog>
+          </div>
+        )}
+
+        {showSettings && selected && (
+          <div className="modal-backdrop">
+            <dialog
+              aria-describedby="settings-description"
+              aria-labelledby="settings-title"
+              className="creator-modal settings-modal"
+              open
+              ref={settingsDialogRef}
+            >
+              <form
+                className="creator-form"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void renameSelected();
+                }}
+              >
+                <div className="modal-heading">
+                  <div>
+                    <p className="eyebrow">INSTANCE SETTINGS</p>
+                    <h2 id="settings-title">インスタンス設定</h2>
+                  </div>
+                  <button
+                    aria-label="閉じる"
+                    disabled={busy !== null}
+                    onClick={closeSettings}
+                    type="button"
+                  >
+                    ×
+                  </button>
+                </div>
+                <p className="modal-copy" id="settings-description">
+                  表示名を変更できます。インスタンスIDとゲームデータは変わりません。
+                </p>
+                <dl className="settings-summary">
+                  <div>
+                    <dt>バージョン</dt>
+                    <dd>Minecraft {selected.versionId}</dd>
+                  </div>
+                  <div>
+                    <dt>インスタンスID</dt>
+                    <dd>{selected.id}</dd>
+                  </div>
+                </dl>
+                <label>
+                  表示名
+                  <input
+                    maxLength={80}
+                    onChange={(event) => setSettingsName(event.target.value)}
+                    ref={settingsNameRef}
+                    required
+                    value={settingsName}
+                  />
+                </label>
+                {error && (
+                  <div className="modal-inline-error" role="alert">
+                    {error}
+                  </div>
+                )}
+                <div className="modal-actions">
+                  <button
+                    className="secondary-button"
+                    disabled={busy !== null}
+                    onClick={closeSettings}
+                    type="button"
+                  >
+                    キャンセル
+                  </button>
+                  <button
+                    className="primary-button"
+                    disabled={busy !== null || settingsName.trim().length === 0}
+                    type="submit"
+                  >
+                    {busy === "rename" ? "保存中…" : "変更を保存"}
                   </button>
                 </div>
               </form>

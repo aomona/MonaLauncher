@@ -1136,6 +1136,51 @@ select:focus-visible {
   padding: 0 18px;
 }
 
+.settings-modal {
+  width: min(430px, calc(100vw - 40px));
+}
+
+.settings-summary {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid #30343c;
+  border-radius: 8px;
+  background: #17191e;
+}
+
+.settings-summary div {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 4px 0;
+}
+
+.settings-summary dt,
+.settings-summary dd {
+  margin: 0;
+  font-size: 10px;
+}
+
+.settings-summary dt {
+  color: #747a85;
+}
+
+.settings-summary dd {
+  overflow: hidden;
+  color: #c4c8cf;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.modal-inline-error {
+  padding: 9px 10px;
+  border: 1px solid #5c3431;
+  border-radius: 7px;
+  color: #e3a49d;
+  background: rgba(88, 42, 39, 0.28);
+  font-size: 10px;
+}
+
 @media (max-width: 1000px) {
   .workspace {
     grid-template-columns: 106px minmax(280px, 1fr) 300px;
