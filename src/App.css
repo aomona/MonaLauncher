@@ -968,15 +968,20 @@ button:disabled {
 }
 
 .creator-modal {
-  display: flex;
   width: min(410px, calc(100vw - 40px));
-  flex-direction: column;
-  gap: 14px;
-  padding: 22px;
+  margin: 0;
+  padding: 0;
   border: 1px solid #3a3e47;
   border-radius: 12px;
   background: #1c1f25;
   box-shadow: 0 24px 70px rgba(0, 0, 0, 0.55);
+}
+
+.creator-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 22px;
 }
 
 .modal-heading {

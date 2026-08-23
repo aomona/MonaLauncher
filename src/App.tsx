@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import "./App.css";
@@ -95,6 +95,9 @@ export default function App() {
   const [busy, setBusy] = useState<"install" | "launch" | "stop" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showCreator, setShowCreator] = useState(false);
+  const creatorDialogRef = useRef<HTMLDialogElement>(null);
+  const creatorSearchRef = useRef<HTMLInputElement>(null);
+  const creatorPreviousFocusRef = useRef<HTMLElement | null>(null);
 
   const selected = useMemo(
     () => instances.find((instance) => instance.id === selectedId) ?? null,
@@ -116,9 +119,7 @@ export default function App() {
       versions: (versionCatalog?.versions ?? []).filter(
         (version) =>
           version.versionType === group.type &&
-          (!query ||
-            version.id.toLowerCase().includes(query) ||
-            version.id === selectedVersionId),
+          (!query || version.id.toLowerCase().includes(query) || version.id === selectedVersionId),
       ),
     }));
   }, [selectedVersionId, versionCatalog, versionQuery]);
@@ -127,6 +128,16 @@ export default function App() {
       ? 0
       : Math.round((progress.completed / progress.total) * 100)
     : 0;
+
+  const openCreator = () => {
+    creatorPreviousFocusRef.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setShowCreator(true);
+  };
+
+  const closeCreator = () => {
+    if (busy === null) setShowCreator(false);
+  };
 
   const refreshInstances = async () => {
     const found = await invoke<MinecraftInstance[]>("list_minecraft_instances");
@@ -200,6 +211,46 @@ export default function App() {
       void unlistenStatus.then((unlisten) => unlisten());
     };
   }, []);
+
+  useEffect(() => {
+    if (!showCreator) return;
+
+    creatorSearchRef.current?.focus();
+    return () => creatorPreviousFocusRef.current?.focus();
+  }, [showCreator]);
+
+  useEffect(() => {
+    if (!showCreator) return;
+
+    const handleCreatorKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && busy === null) {
+        event.preventDefault();
+        setShowCreator(false);
+        return;
+      }
+      if (event.key !== "Tab") return;
+
+      const focusable = Array.from(
+        creatorDialogRef.current?.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ) ?? [],
+      );
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (!first || !last) return;
+
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.addEventListener("keydown", handleCreatorKeyDown);
+    return () => document.removeEventListener("keydown", handleCreatorKeyDown);
+  }, [busy, showCreator]);
 
   const install = async () => {
     setError(null);
@@ -282,11 +333,7 @@ export default function App() {
           </div>
         </div>
         <div className="toolbar" aria-label="ランチャー操作">
-          <button
-            className="toolbar-button accent"
-            onClick={() => setShowCreator(true)}
-            type="button"
-          >
+          <button className="toolbar-button accent" onClick={openCreator} type="button">
             <span aria-hidden="true">＋</span>インスタンスを追加
           </button>
           <button
@@ -347,7 +394,7 @@ export default function App() {
 
           <div className="instance-grid" aria-label="Minecraftインスタンス">
             {instances.length === 0 && (
-              <button className="empty-library" onClick={() => setShowCreator(true)} type="button">
+              <button className="empty-library" onClick={openCreator} type="button">
                 <span className="empty-cube">＋</span>
                 <strong>最初のインスタンスを作成</strong>
                 <small>公式の全バージョンからMinecraftを追加できます</small>
@@ -499,7 +546,7 @@ export default function App() {
                 クリア
               </button>
             </div>
-            <div className="log-output" aria-live="polite">
+            <div className="log-output" aria-label="Minecraftログ" aria-live="off" role="log">
               {visibleLogs.length === 0 ? (
                 <span className="log-placeholder">ゲームを起動するとログが表示されます。</span>
               ) : (
@@ -524,135 +571,151 @@ export default function App() {
 
         {showCreator && (
           <div className="modal-backdrop">
-            <form
+            <dialog
+              aria-describedby="creator-description"
+              aria-labelledby="creator-title"
               className="creator-modal"
-              onSubmit={(event) => {
-                event.preventDefault();
-                void install();
-              }}
+              open
+              ref={creatorDialogRef}
             >
-              <div className="modal-heading">
-                <div>
-                  <p className="eyebrow">NEW INSTANCE</p>
-                  <h2>インスタンスを追加</h2>
-                </div>
-                <button
-                  onClick={() => setShowCreator(false)}
-                  disabled={busy !== null}
-                  type="button"
-                  aria-label="閉じる"
-                >
-                  ×
-                </button>
-              </div>
-              <p className="modal-copy">独立したMinecraft環境をAppContainer内に作成します。</p>
-              <label>
-                バージョン検索
-                <input
-                  value={versionQuery}
-                  onChange={(event) => setVersionQuery(event.target.value)}
-                  placeholder="例: 1.21、24w、beta"
-                  disabled={versionsLoading}
-                />
-              </label>
-              <label>
-                バージョン
-                <select
-                  value={selectedVersionId}
-                  onChange={(event) => setSelectedVersionId(event.target.value)}
-                  disabled={versionsLoading || !versionCatalog}
-                  required
-                >
-                  {!versionCatalog && <option value="">バージョン一覧を取得中…</option>}
-                  {versionGroups.map(
-                    (group) =>
-                      group.versions.length > 0 && (
-                        <optgroup label={`${group.label} (${group.versions.length})`} key={group.type}>
-                          {group.versions.map((version) => (
-                            <option value={version.id} key={version.id}>
-                              {version.id}
-                              {version.id === versionCatalog?.latest.release
-                                ? " — 最新リリース"
-                                : version.id === versionCatalog?.latest.snapshot
-                                  ? " — 最新スナップショット"
-                                  : ` — ${version.releaseTime.slice(0, 10)}`}
-                            </option>
-                          ))}
-                        </optgroup>
-                      ),
-                  )}
-                </select>
-              </label>
-              <div className="version-summary" aria-live="polite">
-                <span aria-hidden="true">↓</span>
-                <span>
-                  {versionsLoading
-                    ? "公式バージョン一覧を取得しています…"
-                    : versionCatalog
-                      ? `${versionCatalog.versions.length}件から選択できます`
-                      : "バージョン一覧を取得できませんでした"}
-                </span>
-                {!versionsLoading && !versionCatalog && (
+              <form
+                className="creator-form"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void install();
+                }}
+              >
+                <div className="modal-heading">
+                  <div>
+                    <p className="eyebrow">NEW INSTANCE</p>
+                    <h2 id="creator-title">インスタンスを追加</h2>
+                  </div>
                   <button
+                    onClick={closeCreator}
+                    disabled={busy !== null}
                     type="button"
-                    onClick={() => void refreshVersions().catch((cause) => setError(String(cause)))}
+                    aria-label="閉じる"
                   >
-                    再試行
+                    ×
                   </button>
-                )}
-              </div>
-              <label>
-                プレイモード
-                <select
-                  value={gameMode}
-                  onChange={(event) => setGameMode(event.target.value as "offline" | "demo")}
-                >
-                  <option value="offline">通常版（オフライン）</option>
-                  <option value="demo">公式デモ版</option>
-                </select>
-              </label>
-              <div className="mode-note">
-                <span aria-hidden="true">i</span>
-                {gameMode === "offline"
-                  ? "ワールド作成とシングルプレイができます。オンライン機能にはMicrosoft認証が必要です。"
-                  : "時間制限付きの公式デモワールドを起動します。"}
-              </div>
-              <label>
-                表示名
-                <input
-                  value={instanceName}
-                  onChange={(event) => setInstanceName(event.target.value)}
-                  required
-                />
-              </label>
-              <label>
-                ID
-                <input
-                  value={instanceId}
-                  onChange={(event) => setInstanceId(event.target.value)}
-                  pattern="[A-Za-z0-9_-]+"
-                  title="英数字、_、- が使えます"
-                  required
-                />
-              </label>
-              <div className="modal-actions">
-                <button
-                  className="secondary-button"
-                  onClick={() => setShowCreator(false)}
-                  disabled={busy !== null}
-                  type="button"
-                >
-                  キャンセル
-                </button>
-                <button
-                  className="primary-button"
-                  disabled={busy !== null || !selectedVersionId}
-                  type="submit"
-                >
-                  {busy === "install" ? "インストール中…" : "作成する"}
-                </button>
-              </div>
-            </form>
+                </div>
+                <p className="modal-copy" id="creator-description">
+                  独立したMinecraft環境をAppContainer内に作成します。
+                </p>
+                <label>
+                  バージョン検索
+                  <input
+                    ref={creatorSearchRef}
+                    value={versionQuery}
+                    onChange={(event) => setVersionQuery(event.target.value)}
+                    placeholder="例: 1.21、24w、beta"
+                    disabled={versionsLoading}
+                  />
+                </label>
+                <label>
+                  バージョン
+                  <select
+                    value={selectedVersionId}
+                    onChange={(event) => setSelectedVersionId(event.target.value)}
+                    disabled={versionsLoading || !versionCatalog}
+                    required
+                  >
+                    {!versionCatalog && <option value="">バージョン一覧を取得中…</option>}
+                    {versionGroups.map(
+                      (group) =>
+                        group.versions.length > 0 && (
+                          <optgroup
+                            label={`${group.label} (${group.versions.length})`}
+                            key={group.type}
+                          >
+                            {group.versions.map((version) => (
+                              <option value={version.id} key={version.id}>
+                                {version.id}
+                                {version.id === versionCatalog?.latest.release
+                                  ? " — 最新リリース"
+                                  : version.id === versionCatalog?.latest.snapshot
+                                    ? " — 最新スナップショット"
+                                    : ` — ${version.releaseTime.slice(0, 10)}`}
+                              </option>
+                            ))}
+                          </optgroup>
+                        ),
+                    )}
+                  </select>
+                </label>
+                <div className="version-summary" aria-live="polite">
+                  <span aria-hidden="true">↓</span>
+                  <span>
+                    {versionsLoading
+                      ? "公式バージョン一覧を取得しています…"
+                      : versionCatalog
+                        ? `${versionCatalog.versions.length}件から選択できます`
+                        : "バージョン一覧を取得できませんでした"}
+                  </span>
+                  {!versionsLoading && !versionCatalog && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void refreshVersions().catch((cause) => setError(String(cause)))
+                      }
+                    >
+                      再試行
+                    </button>
+                  )}
+                </div>
+                <label>
+                  プレイモード
+                  <select
+                    value={gameMode}
+                    onChange={(event) => setGameMode(event.target.value as "offline" | "demo")}
+                  >
+                    <option value="offline">通常版（オフライン）</option>
+                    <option value="demo">公式デモ版</option>
+                  </select>
+                </label>
+                <div className="mode-note">
+                  <span aria-hidden="true">i</span>
+                  {gameMode === "offline"
+                    ? "ワールド作成とシングルプレイができます。オンライン機能にはMicrosoft認証が必要です。"
+                    : "時間制限付きの公式デモワールドを起動します。"}
+                </div>
+                <label>
+                  表示名
+                  <input
+                    value={instanceName}
+                    onChange={(event) => setInstanceName(event.target.value)}
+                    required
+                  />
+                </label>
+                <label>
+                  ID
+                  <input
+                    value={instanceId}
+                    onChange={(event) => setInstanceId(event.target.value)}
+                    pattern="[A-Za-z0-9_-]+"
+                    title="英数字、_、- が使えます"
+                    required
+                  />
+                </label>
+                <div className="modal-actions">
+                  <button
+                    className="secondary-button"
+                    onClick={closeCreator}
+                    disabled={busy !== null}
+                    type="button"
+                  >
+                    キャンセル
+                  </button>
+                  <button
+                    className="primary-button"
+                    disabled={busy !== null || !selectedVersionId}
+                    type="submit"
+                  >
+                    {busy === "install" ? "インストール中…" : "作成する"}
+                  </button>
+                </div>
+              </form>
+            </dialog>
           </div>
         )}
       </section>
