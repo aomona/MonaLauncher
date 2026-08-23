@@ -4,6 +4,7 @@ use std::process::Command;
 
 fn main() {
     println!("cargo:rerun-if-changed=java/narrator-bridge");
+    println!("cargo:rerun-if-env-changed=MONALAUNCHER_MICROSOFT_CLIENT_ID");
     if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
         build_narrator_bridge();
     }

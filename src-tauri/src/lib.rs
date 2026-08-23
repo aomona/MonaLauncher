@@ -1,3 +1,4 @@
+mod auth;
 mod commands;
 pub mod minecraft;
 mod platform;
@@ -20,9 +21,14 @@ pub mod probe {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(commands::auth::MicrosoftAuthState::default())
         .manage(commands::minecraft::MinecraftRuntimeState::default())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
+            commands::auth::begin_microsoft_sign_in,
+            commands::auth::microsoft_auth_status,
+            commands::auth::poll_microsoft_sign_in,
+            commands::auth::sign_out_microsoft,
             commands::minecraft::detect_java,
             commands::minecraft::delete_minecraft_instance,
             commands::minecraft::install_sandbox_instance,
