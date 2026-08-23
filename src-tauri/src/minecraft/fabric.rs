@@ -5,8 +5,8 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use reqwest::blocking::Client;
-use reqwest::Url;
+use reqwest::blocking::{Client, Response};
+use reqwest::{StatusCode, Url};
 use serde::{Deserialize, Serialize};
 use sha1::{Digest, Sha1};
 
@@ -23,6 +23,7 @@ const MAX_LIBRARY_SIZE: u64 = 64 * 1024 * 1024;
 #[derive(Debug)]
 pub enum FabricError {
     Http(reqwest::Error),
+    ServiceStatus(StatusCode),
     InvalidBaseUrl,
     ResponseTooLarge,
     Json(serde_json::Error),
@@ -59,6 +60,9 @@ impl fmt::Display for FabricError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Http(error) => write!(formatter, "Fabric Metaへの接続に失敗しました: {error}"),
+            Self::ServiceStatus(status) => {
+                write!(formatter, "Fabric MetaがHTTP {status}を返しました")
+            }
             Self::InvalidBaseUrl => write!(formatter, "Fabric MetaのURL設定が正しくありません"),
             Self::ResponseTooLarge => write!(formatter, "Fabric Metaの応答が大きすぎます"),
             Self::Json(error) => write!(
@@ -188,8 +192,10 @@ pub fn list_loader_versions(
 ) -> Result<Vec<FabricLoaderVersion>, FabricError> {
     let client = fabric_client()?;
     let url = loader_versions_url(minecraft_version)?;
-    let bytes = fetch_bounded(&client, url, MAX_META_RESPONSE_SIZE)?;
-    let entries: Vec<LoaderEntry> = serde_json::from_slice(&bytes)?;
+    let response = client.get(url).send()?;
+    let status = response.status();
+    let bytes = read_bounded(response, MAX_META_RESPONSE_SIZE)?;
+    let entries = parse_loader_response(status, &bytes)?;
 
     Ok(entries
         .into_iter()
@@ -198,6 +204,23 @@ pub fn list_loader_versions(
             stable: entry.loader.stable,
         })
         .collect())
+}
+
+fn parse_loader_response(
+    status: StatusCode,
+    bytes: &[u8],
+) -> Result<Vec<LoaderEntry>, FabricError> {
+    if status.is_success() {
+        return Ok(serde_json::from_slice(bytes)?);
+    }
+    if status == StatusCode::BAD_REQUEST {
+        if let Ok(entries) = serde_json::from_slice::<Vec<LoaderEntry>>(bytes) {
+            if entries.is_empty() {
+                return Ok(entries);
+            }
+        }
+    }
+    Err(FabricError::ServiceStatus(status))
 }
 
 pub fn install_fabric<F>(
@@ -427,6 +450,10 @@ fn validate_checksum(checksum: &str) -> Result<String, FabricError> {
 
 fn fetch_bounded(client: &Client, url: Url, maximum: u64) -> Result<Vec<u8>, FabricError> {
     let response = client.get(url).send()?.error_for_status()?;
+    read_bounded(response, maximum)
+}
+
+fn read_bounded(response: Response, maximum: u64) -> Result<Vec<u8>, FabricError> {
     if response
         .content_length()
         .is_some_and(|length| length > maximum)
@@ -558,6 +585,19 @@ mod tests {
 
         assert_eq!(entries[0].loader.version, "0.19.3");
         assert!(entries[0].loader.stable);
+    }
+
+    #[test]
+    fn treats_fabric_bad_request_with_empty_catalog_as_unsupported() {
+        let entries = parse_loader_response(StatusCode::BAD_REQUEST, b"[]").unwrap();
+
+        assert!(entries.is_empty());
+        assert!(matches!(
+            parse_loader_response(StatusCode::INTERNAL_SERVER_ERROR, b"[]"),
+            Err(FabricError::ServiceStatus(
+                StatusCode::INTERNAL_SERVER_ERROR
+            ))
+        ));
     }
 
     #[test]
