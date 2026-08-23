@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import "./App.css";
 
 type MinecraftInstance = {
@@ -50,6 +51,24 @@ type MinecraftLaunchProgress = {
   instanceId: string;
   stage: string;
   message: string;
+};
+
+type MicrosoftAuthStatus = {
+  configured: boolean;
+  authorized: boolean;
+};
+
+type MicrosoftSignInChallenge = {
+  sessionId: string;
+  userCode: string;
+  verificationUri: string;
+  expiresIn: number;
+  interval: number;
+};
+
+type MicrosoftSignInPoll = {
+  status: "pending" | "authorized";
+  retryAfter: number | null;
 };
 
 type LogLine = MinecraftLogEvent & { id: number };
@@ -121,6 +140,14 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [settingsName, setSettingsName] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [authStatus, setAuthStatus] = useState<MicrosoftAuthStatus>({
+    configured: false,
+    authorized: false,
+  });
+  const [showAuth, setShowAuth] = useState(false);
+  const [authChallenge, setAuthChallenge] = useState<MicrosoftSignInChallenge | null>(null);
+  const [authBusy, setAuthBusy] = useState<"begin" | "signout" | null>(null);
+  const [authError, setAuthError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const creatorDialogRef = useRef<HTMLDialogElement>(null);
   const creatorSearchRef = useRef<HTMLInputElement>(null);
@@ -128,6 +155,9 @@ export default function App() {
   const settingsDialogRef = useRef<HTMLDialogElement>(null);
   const settingsNameRef = useRef<HTMLInputElement>(null);
   const settingsPreviousFocusRef = useRef<HTMLElement | null>(null);
+  const authDialogRef = useRef<HTMLDialogElement>(null);
+  const authPrimaryRef = useRef<HTMLButtonElement>(null);
+  const authPreviousFocusRef = useRef<HTMLElement | null>(null);
 
   const selected = useMemo(
     () => instances.find((instance) => instance.id === selectedId) ?? null,
@@ -186,6 +216,17 @@ export default function App() {
     }
   };
 
+  const openAuth = () => {
+    authPreviousFocusRef.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setAuthError(null);
+    setShowAuth(true);
+  };
+
+  const closeAuth = () => {
+    if (authBusy === null) setShowAuth(false);
+  };
+
   const refreshInstances = async () => {
     const found = await invoke<MinecraftInstance[]>("list_minecraft_instances");
     setInstances(found);
@@ -210,11 +251,16 @@ export default function App() {
     }
   };
 
+  const refreshAuthStatus = async () => {
+    setAuthStatus(await invoke<MicrosoftAuthStatus>("microsoft_auth_status"));
+  };
+
   useEffect(() => {
     if (!hasTauriRuntime()) return;
 
     void refreshInstances().catch((cause) => setError(String(cause)));
     void refreshVersions().catch((cause) => setError(String(cause)));
+    void refreshAuthStatus().catch((cause) => setAuthError(String(cause)));
     const unlistenProgress = listen<InstallProgress>("minecraft-install-progress", (event) => {
       setProgress(event.payload);
     });
@@ -305,6 +351,63 @@ export default function App() {
     document.addEventListener("keydown", handleSettingsKeyDown);
     return () => document.removeEventListener("keydown", handleSettingsKeyDown);
   }, [busy, showSettings]);
+
+  useEffect(() => {
+    if (!showAuth) return;
+
+    authPrimaryRef.current?.focus();
+    if (document.activeElement !== authPrimaryRef.current) authDialogRef.current?.focus();
+    return () => authPreviousFocusRef.current?.focus();
+  }, [showAuth]);
+
+  useEffect(() => {
+    if (!showAuth) return;
+
+    const handleAuthKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && authBusy === null) {
+        event.preventDefault();
+        setShowAuth(false);
+        return;
+      }
+      keepFocusInsideDialog(event, authDialogRef.current);
+    };
+
+    document.addEventListener("keydown", handleAuthKeyDown);
+    return () => document.removeEventListener("keydown", handleAuthKeyDown);
+  }, [authBusy, showAuth]);
+
+  useEffect(() => {
+    if (!authChallenge || authStatus.authorized) return;
+
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const poll = async () => {
+      try {
+        const result = await invoke<MicrosoftSignInPoll>("poll_microsoft_sign_in", {
+          sessionId: authChallenge.sessionId,
+        });
+        if (cancelled) return;
+        if (result.status === "authorized") {
+          setAuthStatus((current) => ({ ...current, authorized: true }));
+          setAuthChallenge(null);
+          setAuthError(null);
+          return;
+        }
+        timer = setTimeout(poll, (result.retryAfter ?? authChallenge.interval) * 1000);
+      } catch (cause) {
+        if (!cancelled) {
+          setAuthError(String(cause));
+          setAuthChallenge(null);
+        }
+      }
+    };
+
+    timer = setTimeout(poll, authChallenge.interval * 1000);
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [authChallenge, authStatus.authorized]);
 
   const install = async () => {
     setError(null);
@@ -425,6 +528,42 @@ export default function App() {
     }
   };
 
+  const beginMicrosoftSignIn = async () => {
+    setAuthBusy("begin");
+    setAuthError(null);
+    try {
+      const challenge = await invoke<MicrosoftSignInChallenge>("begin_microsoft_sign_in");
+      setAuthChallenge(challenge);
+      await openMicrosoftVerification(challenge.verificationUri);
+    } catch (cause) {
+      setAuthError(String(cause));
+    } finally {
+      setAuthBusy(null);
+    }
+  };
+
+  const openMicrosoftVerification = async (verificationUri: string) => {
+    try {
+      await openUrl(verificationUri);
+    } catch (cause) {
+      setAuthError(`ブラウザーを開けませんでした。下のURLを手動で開いてください: ${cause}`);
+    }
+  };
+
+  const signOutMicrosoft = async () => {
+    setAuthBusy("signout");
+    setAuthError(null);
+    try {
+      await invoke("sign_out_microsoft");
+      setAuthChallenge(null);
+      setAuthStatus((current) => ({ ...current, authorized: false }));
+    } catch (cause) {
+      setAuthError(String(cause));
+    } finally {
+      setAuthBusy(null);
+    }
+  };
+
   return (
     <main className="app-shell">
       <header className="topbar">
@@ -449,13 +588,24 @@ export default function App() {
             <span aria-hidden="true">↻</span>更新
           </button>
         </div>
-        <div className="account-chip" title="Microsoftアカウント認証は準備中です">
-          <span className="account-avatar">M</span>
-          <span>
-            <strong>オフライン</strong>
-            <small>Demo profile</small>
+        <button className="account-chip" onClick={openAuth} type="button">
+          <span className="account-avatar" aria-hidden="true">
+            M
           </span>
-        </div>
+          <span>
+            <strong>{authStatus.authorized ? "Microsoft認証済み" : "オフライン"}</strong>
+            <small>
+              {authStatus.authorized
+                ? "Minecraft連携準備中"
+                : authStatus.configured
+                  ? "サインインできます"
+                  : "認証設定が必要です"}
+            </small>
+          </span>
+          <span className="chevron" aria-hidden="true">
+            ›
+          </span>
+        </button>
       </header>
 
       <section className="workspace">
@@ -845,6 +995,122 @@ export default function App() {
                   </button>
                 </div>
               </form>
+            </dialog>
+          </div>
+        )}
+
+        {showAuth && (
+          <div className="modal-backdrop">
+            <dialog
+              aria-describedby="auth-description"
+              aria-labelledby="auth-title"
+              className="creator-modal auth-modal"
+              open
+              ref={authDialogRef}
+              tabIndex={-1}
+            >
+              <div className="creator-form">
+                <div className="modal-heading">
+                  <div>
+                    <p className="eyebrow">MICROSOFT ACCOUNT</p>
+                    <h2 id="auth-title">Microsoftアカウント</h2>
+                  </div>
+                  <button
+                    aria-label="閉じる"
+                    disabled={authBusy !== null}
+                    onClick={closeAuth}
+                    type="button"
+                  >
+                    ×
+                  </button>
+                </div>
+                <p className="modal-copy" id="auth-description">
+                  認証はMicrosoftのブラウザー画面で行います。パスワードをMonaLauncherへ入力することはありません。
+                </p>
+
+                {!authStatus.configured && (
+                  <div className="auth-state-card auth-state-warning">
+                    <strong>開発用クライアントIDが未設定です</strong>
+                    <p>
+                      MONALAUNCHER_MICROSOFT_CLIENT_IDを設定してMonaLauncherを再ビルドしてください。
+                    </p>
+                  </div>
+                )}
+
+                {authStatus.authorized && (
+                  <div className="auth-state-card auth-state-success">
+                    <strong>Microsoft認証情報を安全に保存しました</strong>
+                    <p>
+                      更新トークンはWindows資格情報マネージャーにあります。Minecraftプロフィールとの接続は次の実装段階です。
+                    </p>
+                  </div>
+                )}
+
+                {authChallenge && !authStatus.authorized && (
+                  <div className="device-code-panel">
+                    <span>Microsoftの画面へ入力するコード</span>
+                    <strong>{authChallenge.userCode}</strong>
+                    <code>{authChallenge.verificationUri}</code>
+                    <small>認証が完了するまで、この画面で自動的に確認します。</small>
+                  </div>
+                )}
+
+                {authError && (
+                  <div className="modal-inline-error" role="alert">
+                    {authError}
+                  </div>
+                )}
+
+                <div className="auth-security-note">
+                  <span aria-hidden="true">◆</span>
+                  <p>
+                    <strong>トークンはReactへ渡しません</strong>
+                    <small>device codeと更新トークンはRust側だけで処理されます。</small>
+                  </p>
+                </div>
+
+                <div className="modal-actions auth-actions">
+                  <button
+                    className="secondary-button"
+                    disabled={authBusy !== null}
+                    onClick={closeAuth}
+                    type="button"
+                  >
+                    閉じる
+                  </button>
+                  {authStatus.authorized ? (
+                    <button
+                      className="signout-button"
+                      disabled={authBusy !== null}
+                      onClick={() => void signOutMicrosoft()}
+                      ref={authPrimaryRef}
+                      type="button"
+                    >
+                      {authBusy === "signout" ? "削除中…" : "サインアウト"}
+                    </button>
+                  ) : authChallenge ? (
+                    <button
+                      className="primary-button"
+                      disabled={authBusy !== null}
+                      onClick={() => void openMicrosoftVerification(authChallenge.verificationUri)}
+                      ref={authPrimaryRef}
+                      type="button"
+                    >
+                      Microsoftを開く
+                    </button>
+                  ) : (
+                    <button
+                      className="primary-button"
+                      disabled={!authStatus.configured || authBusy !== null}
+                      onClick={() => void beginMicrosoftSignIn()}
+                      ref={authPrimaryRef}
+                      type="button"
+                    >
+                      {authBusy === "begin" ? "コードを取得中…" : "サインインを開始"}
+                    </button>
+                  )}
+                </div>
+              </div>
             </dialog>
           </div>
         )}

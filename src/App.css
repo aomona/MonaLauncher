@@ -189,7 +189,15 @@ select:focus-visible {
   padding: 6px 8px;
   border: 1px solid #2d3038;
   border-radius: 8px;
+  color: inherit;
   background: #181a20;
+  font: inherit;
+  text-align: left;
+}
+
+.account-chip:hover {
+  border-color: #3d424c;
+  background: #1e2128;
 }
 
 .account-avatar {
@@ -1138,6 +1146,126 @@ select:focus-visible {
 
 .settings-modal {
   width: min(430px, calc(100vw - 40px));
+}
+
+.auth-modal {
+  width: min(450px, calc(100vw - 40px));
+}
+
+.auth-state-card,
+.device-code-panel {
+  padding: 12px;
+  border: 1px solid #343943;
+  border-radius: 8px;
+  background: #171a20;
+}
+
+.auth-state-card strong,
+.auth-state-card p {
+  margin: 0;
+}
+
+.auth-state-card strong {
+  color: #d9dce2;
+  font-size: 11px;
+}
+
+.auth-state-card p {
+  margin-top: 5px;
+  color: #7f8590;
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+.auth-state-warning {
+  border-color: #5c4d31;
+  background: rgba(82, 67, 37, 0.22);
+}
+
+.auth-state-warning strong {
+  color: #d9c393;
+}
+
+.auth-state-success {
+  border-color: #36543a;
+  background: rgba(44, 77, 48, 0.22);
+}
+
+.auth-state-success strong {
+  color: #a9d3ad;
+}
+
+.device-code-panel {
+  display: grid;
+  gap: 7px;
+  text-align: center;
+}
+
+.device-code-panel > span,
+.device-code-panel > small {
+  color: #7e8490;
+  font-size: 10px;
+}
+
+.device-code-panel > strong {
+  color: #f0f3f7;
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 23px;
+  letter-spacing: 0.12em;
+}
+
+.device-code-panel > code {
+  overflow-wrap: anywhere;
+  color: #8fbd7b;
+  font-size: 10px;
+}
+
+.auth-security-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 9px 10px;
+  border: 1px solid #304135;
+  border-radius: 8px;
+  color: #74a57a;
+  background: rgba(38, 65, 43, 0.18);
+}
+
+.auth-security-note p,
+.auth-security-note strong,
+.auth-security-note small {
+  display: block;
+  margin: 0;
+}
+
+.auth-security-note strong {
+  color: #9fc3a4;
+  font-size: 10px;
+}
+
+.auth-security-note small {
+  margin-top: 2px;
+  color: #66836b;
+  font-size: 9px;
+}
+
+.auth-actions {
+  align-items: center;
+}
+
+.auth-actions .primary-button {
+  min-width: 132px;
+}
+
+.signout-button {
+  min-height: 36px;
+  padding: 0 14px;
+  border: 1px solid #67423f;
+  border-radius: 7px;
+  color: #dba9a4;
+  background: #422a29;
+  font-size: 10px;
+  font-weight: 650;
 }
 
 .settings-summary {
