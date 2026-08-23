@@ -1243,17 +1243,17 @@ select:focus-visible {
 
 .installed-mod-list {
   display: grid;
-  max-height: 128px;
+  max-height: 190px;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 7px;
   overflow-y: auto;
 }
 
 .installed-mod-item {
-  display: flex;
+  display: grid;
   min-width: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
   gap: 9px;
   padding: 8px 9px;
   border: 1px solid #30343d;
@@ -1261,27 +1261,114 @@ select:focus-visible {
   background: #181b20;
 }
 
-.installed-mod-item > div {
+.installed-mod-item.confirming-removal {
+  grid-column: 1 / -1;
+  border-color: #583c39;
+  background: #211a1a;
+}
+
+.installed-mod-copy {
   min-width: 0;
 }
 
-.installed-mod-item strong,
-.installed-mod-item small {
+.installed-mod-copy strong,
+.installed-mod-copy small {
   display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.installed-mod-item strong {
+.installed-mod-copy strong {
   color: #cfd3da;
   font-size: 10px;
 }
 
-.installed-mod-item small {
+.installed-mod-copy small {
   margin-top: 2px;
   color: #6f7681;
   font-size: 9px;
+}
+
+.installed-mod-actions {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.mod-remove-trigger {
+  min-height: 24px;
+  padding: 0 7px;
+  border: 1px solid #553735;
+  border-radius: 5px;
+  color: #c98d87;
+  background: #2d2020;
+  font-size: 8px;
+  font-weight: 700;
+}
+
+.mod-remove-trigger:hover {
+  border-color: #754944;
+  color: #e5aaa4;
+  background: #3a2423;
+}
+
+.mod-remove-confirmation {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 8px;
+  border-top: 1px solid #49302f;
+}
+
+.mod-remove-confirmation p {
+  min-width: 0;
+  flex: 1;
+  margin: 0;
+}
+
+.mod-remove-confirmation strong,
+.mod-remove-confirmation small {
+  display: block;
+}
+
+.mod-remove-confirmation strong {
+  color: #e3b0ab;
+  font-size: 10px;
+}
+
+.mod-remove-confirmation small {
+  margin-top: 3px;
+  color: #946e6b;
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+.mod-remove-confirmation > div {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
+}
+
+.mod-remove-confirmation .secondary-button,
+.mod-remove-confirm-button {
+  min-height: 30px;
+  padding: 0 10px;
+  font-size: 9px;
+}
+
+.mod-remove-confirm-button {
+  border: 1px solid #77433e;
+  border-radius: 7px;
+  color: #f2c0ba;
+  background: #4a2927;
+  font-weight: 700;
+}
+
+.mod-remove-confirm-button:hover {
+  background: #59302d;
 }
 
 .mod-badge {
@@ -1831,6 +1918,15 @@ select:focus-visible {
 
   .installed-mod-list {
     grid-template-columns: 1fr;
+  }
+
+  .mod-remove-confirmation {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .mod-remove-confirmation > div {
+    justify-content: flex-end;
   }
 
   .mod-result-card {

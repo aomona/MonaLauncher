@@ -116,10 +116,18 @@ type InstalledMod = {
   sha512: string;
   size: number;
   direct: boolean;
+  requiredDependencies?: string[] | null;
 };
 
 type ModInstallResult = {
   installed: InstalledMod[];
+};
+
+type ModRemovalResult = {
+  requested: InstalledMod;
+  removed: InstalledMod[];
+  retainedAsDependency: boolean;
+  cleanupPending: boolean;
 };
 
 type ModInstallProgress = {
@@ -233,6 +241,8 @@ export default function App() {
   const [installedMods, setInstalledMods] = useState<InstalledMod[]>([]);
   const [installedModsLoading, setInstalledModsLoading] = useState(false);
   const [modInstallingProjectId, setModInstallingProjectId] = useState<string | null>(null);
+  const [modRemovingProjectId, setModRemovingProjectId] = useState<string | null>(null);
+  const [modRemovalTarget, setModRemovalTarget] = useState<InstalledMod | null>(null);
   const [modInstallProgress, setModInstallProgress] = useState<ModInstallProgress | null>(null);
   const [modError, setModError] = useState<string | null>(null);
   const [modSuccess, setModSuccess] = useState<string | null>(null);
@@ -248,6 +258,7 @@ export default function App() {
   const authPreviousFocusRef = useRef<HTMLElement | null>(null);
   const modsDialogRef = useRef<HTMLDialogElement>(null);
   const modSearchInputRef = useRef<HTMLInputElement>(null);
+  const modRemoveConfirmRef = useRef<HTMLButtonElement>(null);
   const modsPreviousFocusRef = useRef<HTMLElement | null>(null);
   const modSearchRequestRef = useRef(0);
 
@@ -261,6 +272,8 @@ export default function App() {
     () => new Set(installedMods.map((item) => item.projectId)),
     [installedMods],
   );
+  const modOperationActive = modInstallingProjectId !== null || modRemovingProjectId !== null;
+  const modControlsDisabled = modOperationActive || modRemovalTarget !== null;
   const versionGroups = useMemo(() => {
     const groups = [
       { type: "release", label: "正式リリース" },
@@ -370,6 +383,8 @@ export default function App() {
     setModSearch(null);
     setInstalledMods([]);
     setModInstallProgress(null);
+    setModRemovingProjectId(null);
+    setModRemovalTarget(null);
     setModError(null);
     setModSuccess(null);
     setShowMods(true);
@@ -378,13 +393,15 @@ export default function App() {
   };
 
   const closeMods = () => {
-    if (modInstallingProjectId !== null) return;
+    if (modOperationActive) return;
     modSearchRequestRef.current += 1;
+    setModRemovalTarget(null);
     setShowMods(false);
   };
 
   const installModrinthMod = async (projectId: string) => {
-    if (!selected) return;
+    if (!selected || modOperationActive) return;
+    setModRemovalTarget(null);
     setModInstallingProjectId(projectId);
     setModInstallProgress({
       instanceId: selected.id,
@@ -416,6 +433,44 @@ export default function App() {
     } finally {
       setModInstallingProjectId(null);
       setModInstallProgress(null);
+    }
+  };
+
+  const removeModrinthMod = async (target: InstalledMod) => {
+    if (!selected || !target.direct || modOperationActive) return;
+    setModRemovingProjectId(target.projectId);
+    setModError(null);
+    setModSuccess(null);
+    try {
+      const result = await invoke<ModRemovalResult>("remove_modrinth_mod", {
+        instanceId: selected.id,
+        projectId: target.projectId,
+      });
+      const orphanedDependencies = result.removed.filter(
+        (item) => item.projectId !== result.requested.projectId,
+      ).length;
+      const cleanupNote = result.cleanupPending
+        ? " ゲームのmodsフォルダからは外しましたが、一時退避ファイルの後片付けが残っています。"
+        : "";
+      setModSuccess(
+        result.retainedAsDependency
+          ? `${result.requested.title}の直接追加を解除しました。別のModに必要なため、JARは必須依存として残しています。${cleanupNote}`
+          : `${result.requested.title}を削除しました${
+              orphanedDependencies > 0
+                ? `（不要になった必須依存${orphanedDependencies}件も削除）`
+                : ""
+            }。${cleanupNote}`,
+      );
+      setModRemovalTarget(null);
+      try {
+        await refreshInstalledMods(selected.id);
+      } catch (cause) {
+        setModError(`削除は完了しましたが、一覧を更新できませんでした: ${String(cause)}`);
+      }
+    } catch (cause) {
+      setModError(String(cause));
+    } finally {
+      setModRemovingProjectId(null);
     }
   };
 
@@ -635,11 +690,19 @@ export default function App() {
   }, [showMods]);
 
   useEffect(() => {
+    if (modRemovalTarget) modRemoveConfirmRef.current?.focus();
+  }, [modRemovalTarget]);
+
+  useEffect(() => {
     if (!showMods) return;
 
     const handleModsKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && modInstallingProjectId === null) {
+      if (event.key === "Escape" && !modOperationActive) {
         event.preventDefault();
+        if (modRemovalTarget) {
+          setModRemovalTarget(null);
+          return;
+        }
         modSearchRequestRef.current += 1;
         setShowMods(false);
         return;
@@ -649,7 +712,7 @@ export default function App() {
 
     document.addEventListener("keydown", handleModsKeyDown);
     return () => document.removeEventListener("keydown", handleModsKeyDown);
-  }, [modInstallingProjectId, showMods]);
+  }, [modOperationActive, modRemovalTarget, showMods]);
 
   useEffect(() => {
     if (!authChallenge || authStatus.authorized) return;
@@ -1521,7 +1584,7 @@ export default function App() {
             <dialog
               aria-describedby="mods-description"
               aria-labelledby="mods-title"
-              aria-busy={modInstallingProjectId !== null}
+              aria-busy={modOperationActive}
               className="creator-modal mods-modal"
               open
               ref={modsDialogRef}
@@ -1535,7 +1598,7 @@ export default function App() {
                   </div>
                   <button
                     aria-label="閉じる"
-                    disabled={modInstallingProjectId !== null}
+                    disabled={modOperationActive}
                     onClick={closeMods}
                     type="button"
                   >
@@ -1569,19 +1632,75 @@ export default function App() {
                     <p className="mods-empty">まだModは導入されていません。</p>
                   ) : (
                     <ul className="installed-mod-list">
-                      {installedMods.map((item) => (
-                        <li className="installed-mod-item" key={item.projectId}>
-                          <div>
-                            <strong>{item.title}</strong>
-                            <small>{item.versionNumber}</small>
-                          </div>
-                          <span
-                            className={item.direct ? "mod-badge direct" : "mod-badge dependency"}
+                      {installedMods.map((item) => {
+                        const confirmingRemoval = modRemovalTarget?.projectId === item.projectId;
+                        const removing = modRemovingProjectId === item.projectId;
+                        return (
+                          <li
+                            className={`installed-mod-item${confirmingRemoval ? " confirming-removal" : ""}`}
+                            key={item.projectId}
                           >
-                            {item.direct ? "追加済み" : "必須依存"}
-                          </span>
-                        </li>
-                      ))}
+                            <div className="installed-mod-copy">
+                              <strong>{item.title}</strong>
+                              <small>{item.versionNumber}</small>
+                            </div>
+                            <div className="installed-mod-actions">
+                              <span
+                                className={
+                                  item.direct ? "mod-badge direct" : "mod-badge dependency"
+                                }
+                              >
+                                {item.direct ? "追加済み" : "必須依存"}
+                              </span>
+                              {item.direct && !confirmingRemoval && (
+                                <button
+                                  aria-label={`${item.title}を削除`}
+                                  className="mod-remove-trigger"
+                                  disabled={modControlsDisabled}
+                                  onClick={() => {
+                                    setModError(null);
+                                    setModSuccess(null);
+                                    setModRemovalTarget(item);
+                                  }}
+                                  title={`${item.title}を削除`}
+                                  type="button"
+                                >
+                                  削除
+                                </button>
+                              )}
+                            </div>
+                            {confirmingRemoval && (
+                              <div aria-live="polite" className="mod-remove-confirmation">
+                                <p>
+                                  <strong>「{item.title}」を削除しますか？</strong>
+                                  <small>
+                                    このModと、ほかから使われていない必須依存だけを削除します。
+                                  </small>
+                                </p>
+                                <div>
+                                  <button
+                                    className="secondary-button"
+                                    disabled={modOperationActive}
+                                    onClick={() => setModRemovalTarget(null)}
+                                    type="button"
+                                  >
+                                    戻る
+                                  </button>
+                                  <button
+                                    className="mod-remove-confirm-button"
+                                    disabled={modOperationActive}
+                                    onClick={() => void removeModrinthMod(item)}
+                                    ref={modRemoveConfirmRef}
+                                    type="button"
+                                  >
+                                    {removing ? "削除中…" : "削除する"}
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                          </li>
+                        );
+                      })}
                     </ul>
                   )}
                 </section>
@@ -1605,7 +1724,7 @@ export default function App() {
                       名前・キーワード
                       <input
                         autoComplete="off"
-                        disabled={modInstallingProjectId !== null}
+                        disabled={modControlsDisabled}
                         id="mod-search-input"
                         maxLength={100}
                         onChange={(event) => setModQuery(event.target.value)}
@@ -1617,7 +1736,7 @@ export default function App() {
                     </label>
                     <button
                       className="primary-button mod-search-button"
-                      disabled={modSearchLoading || modInstallingProjectId !== null}
+                      disabled={modSearchLoading || modControlsDisabled}
                       type="submit"
                     >
                       {modSearchLoading ? "検索中…" : "検索"}
@@ -1688,7 +1807,7 @@ export default function App() {
                                     ? "secondary-button mod-result-action"
                                     : "primary-button mod-result-action"
                                 }
-                                disabled={modInstallingProjectId !== null}
+                                disabled={modControlsDisabled}
                                 onClick={() => void installModrinthMod(hit.projectId)}
                                 type="button"
                               >
@@ -1705,11 +1824,7 @@ export default function App() {
                     <div className="mod-pagination">
                       <button
                         className="secondary-button"
-                        disabled={
-                          modSearch.offset === 0 ||
-                          modSearchLoading ||
-                          modInstallingProjectId !== null
-                        }
+                        disabled={modSearch.offset === 0 || modSearchLoading || modControlsDisabled}
                         onClick={() =>
                           void runModSearch(
                             selected.id,
@@ -1731,7 +1846,7 @@ export default function App() {
                         disabled={
                           modSearch.offset + modSearch.hits.length >= modSearch.totalHits ||
                           modSearchLoading ||
-                          modInstallingProjectId !== null
+                          modControlsDisabled
                         }
                         onClick={() =>
                           void runModSearch(
@@ -1751,15 +1866,17 @@ export default function App() {
                 <div className="mod-security-note">
                   <span aria-hidden="true">◆</span>
                   <p>
-                    <strong>ダウンロードしたJARは検証してから配置します</strong>
-                    <small>ModrinthのSHA-512とファイルサイズが一致しない場合は導入しません。</small>
+                    <strong>JARは導入時も削除時も内容を検証します</strong>
+                    <small>
+                      SHA-512とサイズが台帳に一致しないファイルは、自動で配置・削除しません。
+                    </small>
                   </p>
                 </div>
 
                 <div className="modal-actions">
                   <button
                     className="secondary-button"
-                    disabled={modInstallingProjectId !== null}
+                    disabled={modOperationActive}
                     onClick={closeMods}
                     type="button"
                   >
