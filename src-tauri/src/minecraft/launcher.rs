@@ -10,8 +10,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use zip::ZipArchive;
 
+use super::fabric::{
+    load_fabric_profile, maven_artifact_path, validate_profile, FabricError, FabricProfile,
+};
 use super::installer::list_instances;
-use super::model::{rules_allow, Argument, ArgumentValue, InstanceManifest, VersionMetadata};
+use super::model::{
+    rules_allow, Argument, ArgumentValue, InstanceManifest, ModLoader, VersionMetadata,
+};
 use super::paths::MinecraftPaths;
 
 #[derive(Debug)]
@@ -23,6 +28,7 @@ pub enum MinecraftLaunchError {
     Io(std::io::Error),
     Json(serde_json::Error),
     Install(super::installer::MinecraftInstallError),
+    Fabric(FabricError),
     Sandbox(String),
     SandboxedProcessNotIsolated,
 }
@@ -47,6 +53,7 @@ impl fmt::Display for MinecraftLaunchError {
             Self::Io(error) => write!(formatter, "process or file system error: {error}"),
             Self::Json(error) => write!(formatter, "version metadata error: {error}"),
             Self::Install(error) => write!(formatter, "instance metadata error: {error}"),
+            Self::Fabric(error) => write!(formatter, "Fabric起動設定エラー: {error}"),
             Self::Sandbox(error) => write!(formatter, "AppContainer launch error: {error}"),
             Self::SandboxedProcessNotIsolated => {
                 write!(formatter, "Minecraft did not receive an AppContainer token")
@@ -72,6 +79,12 @@ impl From<serde_json::Error> for MinecraftLaunchError {
 impl From<super::installer::MinecraftInstallError> for MinecraftLaunchError {
     fn from(error: super::installer::MinecraftInstallError) -> Self {
         Self::Install(error)
+    }
+}
+
+impl From<FabricError> for MinecraftLaunchError {
+    fn from(error: FabricError) -> Self {
+        Self::Fabric(error)
     }
 }
 
@@ -159,6 +172,7 @@ pub fn spawn_instance(
     require_file(&version_path)?;
 
     let version: VersionMetadata = serde_json::from_slice(&fs::read(version_path)?)?;
+    let fabric = load_instance_fabric_profile(paths, &instance)?;
     if let Some(java_version) = &version.java_version {
         validate_java_version(Path::new(&instance.java_path), java_version.major_version)?;
     }
@@ -167,7 +181,12 @@ pub fn spawn_instance(
         .as_ref()
         .map(|_| generate_narrator_token())
         .transpose()?;
-    let classpath = build_classpath(paths, &version, instance.demo)?;
+    let mut classpath = fabric
+        .as_ref()
+        .map(|profile| build_fabric_classpath(paths, profile))
+        .transpose()?
+        .unwrap_or_default();
+    classpath.extend(build_classpath(paths, &version, instance.demo)?);
     let source_client_jar = paths.version_jar(&version.id);
     require_file(&source_client_jar)?;
 
@@ -229,7 +248,13 @@ pub fn spawn_instance(
     let user_type = if identity.is_some() { "msa" } else { "legacy" }.to_owned();
     let substitutions = HashMap::from([
         ("${auth_player_name}", player_name),
-        ("${version_name}", version.id.clone()),
+        (
+            "${version_name}",
+            fabric
+                .as_ref()
+                .map(|profile| profile.id.clone())
+                .unwrap_or_else(|| version.id.clone()),
+        ),
         (
             "${game_directory}",
             game_directory.to_string_lossy().into_owned(),
@@ -286,6 +311,13 @@ pub fn spawn_instance(
         expand_arguments(&version.arguments.jvm, &features, &substitutions)
     };
     arguments.extend(jvm_arguments.into_iter().map(OsString::from));
+    if let Some(profile) = &fabric {
+        arguments.extend(
+            expand_arguments(&profile.arguments.jvm, &features, &substitutions)
+                .into_iter()
+                .map(OsString::from),
+        );
+    }
     if sandbox.is_some() {
         // JNA cannot safely unpack through a SUBST alias in an AppContainer. The trusted launcher
         // extracts jnidispatch.dll first, then the child only loads it from its sandbox drive.
@@ -304,8 +336,13 @@ pub fn spawn_instance(
             arguments.push(OsString::from("-Dmonalauncher.narrator.smoke=true"));
         }
     }
-    arguments.push(OsString::from(&version.main_class));
-    let game_arguments = version
+    arguments.push(OsString::from(
+        fabric
+            .as_ref()
+            .map(|profile| profile.main_class.as_str())
+            .unwrap_or(&version.main_class),
+    ));
+    let mut game_arguments = version
         .minecraft_arguments
         .as_deref()
         .map(|value| {
@@ -315,6 +352,13 @@ pub fn spawn_instance(
                 .collect::<Vec<_>>()
         })
         .unwrap_or_else(|| expand_arguments(&version.arguments.game, &features, &substitutions));
+    if let Some(profile) = &fabric {
+        game_arguments.extend(expand_arguments(
+            &profile.arguments.game,
+            &features,
+            &substitutions,
+        ));
+    }
     arguments.extend(game_arguments.into_iter().map(OsString::from));
 
     if instance.sandboxed {
@@ -698,6 +742,32 @@ fn load_instance(
         .into_iter()
         .find(|instance| instance.id == instance_id)
         .ok_or_else(|| MinecraftLaunchError::InstanceNotFound(instance_id.to_owned()))
+}
+
+fn load_instance_fabric_profile(
+    paths: &MinecraftPaths,
+    instance: &InstanceManifest,
+) -> Result<Option<FabricProfile>, MinecraftLaunchError> {
+    let ModLoader::Fabric { version } = &instance.mod_loader else {
+        return Ok(None);
+    };
+    let profile = load_fabric_profile(paths, &instance.id)?;
+    validate_profile(&profile, &instance.version_id, version)?;
+    Ok(Some(profile))
+}
+
+fn build_fabric_classpath(
+    paths: &MinecraftPaths,
+    profile: &FabricProfile,
+) -> Result<Vec<PathBuf>, MinecraftLaunchError> {
+    let mut classpath = Vec::with_capacity(profile.libraries.len());
+    for library in &profile.libraries {
+        let relative = maven_artifact_path(&library.name)?;
+        let target = paths.libraries().join(relative);
+        require_file(&target)?;
+        classpath.push(target);
+    }
+    Ok(classpath)
 }
 
 fn build_classpath(

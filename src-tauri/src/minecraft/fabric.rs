@@ -15,6 +15,7 @@ use super::paths::MinecraftPaths;
 
 const FABRIC_META_BASE_URL: &str = "https://meta.fabricmc.net/v2/versions/loader";
 const FABRIC_MAVEN_BASE_URL: &str = "https://maven.fabricmc.net/";
+pub const FABRIC_CLIENT_MAIN_CLASS: &str = "net.fabricmc.loader.impl.launch.knot.KnotClient";
 const MAX_META_RESPONSE_SIZE: u64 = 2 * 1024 * 1024;
 const MAX_CHECKSUM_RESPONSE_SIZE: u64 = 1024;
 const MAX_LIBRARY_SIZE: u64 = 64 * 1024 * 1024;
@@ -34,6 +35,11 @@ pub enum FabricError {
         expected: String,
         actual: String,
     },
+    ProfileIdMismatch {
+        expected: String,
+        actual: String,
+    },
+    UnexpectedMainClass(String),
     InvalidMavenCoordinate(String),
     UnsupportedRepository(String),
     InvalidChecksum(String),
@@ -70,6 +76,14 @@ impl fmt::Display for FabricError {
             Self::InheritanceMismatch { expected, actual } => write!(
                 formatter,
                 "Fabric profileのMinecraftバージョンが一致しません: expected {expected}, got {actual}"
+            ),
+            Self::ProfileIdMismatch { expected, actual } => write!(
+                formatter,
+                "Fabric profile IDが一致しません: expected {expected}, got {actual}"
+            ),
+            Self::UnexpectedMainClass(main_class) => write!(
+                formatter,
+                "Fabric profileが想定外のmain classを指定しました: {main_class}"
             ),
             Self::InvalidMavenCoordinate(coordinate) => {
                 write!(formatter, "Fabricライブラリ名が正しくありません: {coordinate}")
@@ -217,12 +231,7 @@ where
     let profile_url = loader_profile_url(minecraft_version, loader_version)?;
     let profile_bytes = fetch_bounded(&client, profile_url, MAX_META_RESPONSE_SIZE)?;
     let profile: FabricProfile = serde_json::from_slice(&profile_bytes)?;
-    if profile.inherits_from != minecraft_version {
-        return Err(FabricError::InheritanceMismatch {
-            expected: minecraft_version.to_owned(),
-            actual: profile.inherits_from,
-        });
-    }
+    validate_profile(&profile, minecraft_version, loader_version)?;
 
     let total = profile.libraries.len();
     for (index, library) in profile.libraries.iter().enumerate() {
@@ -255,6 +264,30 @@ pub fn load_fabric_profile(
     Ok(serde_json::from_slice(&fs::read(
         paths.instance_fabric_profile(instance_id),
     )?)?)
+}
+
+pub fn validate_profile(
+    profile: &FabricProfile,
+    minecraft_version: &str,
+    loader_version: &str,
+) -> Result<(), FabricError> {
+    if profile.inherits_from != minecraft_version {
+        return Err(FabricError::InheritanceMismatch {
+            expected: minecraft_version.to_owned(),
+            actual: profile.inherits_from.clone(),
+        });
+    }
+    let expected_id = format!("fabric-loader-{loader_version}-{minecraft_version}");
+    if profile.id != expected_id {
+        return Err(FabricError::ProfileIdMismatch {
+            expected: expected_id,
+            actual: profile.id.clone(),
+        });
+    }
+    if profile.main_class != FABRIC_CLIENT_MAIN_CLASS {
+        return Err(FabricError::UnexpectedMainClass(profile.main_class.clone()));
+    }
+    Ok(())
 }
 
 pub fn maven_artifact_path(coordinate: &str) -> Result<PathBuf, FabricError> {
@@ -581,5 +614,10 @@ mod tests {
 
         assert_eq!(profile.inherits_from, "1.21.8");
         assert_eq!(profile.libraries.len(), 1);
+        assert!(validate_profile(&profile, "1.21.8", "0.19.3").is_ok());
+        assert!(matches!(
+            validate_profile(&profile, "1.21.7", "0.19.3"),
+            Err(FabricError::InheritanceMismatch { .. })
+        ));
     }
 }
