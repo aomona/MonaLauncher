@@ -17,6 +17,11 @@ use crate::minecraft::{
     },
     launcher::{read_lines, spawn_instance, MinecraftIdentity, MinecraftProcess},
     model::{InstanceManifest, ModLoader, VersionManifest},
+    modrinth::{ModSearchResponse, ModrinthClient},
+    modrinth_installer::{
+        install_modrinth_project, list_installed_mods, InstalledMod, ModInstallProgress,
+        ModInstallResult,
+    },
     paths::MinecraftPaths,
     runtime::install_java_runtime,
 };
@@ -68,6 +73,15 @@ struct MinecraftStatusEvent {
 struct MinecraftLaunchProgressEvent {
     instance_id: String,
     stage: String,
+    message: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ModrinthInstallProgressEvent {
+    instance_id: String,
+    completed: usize,
+    total: usize,
     message: String,
 }
 
@@ -157,6 +171,74 @@ pub async fn list_fabric_loader_versions(
 }
 
 #[tauri::command]
+pub async fn search_modrinth_mods(
+    app: AppHandle,
+    instance_id: String,
+    query: String,
+    offset: u32,
+) -> Result<ModSearchResponse, String> {
+    let paths = minecraft_paths(&app)?;
+    let instance = find_instance(&paths, &instance_id)?;
+    if !matches!(instance.mod_loader, ModLoader::Fabric { .. }) {
+        return Err("ModrinthのFabric mod検索はFabricインスタンスで利用できます".to_owned());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        ModrinthClient::new()
+            .and_then(|client| client.search_mods(&query, &instance.version_id, "fabric", offset))
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| format!("Modrinth検索処理への参加に失敗しました: {error}"))?
+}
+
+#[tauri::command]
+pub fn list_instance_mods(
+    app: AppHandle,
+    instance_id: String,
+) -> Result<Vec<InstalledMod>, String> {
+    let paths = minecraft_paths(&app)?;
+    find_instance(&paths, &instance_id)?;
+    list_installed_mods(&paths, &instance_id).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn install_modrinth_mod(
+    app: AppHandle,
+    state: State<'_, MinecraftRuntimeState>,
+    instance_id: String,
+    project_id: String,
+) -> Result<ModInstallResult, String> {
+    let operation = reserve_instance_operation(&state, &instance_id, false)?;
+    let paths = minecraft_paths(&app)?;
+    let instance = find_instance(&paths, &instance_id)?;
+    let event_app = app.clone();
+    let event_instance_id = instance_id.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        install_modrinth_project(
+            &paths,
+            &instance,
+            &project_id,
+            |progress: ModInstallProgress| {
+                let _ = event_app.emit(
+                    "modrinth-install-progress",
+                    ModrinthInstallProgressEvent {
+                        instance_id: event_instance_id.clone(),
+                        completed: progress.completed,
+                        total: progress.total,
+                        message: progress.message,
+                    },
+                );
+            },
+        )
+        .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| format!("Modrinthインストール処理への参加に失敗しました: {error}"))?;
+    drop(operation);
+    result
+}
+
+#[tauri::command]
 pub fn prepare_instance_sandbox(
     app: AppHandle,
     state: State<'_, MinecraftRuntimeState>,
@@ -164,6 +246,14 @@ pub fn prepare_instance_sandbox(
 ) -> Result<SandboxPreparation, String> {
     let _operation = reserve_instance_operation(&state, &instance_id, false)?;
     prepare_instance_sandbox_for_platform(&app, &instance_id)
+}
+
+fn find_instance(paths: &MinecraftPaths, instance_id: &str) -> Result<InstanceManifest, String> {
+    list_instances(paths)
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .find(|instance| instance.id == instance_id)
+        .ok_or_else(|| format!("Minecraftインスタンスが見つかりません: {instance_id}"))
 }
 
 #[cfg(windows)]
