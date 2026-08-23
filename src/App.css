@@ -1176,6 +1176,366 @@ select:focus-visible {
   width: min(430px, calc(100vw - 40px));
 }
 
+.mods-modal {
+  width: min(760px, calc(100vw - 40px));
+}
+
+.mods-form {
+  gap: 17px;
+}
+
+.mods-context {
+  display: grid;
+  gap: 8px;
+  padding: 11px 12px;
+  border: 1px solid #344038;
+  border-radius: 8px;
+  background: rgba(39, 55, 39, 0.42);
+}
+
+.mods-context div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.mods-context strong {
+  color: #dfe7dc;
+  font-size: 12px;
+}
+
+.mods-context span,
+.mods-context small {
+  color: #7f9980;
+  font-size: 10px;
+}
+
+.mods-section {
+  display: grid;
+  gap: 10px;
+}
+
+.mods-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.mods-section-heading h3 {
+  margin: 0;
+  color: #d7dbe1;
+  font-size: 12px;
+}
+
+.mods-section-heading > span {
+  color: #747b86;
+  font-size: 10px;
+}
+
+.installed-mod-list,
+.mod-result-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.installed-mod-list {
+  display: grid;
+  max-height: 128px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+  overflow-y: auto;
+}
+
+.installed-mod-item {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 9px;
+  padding: 8px 9px;
+  border: 1px solid #30343d;
+  border-radius: 7px;
+  background: #181b20;
+}
+
+.installed-mod-item > div {
+  min-width: 0;
+}
+
+.installed-mod-item strong,
+.installed-mod-item small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.installed-mod-item strong {
+  color: #cfd3da;
+  font-size: 10px;
+}
+
+.installed-mod-item small {
+  margin-top: 2px;
+  color: #6f7681;
+  font-size: 9px;
+}
+
+.mod-badge {
+  flex: 0 0 auto;
+  padding: 3px 6px;
+  border-radius: 999px;
+  font-size: 8px;
+  font-weight: 700;
+}
+
+.mod-badge.direct {
+  color: #a5d58f;
+  background: rgba(84, 139, 61, 0.25);
+}
+
+.mod-badge.dependency {
+  color: #9aabb9;
+  background: #29313a;
+}
+
+.mod-search-section {
+  padding-top: 2px;
+}
+
+.mod-search-form {
+  display: flex;
+  align-items: flex-end;
+  gap: 9px;
+}
+
+.mod-search-form label {
+  min-width: 0;
+  flex: 1;
+}
+
+.mod-search-button,
+.mod-result-action {
+  flex: 0 0 auto;
+  padding: 0 16px;
+}
+
+.mod-search-button {
+  min-width: 82px;
+}
+
+.mods-loading,
+.mods-empty {
+  margin: 0;
+  padding: 13px;
+  border: 1px dashed #343943;
+  border-radius: 8px;
+  color: #777e89;
+  background: #181b20;
+  font-size: 10px;
+  text-align: center;
+}
+
+.mods-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+}
+
+.mods-loading .loading-spinner {
+  width: 14px;
+  height: 14px;
+}
+
+.mod-install-progress {
+  display: grid;
+  gap: 9px;
+  padding: 11px;
+  border: 1px solid #40513c;
+  border-radius: 8px;
+  background: rgba(42, 61, 39, 0.42);
+}
+
+.mod-install-progress > div {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.mod-install-progress p {
+  min-width: 0;
+  flex: 1;
+  margin: 0;
+}
+
+.mod-install-progress strong,
+.mod-install-progress small {
+  display: block;
+}
+
+.mod-install-progress strong {
+  color: #d7e4d2;
+  font-size: 10px;
+}
+
+.mod-install-progress small,
+.mod-install-progress > div > span:last-child {
+  margin-top: 2px;
+  color: #799079;
+  font-size: 9px;
+}
+
+.mod-install-progress progress {
+  width: 100%;
+  height: 5px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 999px;
+  background: #222a22;
+}
+
+.mod-install-progress progress::-webkit-progress-bar {
+  background: #222a22;
+}
+
+.mod-install-progress progress::-webkit-progress-value {
+  border-radius: 999px;
+  background: #72ad59;
+}
+
+.mod-feedback {
+  padding: 9px 10px;
+  border-radius: 7px;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.mod-feedback.error {
+  border: 1px solid #613c38;
+  color: #e0a09a;
+  background: rgba(91, 43, 39, 0.35);
+}
+
+.mod-feedback.success {
+  border: 1px solid #3d5d39;
+  color: #a8d695;
+  background: rgba(53, 89, 43, 0.3);
+}
+
+.mod-result-list {
+  display: grid;
+  max-height: 330px;
+  gap: 8px;
+  overflow-y: auto;
+  padding-right: 3px;
+}
+
+.mod-result-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  padding: 11px 12px;
+  border: 1px solid #30343d;
+  border-radius: 8px;
+  background: #181b20;
+}
+
+.mod-result-card:hover {
+  border-color: #3e4940;
+  background: #1b201c;
+}
+
+.mod-result-copy {
+  min-width: 0;
+}
+
+.mod-result-copy > div {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.mod-result-copy strong {
+  overflow: hidden;
+  color: #d9dde3;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mod-result-copy > div > span,
+.mod-result-copy small {
+  color: #6d7580;
+  font-size: 9px;
+}
+
+.mod-result-copy p {
+  display: -webkit-box;
+  overflow: hidden;
+  margin: 5px 0;
+  color: #9399a3;
+  font-size: 10px;
+  line-height: 1.5;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.mod-result-action {
+  min-width: 96px;
+}
+
+.mod-pagination {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.mod-pagination > span {
+  color: #747b86;
+  font-size: 9px;
+  text-align: center;
+}
+
+.mod-security-note {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 10px;
+  border: 1px solid #314239;
+  border-radius: 8px;
+  color: #78a982;
+  background: #18221c;
+}
+
+.mod-security-note > span {
+  font-size: 10px;
+}
+
+.mod-security-note p {
+  margin: 0;
+}
+
+.mod-security-note strong,
+.mod-security-note small {
+  display: block;
+}
+
+.mod-security-note strong {
+  font-size: 9px;
+}
+
+.mod-security-note small {
+  margin-top: 2px;
+  color: #66836b;
+  font-size: 8px;
+}
+
 .auth-modal {
   width: min(450px, calc(100vw - 40px));
 }
@@ -1467,6 +1827,18 @@ select:focus-visible {
 
   .topbar {
     grid-template-columns: 185px minmax(0, 1fr) auto;
+  }
+
+  .installed-mod-list {
+    grid-template-columns: 1fr;
+  }
+
+  .mod-result-card {
+    grid-template-columns: 1fr;
+  }
+
+  .mod-result-action {
+    width: 100%;
   }
 }
 

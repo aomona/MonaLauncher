@@ -89,6 +89,46 @@ type MinecraftAccountProfile = {
   uuid: string;
 };
 
+type ModSearchHit = {
+  projectId: string;
+  slug: string | null;
+  title: string;
+  description: string;
+  author: string;
+  downloads: number;
+  follows: number;
+  dateModified: string;
+};
+
+type ModSearchResponse = {
+  hits: ModSearchHit[];
+  offset: number;
+  limit: number;
+  totalHits: number;
+};
+
+type InstalledMod = {
+  projectId: string;
+  versionId: string;
+  title: string;
+  versionNumber: string;
+  fileName: string;
+  sha512: string;
+  size: number;
+  direct: boolean;
+};
+
+type ModInstallResult = {
+  installed: InstalledMod[];
+};
+
+type ModInstallProgress = {
+  instanceId: string;
+  completed: number;
+  total: number;
+  message: string;
+};
+
 type LogLine = MinecraftLogEvent & { id: number };
 
 const stageLabels: Record<string, string> = {
@@ -121,6 +161,11 @@ function instanceVersionLabel(instance: MinecraftInstance) {
     ? `Minecraft ${instance.versionId} · Fabric ${instance.modLoader.version}`
     : `Minecraft ${instance.versionId}`;
 }
+
+const compactNumber = new Intl.NumberFormat("ja-JP", {
+  notation: "compact",
+  maximumFractionDigits: 1,
+});
 
 function keepFocusInsideDialog(event: KeyboardEvent, dialog: HTMLDialogElement | null) {
   if (event.key !== "Tab") return;
@@ -181,6 +226,16 @@ export default function App() {
   const [authError, setAuthError] = useState<string | null>(null);
   const [minecraftProfile, setMinecraftProfile] = useState<MinecraftAccountProfile | null>(null);
   const [minecraftProfileLoading, setMinecraftProfileLoading] = useState(false);
+  const [showMods, setShowMods] = useState(false);
+  const [modQuery, setModQuery] = useState("");
+  const [modSearch, setModSearch] = useState<ModSearchResponse | null>(null);
+  const [modSearchLoading, setModSearchLoading] = useState(false);
+  const [installedMods, setInstalledMods] = useState<InstalledMod[]>([]);
+  const [installedModsLoading, setInstalledModsLoading] = useState(false);
+  const [modInstallingProjectId, setModInstallingProjectId] = useState<string | null>(null);
+  const [modInstallProgress, setModInstallProgress] = useState<ModInstallProgress | null>(null);
+  const [modError, setModError] = useState<string | null>(null);
+  const [modSuccess, setModSuccess] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const creatorDialogRef = useRef<HTMLDialogElement>(null);
   const creatorSearchRef = useRef<HTMLInputElement>(null);
@@ -191,6 +246,10 @@ export default function App() {
   const authDialogRef = useRef<HTMLDialogElement>(null);
   const authPrimaryRef = useRef<HTMLButtonElement>(null);
   const authPreviousFocusRef = useRef<HTMLElement | null>(null);
+  const modsDialogRef = useRef<HTMLDialogElement>(null);
+  const modSearchInputRef = useRef<HTMLInputElement>(null);
+  const modsPreviousFocusRef = useRef<HTMLElement | null>(null);
+  const modSearchRequestRef = useRef(0);
 
   const selected = useMemo(
     () => instances.find((instance) => instance.id === selectedId) ?? null,
@@ -198,6 +257,10 @@ export default function App() {
   );
   const isRunning = selected ? runningIds.has(selected.id) : false;
   const visibleLogs = selected ? logs.filter((line) => line.instanceId === selected.id) : [];
+  const installedProjectIds = useMemo(
+    () => new Set(installedMods.map((item) => item.projectId)),
+    [installedMods],
+  );
   const versionGroups = useMemo(() => {
     const groups = [
       { type: "release", label: "正式リリース" },
@@ -220,6 +283,13 @@ export default function App() {
     ? progress.total === 0
       ? 0
       : Math.round((progress.completed / progress.total) * 100)
+    : 0;
+  const currentModInstallProgress =
+    modInstallProgress?.instanceId === selected?.id ? modInstallProgress : null;
+  const modInstallPercent = currentModInstallProgress
+    ? currentModInstallProgress.total === 0
+      ? 0
+      : Math.round((currentModInstallProgress.completed / currentModInstallProgress.total) * 100)
     : 0;
 
   const openCreator = () => {
@@ -258,6 +328,95 @@ export default function App() {
 
   const closeAuth = () => {
     if (authBusy === null) setShowAuth(false);
+  };
+
+  const refreshInstalledMods = async (instanceId: string) => {
+    setInstalledModsLoading(true);
+    try {
+      const mods = await invoke<InstalledMod[]>("list_instance_mods", { instanceId });
+      setInstalledMods(mods);
+    } finally {
+      setInstalledModsLoading(false);
+    }
+  };
+
+  const runModSearch = async (instanceId: string, query: string, offset: number) => {
+    const requestId = modSearchRequestRef.current + 1;
+    modSearchRequestRef.current = requestId;
+    setModSearchLoading(true);
+    setModError(null);
+    try {
+      const result = await invoke<ModSearchResponse>("search_modrinth_mods", {
+        instanceId,
+        query,
+        offset,
+      });
+      if (modSearchRequestRef.current === requestId) setModSearch(result);
+    } catch (cause) {
+      if (modSearchRequestRef.current === requestId) {
+        setModSearch(null);
+        setModError(String(cause));
+      }
+    } finally {
+      if (modSearchRequestRef.current === requestId) setModSearchLoading(false);
+    }
+  };
+
+  const openMods = () => {
+    if (!selected || selected.modLoader.type !== "fabric" || isRunning) return;
+    modsPreviousFocusRef.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setModQuery("");
+    setModSearch(null);
+    setInstalledMods([]);
+    setModInstallProgress(null);
+    setModError(null);
+    setModSuccess(null);
+    setShowMods(true);
+    void refreshInstalledMods(selected.id).catch((cause) => setModError(String(cause)));
+    void runModSearch(selected.id, "", 0);
+  };
+
+  const closeMods = () => {
+    if (modInstallingProjectId !== null) return;
+    modSearchRequestRef.current += 1;
+    setShowMods(false);
+  };
+
+  const installModrinthMod = async (projectId: string) => {
+    if (!selected) return;
+    setModInstallingProjectId(projectId);
+    setModInstallProgress({
+      instanceId: selected.id,
+      completed: 0,
+      total: 1,
+      message: "必須依存関係を確認しています…",
+    });
+    setModError(null);
+    setModSuccess(null);
+    try {
+      const result = await invoke<ModInstallResult>("install_modrinth_mod", {
+        instanceId: selected.id,
+        projectId,
+      });
+      const direct = result.installed.find((item) => item.projectId === projectId);
+      const dependencies = result.installed.filter((item) => !item.direct).length;
+      setModSuccess(
+        direct
+          ? `${direct.title} ${direct.versionNumber}を導入しました${dependencies > 0 ? `（必須依存${dependencies}件を含む）` : ""}。`
+          : `Modを導入しました（${result.installed.length}ファイル）。`,
+      );
+      try {
+        await refreshInstalledMods(selected.id);
+      } catch (cause) {
+        setModError(`導入は完了しましたが、一覧を更新できませんでした: ${String(cause)}`);
+      }
+    } catch (cause) {
+      setModError(String(cause));
+    } finally {
+      setModInstallingProjectId(null);
+      setModInstallProgress(null);
+    }
   };
 
   const refreshInstances = async () => {
@@ -323,6 +482,9 @@ export default function App() {
       "minecraft-launch-progress",
       (event) => setLaunchProgress(event.payload),
     );
+    const unlistenModProgress = listen<ModInstallProgress>("modrinth-install-progress", (event) =>
+      setModInstallProgress(event.payload),
+    );
     const unlistenStatus = listen<MinecraftStatusEvent>("minecraft-status", (event) => {
       setRunningIds((current) => {
         const next = new Set(current);
@@ -350,6 +512,7 @@ export default function App() {
       void unlistenProgress.then((unlisten) => unlisten());
       void unlistenLogs.then((unlisten) => unlisten());
       void unlistenLaunchProgress.then((unlisten) => unlisten());
+      void unlistenModProgress.then((unlisten) => unlisten());
       void unlistenStatus.then((unlisten) => unlisten());
     };
   }, []);
@@ -463,6 +626,30 @@ export default function App() {
     document.addEventListener("keydown", handleAuthKeyDown);
     return () => document.removeEventListener("keydown", handleAuthKeyDown);
   }, [authBusy, showAuth]);
+
+  useEffect(() => {
+    if (!showMods) return;
+
+    modSearchInputRef.current?.focus();
+    return () => modsPreviousFocusRef.current?.focus();
+  }, [showMods]);
+
+  useEffect(() => {
+    if (!showMods) return;
+
+    const handleModsKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && modInstallingProjectId === null) {
+        event.preventDefault();
+        modSearchRequestRef.current += 1;
+        setShowMods(false);
+        return;
+      }
+      keepFocusInsideDialog(event, modsDialogRef.current);
+    };
+
+    document.addEventListener("keydown", handleModsKeyDown);
+    return () => document.removeEventListener("keydown", handleModsKeyDown);
+  }, [modInstallingProjectId, showMods]);
 
   useEffect(() => {
     if (!authChallenge || authStatus.authorized) return;
@@ -873,13 +1060,22 @@ export default function App() {
               ⚙
             </button>
             <button
-              aria-label="その他の操作（準備中）"
+              aria-label="Modを管理"
               className="icon-button"
-              disabled
-              title="その他の操作は準備中です"
+              disabled={
+                !selected || selected.modLoader.type !== "fabric" || isRunning || busy !== null
+              }
+              onClick={openMods}
+              title={
+                selected?.modLoader.type === "fabric"
+                  ? isRunning
+                    ? "Minecraftを停止してからModを管理してください"
+                    : "ModrinthからModを追加"
+                  : "Fabricインスタンスで利用できます"
+              }
               type="button"
             >
-              •••
+              ◈
             </button>
           </div>
 
@@ -1314,6 +1510,261 @@ export default function App() {
                       {authBusy === "begin" ? "コードを取得中…" : "サインインを開始"}
                     </button>
                   )}
+                </div>
+              </div>
+            </dialog>
+          </div>
+        )}
+
+        {showMods && selected && selected.modLoader.type === "fabric" && (
+          <div className="modal-backdrop">
+            <dialog
+              aria-describedby="mods-description"
+              aria-labelledby="mods-title"
+              aria-busy={modInstallingProjectId !== null}
+              className="creator-modal mods-modal"
+              open
+              ref={modsDialogRef}
+              tabIndex={-1}
+            >
+              <div className="creator-form mods-form">
+                <div className="modal-heading">
+                  <div>
+                    <p className="eyebrow">MODRINTH LIBRARY</p>
+                    <h2 id="mods-title">Modを管理</h2>
+                  </div>
+                  <button
+                    aria-label="閉じる"
+                    disabled={modInstallingProjectId !== null}
+                    onClick={closeMods}
+                    type="button"
+                  >
+                    ×
+                  </button>
+                </div>
+
+                <div className="mods-context" id="mods-description">
+                  <div>
+                    <strong>{selected.name}</strong>
+                    <span>
+                      Minecraft {selected.versionId} · Fabric {selected.modLoader.version}
+                    </span>
+                  </div>
+                  <small>
+                    この組み合わせに対応するModだけを検索します。必須依存も自動で導入します。
+                  </small>
+                </div>
+
+                <section aria-labelledby="installed-mods-title" className="mods-section">
+                  <div className="mods-section-heading">
+                    <h3 id="installed-mods-title">導入済み</h3>
+                    <span>{installedModsLoading ? "確認中…" : `${installedMods.length}件`}</span>
+                  </div>
+                  {installedModsLoading ? (
+                    <div aria-live="polite" className="mods-loading">
+                      <span aria-hidden="true" className="loading-spinner" />
+                      導入済みModを確認しています…
+                    </div>
+                  ) : installedMods.length === 0 ? (
+                    <p className="mods-empty">まだModは導入されていません。</p>
+                  ) : (
+                    <ul className="installed-mod-list">
+                      {installedMods.map((item) => (
+                        <li className="installed-mod-item" key={item.projectId}>
+                          <div>
+                            <strong>{item.title}</strong>
+                            <small>{item.versionNumber}</small>
+                          </div>
+                          <span
+                            className={item.direct ? "mod-badge direct" : "mod-badge dependency"}
+                          >
+                            {item.direct ? "追加済み" : "必須依存"}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </section>
+
+                <section
+                  aria-labelledby="mod-search-title"
+                  className="mods-section mod-search-section"
+                >
+                  <div className="mods-section-heading">
+                    <h3 id="mod-search-title">Modrinthから探す</h3>
+                    {modSearch && !modSearchLoading && <span>{modSearch.totalHits}件</span>}
+                  </div>
+                  <form
+                    className="mod-search-form"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      void runModSearch(selected.id, modQuery, 0);
+                    }}
+                  >
+                    <label htmlFor="mod-search-input">
+                      名前・キーワード
+                      <input
+                        autoComplete="off"
+                        disabled={modInstallingProjectId !== null}
+                        id="mod-search-input"
+                        maxLength={100}
+                        onChange={(event) => setModQuery(event.target.value)}
+                        placeholder="例: Sodium, Mod Menu"
+                        ref={modSearchInputRef}
+                        type="search"
+                        value={modQuery}
+                      />
+                    </label>
+                    <button
+                      className="primary-button mod-search-button"
+                      disabled={modSearchLoading || modInstallingProjectId !== null}
+                      type="submit"
+                    >
+                      {modSearchLoading ? "検索中…" : "検索"}
+                    </button>
+                  </form>
+
+                  {currentModInstallProgress && (
+                    <div aria-live="polite" className="mod-install-progress">
+                      <div>
+                        <span aria-hidden="true" className="loading-spinner" />
+                        <p>
+                          <strong>Modを導入しています</strong>
+                          <small>{currentModInstallProgress.message}</small>
+                        </p>
+                        <span>{modInstallPercent}%</span>
+                      </div>
+                      <progress
+                        aria-label="Mod導入の進捗"
+                        max={Math.max(1, currentModInstallProgress.total)}
+                        value={currentModInstallProgress.completed}
+                      />
+                    </div>
+                  )}
+
+                  {modError && (
+                    <div className="mod-feedback error" role="alert">
+                      {modError}
+                    </div>
+                  )}
+                  {modSuccess && (
+                    <div aria-live="polite" className="mod-feedback success">
+                      {modSuccess}
+                    </div>
+                  )}
+
+                  {modSearchLoading && !modSearch ? (
+                    <div aria-live="polite" className="mods-loading">
+                      <span aria-hidden="true" className="loading-spinner" />
+                      Modrinthを検索しています…
+                    </div>
+                  ) : modSearch?.hits.length === 0 ? (
+                    <p className="mods-empty">
+                      このMinecraft/Fabric版に対応するModが見つかりませんでした。
+                    </p>
+                  ) : (
+                    modSearch && (
+                      <ul aria-label="Modrinth検索結果" className="mod-result-list">
+                        {modSearch.hits.map((hit) => {
+                          const installed = installedProjectIds.has(hit.projectId);
+                          const installing = modInstallingProjectId === hit.projectId;
+                          return (
+                            <li className="mod-result-card" key={hit.projectId}>
+                              <div className="mod-result-copy">
+                                <div>
+                                  <strong>{hit.title}</strong>
+                                  <span>by {hit.author}</span>
+                                </div>
+                                <p>{hit.description || "説明はありません。"}</p>
+                                <small>
+                                  {compactNumber.format(hit.downloads)} ダウンロード ·{" "}
+                                  {compactNumber.format(hit.follows)} フォロー
+                                </small>
+                              </div>
+                              <button
+                                aria-label={`${hit.title}を${installed ? "更新" : "導入"}`}
+                                className={
+                                  installed
+                                    ? "secondary-button mod-result-action"
+                                    : "primary-button mod-result-action"
+                                }
+                                disabled={modInstallingProjectId !== null}
+                                onClick={() => void installModrinthMod(hit.projectId)}
+                                type="button"
+                              >
+                                {installing ? "導入中…" : installed ? "更新を確認" : "導入"}
+                              </button>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    )
+                  )}
+
+                  {modSearch && modSearch.totalHits > 0 && (
+                    <div className="mod-pagination">
+                      <button
+                        className="secondary-button"
+                        disabled={
+                          modSearch.offset === 0 ||
+                          modSearchLoading ||
+                          modInstallingProjectId !== null
+                        }
+                        onClick={() =>
+                          void runModSearch(
+                            selected.id,
+                            modQuery,
+                            Math.max(0, modSearch.offset - modSearch.limit),
+                          )
+                        }
+                        type="button"
+                      >
+                        前へ
+                      </button>
+                      <span>
+                        {modSearch.offset + 1}–
+                        {Math.min(modSearch.offset + modSearch.hits.length, modSearch.totalHits)} /{" "}
+                        {modSearch.totalHits}件
+                      </span>
+                      <button
+                        className="secondary-button"
+                        disabled={
+                          modSearch.offset + modSearch.hits.length >= modSearch.totalHits ||
+                          modSearchLoading ||
+                          modInstallingProjectId !== null
+                        }
+                        onClick={() =>
+                          void runModSearch(
+                            selected.id,
+                            modQuery,
+                            modSearch.offset + modSearch.limit,
+                          )
+                        }
+                        type="button"
+                      >
+                        次へ
+                      </button>
+                    </div>
+                  )}
+                </section>
+
+                <div className="mod-security-note">
+                  <span aria-hidden="true">◆</span>
+                  <p>
+                    <strong>ダウンロードしたJARは検証してから配置します</strong>
+                    <small>ModrinthのSHA-512とファイルサイズが一致しない場合は導入しません。</small>
+                  </p>
+                </div>
+
+                <div className="modal-actions">
+                  <button
+                    className="secondary-button"
+                    disabled={modInstallingProjectId !== null}
+                    onClick={closeMods}
+                    type="button"
+                  >
+                    閉じる
+                  </button>
                 </div>
               </div>
             </dialog>
