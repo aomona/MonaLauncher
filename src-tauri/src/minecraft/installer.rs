@@ -12,6 +12,7 @@ use reqwest::blocking::Client;
 use serde::de::DeserializeOwned;
 use sha1::{Digest, Sha1};
 
+use super::fabric::{install_fabric, FabricError};
 use super::model::{
     rules_allow, AssetIndex, DownloadInfo, InstallProgress, InstanceManifest, ModLoader,
     VersionManifest, VersionMetadata,
@@ -47,6 +48,7 @@ pub enum MinecraftInstallError {
     Io(std::io::Error),
     Http(reqwest::Error),
     Json(serde_json::Error),
+    Fabric(FabricError),
 }
 
 impl fmt::Display for MinecraftInstallError {
@@ -103,6 +105,7 @@ impl fmt::Display for MinecraftInstallError {
             Self::Io(error) => write!(formatter, "file system error: {error}"),
             Self::Http(error) => write!(formatter, "download error: {error}"),
             Self::Json(error) => write!(formatter, "metadata error: {error}"),
+            Self::Fabric(error) => write!(formatter, "{error}"),
         }
     }
 }
@@ -113,6 +116,7 @@ impl Error for MinecraftInstallError {
             Self::Io(error) => Some(error),
             Self::Http(error) => Some(error),
             Self::Json(error) => Some(error),
+            Self::Fabric(error) => Some(error),
             _ => None,
         }
     }
@@ -136,6 +140,12 @@ impl From<serde_json::Error> for MinecraftInstallError {
     }
 }
 
+impl From<FabricError> for MinecraftInstallError {
+    fn from(error: FabricError) -> Self {
+        Self::Fabric(error)
+    }
+}
+
 #[derive(Debug, Clone)]
 struct DownloadTask {
     url: String,
@@ -144,11 +154,12 @@ struct DownloadTask {
     target: PathBuf,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct InstanceInstallOptions<'a> {
     requested_version: Option<&'a str>,
     sandboxed: bool,
     demo: bool,
+    mod_loader: ModLoader,
 }
 
 pub fn install_latest_demo_instance<F>(
@@ -170,6 +181,7 @@ where
             requested_version: None,
             sandboxed: false,
             demo: true,
+            mod_loader: ModLoader::Vanilla,
         },
         progress,
     )
@@ -209,6 +221,32 @@ pub fn install_sandbox_instance<F>(
 where
     F: Fn(InstallProgress) + Send + Sync,
 {
+    install_sandbox_instance_with_loader(
+        paths,
+        instance_id,
+        instance_name,
+        java_path,
+        version_id,
+        demo,
+        ModLoader::Vanilla,
+        progress,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn install_sandbox_instance_with_loader<F>(
+    paths: &MinecraftPaths,
+    instance_id: &str,
+    instance_name: &str,
+    java_path: &Path,
+    version_id: &str,
+    demo: bool,
+    mod_loader: ModLoader,
+    progress: F,
+) -> Result<InstanceManifest, MinecraftInstallError>
+where
+    F: Fn(InstallProgress) + Send + Sync,
+{
     install_instance_from_manifest(
         paths,
         instance_id,
@@ -218,6 +256,7 @@ where
             requested_version: Some(version_id),
             sandboxed: true,
             demo,
+            mod_loader,
         },
         progress,
     )
@@ -256,6 +295,7 @@ where
             requested_version: None,
             sandboxed: true,
             demo,
+            mod_loader: ModLoader::Vanilla,
         },
         progress,
     )
@@ -424,6 +464,9 @@ where
 
     let game_directory = paths.instance_game_directory(instance_id);
     fs::create_dir_all(&game_directory)?;
+    if let ModLoader::Fabric { version: loader } = &options.mod_loader {
+        install_fabric(paths, instance_id, &version.id, loader, &progress)?;
+    }
 
     let instance = InstanceManifest {
         id: instance_id.to_owned(),
@@ -433,7 +476,7 @@ where
         game_directory: game_directory.to_string_lossy().into_owned(),
         demo: options.demo,
         sandboxed: options.sandboxed,
-        mod_loader: ModLoader::Vanilla,
+        mod_loader: options.mod_loader,
     };
 
     let instance_directory = paths.instance(instance_id);

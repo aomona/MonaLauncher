@@ -11,11 +11,12 @@ use crate::commands::auth::{
 use crate::minecraft::{
     fabric::{list_loader_versions, FabricLoaderVersion},
     installer::{
-        delete_instance, detect_java_path, install_sandbox_instance as install_sandbox_mode,
-        list_available_versions, list_instances, rename_instance, version_java_major,
+        delete_instance, detect_java_path,
+        install_sandbox_instance_with_loader as install_sandbox_mode, list_available_versions,
+        list_instances, rename_instance, version_java_major,
     },
     launcher::{read_lines, spawn_instance, MinecraftIdentity, MinecraftProcess},
-    model::{InstanceManifest, VersionManifest},
+    model::{InstanceManifest, ModLoader, VersionManifest},
     paths::MinecraftPaths,
     runtime::install_java_runtime,
 };
@@ -209,6 +210,7 @@ pub async fn install_sandbox_instance(
     name: String,
     version_id: String,
     demo: bool,
+    mod_loader: Option<ModLoader>,
 ) -> Result<InstanceManifest, String> {
     let operation = reserve_instance_operation(&state, &instance_id, false)?;
     let paths = minecraft_paths(&app)?;
@@ -218,6 +220,7 @@ pub async fn install_sandbox_instance(
     } else {
         name
     };
+    let mod_loader = mod_loader.unwrap_or_default();
 
     let result = tauri::async_runtime::spawn_blocking(move || {
         let java_major = version_java_major(&version_id).map_err(|error| error.to_string())?;
@@ -232,6 +235,7 @@ pub async fn install_sandbox_instance(
             &java,
             &version_id,
             demo,
+            mod_loader,
             |progress| {
                 let _ = event_app.emit("minecraft-install-progress", progress);
             },

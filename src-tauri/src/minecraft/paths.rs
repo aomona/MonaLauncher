@@ -30,6 +30,10 @@ impl MinecraftPaths {
         self.instance(instance_id).join("game")
     }
 
+    pub fn instance_fabric_profile(&self, instance_id: &str) -> PathBuf {
+        self.instance(instance_id).join("fabric-profile.json")
+    }
+
     pub fn libraries(&self) -> PathBuf {
         self.root.join("libraries")
     }
