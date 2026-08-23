@@ -40,6 +40,7 @@ pub fn run() {
             commands::minecraft::list_minecraft_instances,
             commands::minecraft::list_minecraft_versions,
             commands::minecraft::prepare_instance_sandbox,
+            commands::minecraft::remove_modrinth_mod,
             commands::minecraft::rename_minecraft_instance,
             commands::minecraft::search_modrinth_mods,
             commands::minecraft::stop_minecraft_instance,

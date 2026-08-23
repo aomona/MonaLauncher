@@ -19,8 +19,8 @@ use crate::minecraft::{
     model::{InstanceManifest, ModLoader, VersionManifest},
     modrinth::{ModSearchResponse, ModrinthClient},
     modrinth_installer::{
-        install_modrinth_project, list_installed_mods, InstalledMod, ModInstallProgress,
-        ModInstallResult,
+        install_modrinth_project, list_installed_mods, remove_modrinth_project, InstalledMod,
+        ModInstallProgress, ModInstallResult, ModRemovalResult,
     },
     paths::MinecraftPaths,
     runtime::install_java_runtime,
@@ -234,6 +234,25 @@ pub async fn install_modrinth_mod(
     })
     .await
     .map_err(|error| format!("Modrinthインストール処理への参加に失敗しました: {error}"))?;
+    drop(operation);
+    result
+}
+
+#[tauri::command]
+pub async fn remove_modrinth_mod(
+    app: AppHandle,
+    state: State<'_, MinecraftRuntimeState>,
+    instance_id: String,
+    project_id: String,
+) -> Result<ModRemovalResult, String> {
+    let operation = reserve_instance_operation(&state, &instance_id, false)?;
+    let paths = minecraft_paths(&app)?;
+    let instance = find_instance(&paths, &instance_id)?;
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        remove_modrinth_project(&paths, &instance, &project_id).map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| format!("Modrinth削除処理への参加に失敗しました: {error}"))?;
     drop(operation);
     result
 }
