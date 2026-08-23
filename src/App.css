@@ -260,6 +260,10 @@ button:disabled {
   background: #1d2026;
 }
 
+.rail-button:disabled {
+  opacity: 0.55;
+}
+
 .rail-button.active {
   border-color: #303943;
   color: #ecf0f4;
@@ -364,6 +368,34 @@ button:disabled {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(155px, 1fr));
   gap: 13px;
+}
+
+.instance-grid.list-view {
+  grid-template-columns: 1fr;
+}
+
+.instance-grid.list-view .instance-tile {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  align-items: stretch;
+}
+
+.instance-grid.list-view .instance-art {
+  width: 76px;
+  height: 76px;
+  border-right: 1px solid #2b3038;
+  border-bottom: 0;
+}
+
+.instance-grid.list-view .grass-cube {
+  width: 42px;
+  height: 42px;
+  font-size: 15px;
+}
+
+.instance-grid.list-view .tile-copy {
+  align-self: center;
+  padding: 12px 16px;
 }
 
 .instance-tile {
@@ -485,15 +517,6 @@ button:disabled {
   margin-top: 4px;
   color: #707681;
   font-size: 9px;
-}
-
-.tile-menu {
-  position: absolute;
-  right: 10px;
-  bottom: 18px;
-  color: #626873;
-  font-size: 10px;
-  letter-spacing: 1px;
 }
 
 .empty-library {

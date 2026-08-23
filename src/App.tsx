@@ -95,6 +95,7 @@ export default function App() {
   const [busy, setBusy] = useState<"install" | "launch" | "stop" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showCreator, setShowCreator] = useState(false);
+  const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const creatorDialogRef = useRef<HTMLDialogElement>(null);
   const creatorSearchRef = useRef<HTMLInputElement>(null);
   const creatorPreviousFocusRef = useRef<HTMLElement | null>(null);
@@ -344,13 +345,12 @@ export default function App() {
             <span aria-hidden="true">↻</span>更新
           </button>
         </div>
-        <div className="account-chip">
+        <div className="account-chip" title="Microsoftアカウント認証は準備中です">
           <span className="account-avatar">M</span>
           <span>
             <strong>オフライン</strong>
             <small>Demo profile</small>
           </span>
-          <span className="chevron">⌄</span>
         </div>
       </header>
 
@@ -359,7 +359,13 @@ export default function App() {
           <button className="rail-button active" type="button">
             <span>▦</span>ライブラリ
           </button>
-          <button className="rail-button" type="button">
+          <button
+            aria-label="ニュース（準備中）"
+            className="rail-button"
+            disabled
+            title="ニュース機能は準備中です"
+            type="button"
+          >
             <span>◫</span>ニュース
           </button>
           <div className="rail-spacer" />
@@ -370,7 +376,13 @@ export default function App() {
               <small>AppContainer</small>
             </span>
           </div>
-          <button className="rail-button" type="button">
+          <button
+            aria-label="設定（準備中）"
+            className="rail-button"
+            disabled
+            title="設定機能は準備中です"
+            type="button"
+          >
             <span>⚙</span>設定
           </button>
         </nav>
@@ -383,16 +395,31 @@ export default function App() {
               <p>{instances.length}個のMinecraft環境</p>
             </div>
             <div className="view-controls" aria-label="表示切り替え">
-              <button className="active" type="button" aria-label="グリッド表示">
+              <button
+                aria-label="グリッド表示"
+                aria-pressed={viewMode === "grid"}
+                className={viewMode === "grid" ? "active" : ""}
+                onClick={() => setViewMode("grid")}
+                type="button"
+              >
                 ▦
               </button>
-              <button type="button" aria-label="リスト表示">
+              <button
+                aria-label="リスト表示"
+                aria-pressed={viewMode === "list"}
+                className={viewMode === "list" ? "active" : ""}
+                onClick={() => setViewMode("list")}
+                type="button"
+              >
                 ☷
               </button>
             </div>
           </div>
 
-          <div className="instance-grid" aria-label="Minecraftインスタンス">
+          <div
+            className={`instance-grid ${viewMode === "list" ? "list-view" : ""}`}
+            aria-label="Minecraftインスタンス"
+          >
             {instances.length === 0 && (
               <button className="empty-library" onClick={openCreator} type="button">
                 <span className="empty-cube">＋</span>
@@ -415,9 +442,6 @@ export default function App() {
                 <span className="tile-copy">
                   <strong>{instance.name}</strong>
                   <small>Minecraft {instance.versionId}</small>
-                </span>
-                <span className="tile-menu" aria-hidden="true">
-                  •••
                 </span>
               </button>
             ))}
@@ -487,18 +511,20 @@ export default function App() {
               </button>
             )}
             <button
+              aria-label="インスタンス設定（準備中）"
               className="icon-button"
-              disabled={!selected}
+              disabled
+              title="インスタンス設定は準備中です"
               type="button"
-              aria-label="インスタンス設定"
             >
               ⚙
             </button>
             <button
+              aria-label="その他の操作（準備中）"
               className="icon-button"
-              disabled={!selected}
+              disabled
+              title="その他の操作は準備中です"
               type="button"
-              aria-label="その他の操作"
             >
               •••
             </button>
