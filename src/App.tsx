@@ -12,6 +12,14 @@ type MinecraftInstance = {
   gameDirectory: string;
   demo: boolean;
   sandboxed: boolean;
+  modLoader:
+    | {
+        type: "vanilla";
+      }
+    | {
+        type: "fabric";
+        version: string;
+      };
 };
 
 type MinecraftVersion = {
@@ -26,6 +34,11 @@ type MinecraftVersionCatalog = {
     snapshot: string;
   };
   versions: MinecraftVersion[];
+};
+
+type FabricLoaderVersion = {
+  version: string;
+  stable: boolean;
 };
 
 type InstallProgress = {
@@ -84,6 +97,7 @@ const stageLabels: Record<string, string> = {
   libraries: "ライブラリ",
   "assets-index": "アセット一覧",
   assets: "ゲーム素材",
+  loader: "Modローダー",
   runtime: "隔離用Java",
   complete: "完了",
 };
@@ -100,6 +114,12 @@ function hasTauriRuntime() {
     typeof internals?.invoke === "function" &&
     typeof internals.transformCallback === "function"
   );
+}
+
+function instanceVersionLabel(instance: MinecraftInstance) {
+  return instance.modLoader.type === "fabric"
+    ? `Minecraft ${instance.versionId} · Fabric ${instance.modLoader.version}`
+    : `Minecraft ${instance.versionId}`;
 }
 
 function keepFocusInsideDialog(event: KeyboardEvent, dialog: HTMLDialogElement | null) {
@@ -133,6 +153,12 @@ export default function App() {
   const [versionQuery, setVersionQuery] = useState("");
   const [versionsLoading, setVersionsLoading] = useState(false);
   const [gameMode, setGameMode] = useState<"offline" | "demo">("offline");
+  const [modLoaderType, setModLoaderType] = useState<"vanilla" | "fabric">("vanilla");
+  const [fabricLoaders, setFabricLoaders] = useState<FabricLoaderVersion[]>([]);
+  const [selectedFabricLoader, setSelectedFabricLoader] = useState("");
+  const [fabricLoadersLoading, setFabricLoadersLoading] = useState(false);
+  const [fabricLoadersError, setFabricLoadersError] = useState<string | null>(null);
+  const [fabricReloadKey, setFabricReloadKey] = useState(0);
   const [progress, setProgress] = useState<InstallProgress | null>(null);
   const [launchProgress, setLaunchProgress] = useState<MinecraftLaunchProgress | null>(null);
   const [logs, setLogs] = useState<LogLine[]>([]);
@@ -336,6 +362,45 @@ export default function App() {
   }, [showCreator]);
 
   useEffect(() => {
+    if (!showCreator || modLoaderType !== "fabric" || !selectedVersionId || !hasTauriRuntime()) {
+      setFabricLoaders([]);
+      setSelectedFabricLoader("");
+      setFabricLoadersLoading(false);
+      setFabricLoadersError(null);
+      return;
+    }
+
+    let cancelled = false;
+    setFabricLoadersLoading(true);
+    setFabricLoadersError(null);
+    void invoke<FabricLoaderVersion[]>("list_fabric_loader_versions", {
+      minecraftVersion: selectedVersionId,
+    })
+      .then((loaders) => {
+        if (cancelled) return;
+        setFabricLoaders(loaders);
+        setSelectedFabricLoader((current) =>
+          loaders.some((loader) => loader.version === current)
+            ? current
+            : (loaders.find((loader) => loader.stable)?.version ?? loaders[0]?.version ?? ""),
+        );
+      })
+      .catch((cause) => {
+        if (cancelled) return;
+        setFabricLoaders([]);
+        setSelectedFabricLoader("");
+        setFabricLoadersError(String(cause));
+      })
+      .finally(() => {
+        if (!cancelled) setFabricLoadersLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [fabricReloadKey, modLoaderType, selectedVersionId, showCreator]);
+
+  useEffect(() => {
     if (!showCreator) return;
 
     const handleCreatorKeyDown = (event: KeyboardEvent) => {
@@ -444,6 +509,10 @@ export default function App() {
         name: instanceName,
         versionId: selectedVersionId,
         demo: gameMode === "demo",
+        modLoader:
+          modLoaderType === "fabric"
+            ? { type: "fabric", version: selectedFabricLoader }
+            : { type: "vanilla" },
       });
       await refreshInstances();
       setSelectedId(installed.id);
@@ -727,7 +796,7 @@ export default function App() {
                 </span>
                 <span className="tile-copy">
                   <strong>{instance.name}</strong>
-                  <small>Minecraft {instance.versionId}</small>
+                  <small>{instanceVersionLabel(instance)}</small>
                 </span>
               </button>
             ))}
@@ -769,9 +838,7 @@ export default function App() {
                 {isRunning ? "実行中" : "起動準備完了"}
               </span>
               <h2>{selected?.name ?? "未選択"}</h2>
-              <p>
-                {selected ? "Minecraft " + selected.versionId : "インスタンスを選択してください"}
-              </p>
+              <p>{selected ? instanceVersionLabel(selected) : "インスタンスを選択してください"}</p>
             </div>
           </div>
 
@@ -834,6 +901,16 @@ export default function App() {
             <div>
               <dt>ゲームモード</dt>
               <dd>{selected?.demo ? "デモ" : selected ? "通常" : "—"}</dd>
+            </div>
+            <div>
+              <dt>Modローダー</dt>
+              <dd>
+                {selected?.modLoader.type === "fabric"
+                  ? `Fabric ${selected.modLoader.version}`
+                  : selected
+                    ? "Vanilla"
+                    : "—"}
+              </dd>
             </div>
             <div>
               <dt>インスタンスID</dt>
@@ -976,6 +1053,71 @@ export default function App() {
                   )}
                 </div>
                 <label>
+                  Modローダー
+                  <select
+                    value={modLoaderType}
+                    onChange={(event) =>
+                      setModLoaderType(event.target.value as "vanilla" | "fabric")
+                    }
+                    disabled={busy !== null}
+                  >
+                    <option value="vanilla">Vanilla</option>
+                    <option value="fabric">Fabric</option>
+                  </select>
+                </label>
+                {modLoaderType === "fabric" && (
+                  <>
+                    <label>
+                      Fabric Loader
+                      <select
+                        value={selectedFabricLoader}
+                        onChange={(event) => setSelectedFabricLoader(event.target.value)}
+                        disabled={
+                          fabricLoadersLoading || fabricLoaders.length === 0 || busy !== null
+                        }
+                        required
+                      >
+                        {fabricLoadersLoading && <option value="">対応バージョンを取得中…</option>}
+                        {!fabricLoadersLoading && fabricLoaders.length === 0 && (
+                          <option value="">対応するLoaderがありません</option>
+                        )}
+                        {fabricLoaders.map((loader) => (
+                          <option value={loader.version} key={loader.version}>
+                            {loader.version}
+                            {loader.stable ? " — stable" : ""}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <div
+                      className={`mode-note ${fabricLoadersError ? "mode-note-error" : ""}`}
+                      aria-live="polite"
+                    >
+                      <span aria-hidden="true">{fabricLoadersError ? "!" : "F"}</span>
+                      <div>
+                        {fabricLoadersError ? (
+                          <>
+                            <strong>Fabric Loader一覧を取得できませんでした。</strong>
+                            <button
+                              className="inline-retry"
+                              onClick={() => setFabricReloadKey((current) => current + 1)}
+                              type="button"
+                            >
+                              再試行
+                            </button>
+                          </>
+                        ) : fabricLoadersLoading ? (
+                          "このMinecraftバージョンとの互換性を確認しています…"
+                        ) : fabricLoaders.length === 0 ? (
+                          "このMinecraftバージョンに対応するFabric Loaderはありません。"
+                        ) : (
+                          "Fabric Loaderのみを導入します。Fabric APIやmodは自動追加しません。"
+                        )}
+                      </div>
+                    </div>
+                  </>
+                )}
+                <label>
                   プレイモード
                   <select
                     value={gameMode}
@@ -1024,7 +1166,14 @@ export default function App() {
                   </button>
                   <button
                     className="primary-button"
-                    disabled={busy !== null || !selectedVersionId}
+                    disabled={
+                      busy !== null ||
+                      !selectedVersionId ||
+                      (modLoaderType === "fabric" &&
+                        (fabricLoadersLoading ||
+                          fabricLoadersError !== null ||
+                          !selectedFabricLoader))
+                    }
                     type="submit"
                   >
                     {busy === "install" ? "インストール中…" : "作成する"}
@@ -1208,6 +1357,14 @@ export default function App() {
                   <div>
                     <dt>バージョン</dt>
                     <dd>Minecraft {selected.versionId}</dd>
+                  </div>
+                  <div>
+                    <dt>Modローダー</dt>
+                    <dd>
+                      {selected.modLoader.type === "fabric"
+                        ? `Fabric ${selected.modLoader.version}`
+                        : "Vanilla"}
+                    </dd>
                   </div>
                   <div>
                     <dt>インスタンスID</dt>

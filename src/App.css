@@ -1132,6 +1132,34 @@ select:focus-visible {
   font-weight: 700;
 }
 
+.mode-note > div {
+  min-width: 0;
+  flex: 1;
+}
+
+.mode-note strong {
+  display: block;
+  color: inherit;
+  font-size: inherit;
+}
+
+.mode-note-error {
+  border-color: #583432;
+  color: #d48c84;
+  background: #281a1a;
+}
+
+.inline-retry {
+  margin-top: 4px;
+  border: 0;
+  padding: 0;
+  color: #9fd18b;
+  background: transparent;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
 .modal-actions {
   display: flex;
   justify-content: flex-end;
