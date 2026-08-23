@@ -23,6 +23,10 @@ pub enum ModrinthError {
     },
     SearchQueryTooLong(usize),
     InvalidIdentifier(String),
+    IdentifierMismatch {
+        expected: String,
+        actual: String,
+    },
 }
 
 impl fmt::Display for ModrinthError {
@@ -48,6 +52,10 @@ impl fmt::Display for ModrinthError {
             Self::InvalidIdentifier(identifier) => {
                 write!(formatter, "Modrinth IDが正しくありません: {identifier}")
             }
+            Self::IdentifierMismatch { expected, actual } => write!(
+                formatter,
+                "Modrinth APIのIDが一致しません: expected {expected}, got {actual}"
+            ),
         }
     }
 }
@@ -191,7 +199,16 @@ impl ModrinthClient {
             .append_pair("index", "relevance")
             .append_pair("offset", &offset.to_string())
             .append_pair("limit", &SEARCH_LIMIT.to_string());
-        self.get_json(url)
+        let mut response: ModSearchResponse = self.get_json(url)?;
+        for hit in &mut response.hits {
+            validate_identifier(&hit.project_id)?;
+            hit.title = sanitize_text(&hit.title, 120);
+            hit.description = sanitize_text(&hit.description, 320);
+            hit.author = sanitize_text(&hit.author, 64);
+            hit.date_modified = sanitize_text(&hit.date_modified, 64);
+            hit.slug = hit.slug.take().map(|slug| sanitize_text(&slug, 80));
+        }
+        Ok(response)
     }
 
     pub fn project_versions(
@@ -208,17 +225,46 @@ impl ModrinthClient {
             .append_pair("loaders", &loaders)
             .append_pair("game_versions", &game_versions)
             .append_pair("include_changelog", "false");
-        self.get_json(url)
+        let versions: Vec<ModrinthVersion> = self.get_json(url)?;
+        for version in &versions {
+            validate_identifier(&version.id)?;
+            validate_identifier(&version.project_id)?;
+            if version.project_id != project_id {
+                return Err(ModrinthError::IdentifierMismatch {
+                    expected: project_id.to_owned(),
+                    actual: version.project_id.clone(),
+                });
+            }
+        }
+        Ok(versions)
     }
 
     pub fn version(&self, version_id: &str) -> Result<ModrinthVersion, ModrinthError> {
         validate_identifier(version_id)?;
-        self.get_json(api_url(&["version", version_id])?)
+        let version: ModrinthVersion = self.get_json(api_url(&["version", version_id])?)?;
+        if version.id != version_id {
+            return Err(ModrinthError::IdentifierMismatch {
+                expected: version_id.to_owned(),
+                actual: version.id,
+            });
+        }
+        validate_identifier(&version.project_id)?;
+        Ok(version)
     }
 
     pub fn project(&self, project_id: &str) -> Result<ModrinthProject, ModrinthError> {
         validate_identifier(project_id)?;
-        self.get_json(api_url(&["project", project_id])?)
+        let mut project: ModrinthProject = self.get_json(api_url(&["project", project_id])?)?;
+        if project.id != project_id {
+            return Err(ModrinthError::IdentifierMismatch {
+                expected: project_id.to_owned(),
+                actual: project.id,
+            });
+        }
+        project.title = sanitize_text(&project.title, 120);
+        project.description = sanitize_text(&project.description, 320);
+        project.slug = project.slug.map(|slug| sanitize_text(&slug, 80));
+        Ok(project)
     }
 
     pub(crate) fn download(&self, url: Url) -> Result<Response, ModrinthError> {
@@ -274,10 +320,14 @@ fn validate_identifier(identifier: &str) -> Result<(), ModrinthError> {
 }
 
 fn sanitize_service_message(message: String) -> String {
-    message
+    sanitize_text(&message, 256)
+}
+
+fn sanitize_text(value: &str, maximum: usize) -> String {
+    value
         .chars()
         .filter(|character| !character.is_control())
-        .take(256)
+        .take(maximum)
         .collect()
 }
 
@@ -327,6 +377,12 @@ mod tests {
         assert!(validate_identifier("AANobbMI").is_ok());
         assert!(validate_identifier("../evil").is_err());
         assert!(validate_identifier("too-short").is_err());
+    }
+
+    #[test]
+    fn bounds_remote_catalog_text() {
+        assert_eq!(sanitize_text("safe\ntext", 20), "safetext");
+        assert_eq!(sanitize_text(&"a".repeat(200), 120).len(), 120);
     }
 
     #[test]
