@@ -312,7 +312,7 @@ fn read_bounded(response: Response) -> Result<Vec<u8>, ModrinthError> {
     Ok(bytes.to_vec())
 }
 
-fn validate_identifier(identifier: &str) -> Result<(), ModrinthError> {
+pub(crate) fn validate_identifier(identifier: &str) -> Result<(), ModrinthError> {
     if identifier.len() != 8 || !identifier.bytes().all(|byte| byte.is_ascii_alphanumeric()) {
         return Err(ModrinthError::InvalidIdentifier(identifier.to_owned()));
     }

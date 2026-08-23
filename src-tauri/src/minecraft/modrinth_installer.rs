@@ -1,9 +1,11 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::error::Error;
 use std::fmt;
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Component, Path};
+use std::process;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
@@ -11,8 +13,8 @@ use sha2::{Digest, Sha512};
 
 use super::model::{InstanceManifest, ModLoader};
 use super::modrinth::{
-    ModrinthClient, ModrinthDependency, ModrinthError, ModrinthFile, ModrinthProject,
-    ModrinthVersion,
+    validate_identifier, ModrinthClient, ModrinthDependency, ModrinthError, ModrinthFile,
+    ModrinthProject, ModrinthVersion,
 };
 use super::paths::MinecraftPaths;
 
@@ -63,6 +65,11 @@ pub enum ModInstallError {
         second: String,
     },
     FileNameConflict(String),
+    ModNotInstalled(String),
+    DependencyOnly(String),
+    ModifiedTrackedFile(String),
+    DuplicateRegistryProject(String),
+    RemovalRollbackFailed(String),
     RegistryTooLarge,
 }
 
@@ -164,6 +171,24 @@ impl fmt::Display for ModInstallError {
                     "別のmodとファイル名が重複しています: {file_name}"
                 )
             }
+            Self::ModNotInstalled(project_id) => {
+                write!(formatter, "導入記録にないmodは削除できません: {project_id}")
+            }
+            Self::DependencyOnly(project_id) => write!(
+                formatter,
+                "このmodは別のmodが必要としているため、単独では削除できません: {project_id}"
+            ),
+            Self::ModifiedTrackedFile(file_name) => write!(
+                formatter,
+                "導入後に内容が変わったmodファイルは自動削除しません: {file_name}"
+            ),
+            Self::DuplicateRegistryProject(project_id) => write!(
+                formatter,
+                "Modインストール記録に同じproject IDが重複しています: {project_id}"
+            ),
+            Self::RemovalRollbackFailed(message) => {
+                write!(formatter, "Mod削除の取り消しに失敗しました: {message}")
+            }
             Self::RegistryTooLarge => write!(formatter, "Modインストール記録が大きすぎます"),
         }
     }
@@ -209,6 +234,8 @@ pub struct InstalledMod {
     pub sha512: String,
     pub size: u64,
     pub direct: bool,
+    #[serde(default)]
+    pub required_dependencies: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -219,13 +246,22 @@ pub struct ModInstallResult {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ModRemovalResult {
+    pub requested: InstalledMod,
+    pub removed: Vec<InstalledMod>,
+    pub retained_as_dependency: bool,
+    pub cleanup_pending: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ModInstallProgress {
     pub completed: usize,
     pub total: usize,
     pub message: String,
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct ModRegistry {
     #[serde(default)]
     mods: Vec<InstalledMod>,
@@ -295,6 +331,65 @@ where
     })();
     let _ = fs::remove_dir_all(&staging);
     result
+}
+
+pub fn remove_modrinth_project(
+    paths: &MinecraftPaths,
+    instance: &InstanceManifest,
+    project_id: &str,
+) -> Result<ModRemovalResult, ModInstallError> {
+    if !matches!(instance.mod_loader, ModLoader::Fabric { .. }) {
+        return Err(ModInstallError::FabricRequired);
+    }
+    validate_identifier(project_id)?;
+
+    let mut registry = load_registry(paths, &instance.id)?;
+    let requested_index = registry
+        .mods
+        .iter()
+        .position(|installed| installed.project_id == project_id)
+        .ok_or_else(|| ModInstallError::ModNotInstalled(project_id.to_owned()))?;
+    let requested = registry.mods[requested_index].clone();
+    if !requested.direct {
+        return Err(ModInstallError::DependencyOnly(project_id.to_owned()));
+    }
+    registry.mods[requested_index].direct = false;
+
+    let retained_projects = retained_project_ids(&mut registry)?;
+    let retained_as_dependency = retained_projects.contains(project_id);
+    let removed = registry
+        .mods
+        .iter()
+        .filter(|installed| !installed.direct && !retained_projects.contains(&installed.project_id))
+        .cloned()
+        .collect::<Vec<_>>();
+    let removed_projects = removed
+        .iter()
+        .map(|installed| installed.project_id.as_str())
+        .collect::<HashSet<_>>();
+    registry
+        .mods
+        .retain(|installed| !removed_projects.contains(installed.project_id.as_str()));
+
+    let staging = create_removal_staging_directory(paths, instance)?;
+    let moved = match stage_removed_files(paths, instance, &removed, &staging) {
+        Ok(moved) => moved,
+        Err(error) => {
+            let _ = fs::remove_dir(&staging);
+            return Err(error);
+        }
+    };
+    if let Err(error) = save_registry(paths, &instance.id, &registry) {
+        return Err(rollback_removal(&moved, &staging, error));
+    }
+    let cleanup_pending = cleanup_staged_files(&moved, &staging);
+
+    Ok(ModRemovalResult {
+        requested,
+        removed,
+        retained_as_dependency,
+        cleanup_pending,
+    })
 }
 
 fn resolve_project(
@@ -394,6 +489,130 @@ fn resolve_required_dependency(
             .clone()
             .unwrap_or_else(|| "unknown dependency".to_owned()),
     ))
+}
+
+fn retained_project_ids(registry: &mut ModRegistry) -> Result<HashSet<String>, ModInstallError> {
+    let indexes = registry
+        .mods
+        .iter()
+        .enumerate()
+        .map(|(index, installed)| (installed.project_id.clone(), index))
+        .collect::<HashMap<_, _>>();
+    let mut queue = registry
+        .mods
+        .iter()
+        .filter(|installed| installed.direct)
+        .map(|installed| installed.project_id.clone())
+        .collect::<VecDeque<_>>();
+    let mut retained = HashSet::new();
+    let mut client = None;
+
+    while let Some(project_id) = queue.pop_front() {
+        if !retained.insert(project_id.clone()) {
+            continue;
+        }
+        let Some(index) = indexes.get(&project_id).copied() else {
+            continue;
+        };
+        let dependencies = match registry.mods[index].required_dependencies.clone() {
+            Some(dependencies) => dependencies,
+            None => {
+                if client.is_none() {
+                    client = Some(ModrinthClient::new()?);
+                }
+                let dependencies = remote_required_dependency_ids(
+                    client.as_ref().expect("Modrinth client was initialized"),
+                    &registry.mods[index],
+                )?;
+                registry.mods[index].required_dependencies = Some(dependencies.clone());
+                dependencies
+            }
+        };
+        for dependency in dependencies {
+            if indexes.contains_key(&dependency) {
+                queue.push_back(dependency);
+            }
+        }
+    }
+
+    Ok(retained)
+}
+
+fn remote_required_dependency_ids(
+    client: &ModrinthClient,
+    installed: &InstalledMod,
+) -> Result<Vec<String>, ModInstallError> {
+    let version = client.version(&installed.version_id)?;
+    if version.project_id != installed.project_id {
+        return Err(ModInstallError::DependencyProjectMismatch {
+            expected: installed.project_id.clone(),
+            actual: version.project_id,
+        });
+    }
+    let mut dependencies = Vec::new();
+    for dependency in version
+        .dependencies
+        .iter()
+        .filter(|dependency| dependency.dependency_type == "required")
+    {
+        let project_id = if let Some(project_id) = dependency.project_id.as_deref() {
+            validate_identifier(project_id)?;
+            project_id.to_owned()
+        } else if let Some(version_id) = dependency.version_id.as_deref() {
+            client.version(version_id)?.project_id
+        } else {
+            return Err(ModInstallError::UnsupportedRequiredDependency(
+                dependency
+                    .file_name
+                    .clone()
+                    .unwrap_or_else(|| "unknown dependency".to_owned()),
+            ));
+        };
+        dependencies.push(project_id);
+    }
+    dependencies.sort();
+    dependencies.dedup();
+    Ok(dependencies)
+}
+
+fn planned_required_dependency_ids(
+    version: &ModrinthVersion,
+    planned: &[PlannedMod],
+) -> Result<Vec<String>, ModInstallError> {
+    let mut dependencies = Vec::new();
+    for dependency in version
+        .dependencies
+        .iter()
+        .filter(|dependency| dependency.dependency_type == "required")
+    {
+        let planned_dependency = if let Some(version_id) = dependency.version_id.as_deref() {
+            planned
+                .iter()
+                .find(|candidate| candidate.version.id == version_id)
+        } else if let Some(project_id) = dependency.project_id.as_deref() {
+            planned
+                .iter()
+                .find(|candidate| candidate.project.id == project_id)
+        } else {
+            None
+        };
+        let project_id = planned_dependency
+            .map(|candidate| candidate.project.id.clone())
+            .ok_or_else(|| {
+                ModInstallError::UnsupportedRequiredDependency(
+                    dependency
+                        .file_name
+                        .clone()
+                        .or_else(|| dependency.project_id.clone())
+                        .or_else(|| dependency.version_id.clone())
+                        .unwrap_or_else(|| "unknown dependency".to_owned()),
+                )
+            })?;
+        dependencies.push(project_id);
+    }
+    dependencies.sort();
+    dependencies.dedup();
+    Ok(dependencies)
 }
 
 fn select_preferred_version(versions: &[ModrinthVersion]) -> Option<&ModrinthVersion> {
@@ -540,6 +759,15 @@ fn commit_installation(
     let mods_directory = paths.instance_mods_directory(&instance.id);
     let old_registry = registry.mods.clone();
     let mut installed_now = Vec::with_capacity(planned.len());
+    let required_dependencies = planned
+        .iter()
+        .map(|item| {
+            Ok((
+                item.project.id.clone(),
+                planned_required_dependency_ids(&item.version, &planned)?,
+            ))
+        })
+        .collect::<Result<HashMap<_, _>, ModInstallError>>()?;
 
     for item in planned {
         let staged = staging.join(&item.file.filename);
@@ -555,6 +783,10 @@ fn commit_installation(
             .iter()
             .find(|installed| installed.project_id == item.project.id)
             .is_some_and(|installed| installed.direct);
+        let item_required_dependencies = required_dependencies
+            .get(&item.project.id)
+            .cloned()
+            .unwrap_or_default();
         let installed = InstalledMod {
             project_id: item.project.id,
             version_id: item.version.id,
@@ -564,6 +796,7 @@ fn commit_installation(
             sha512: item.file.hashes.sha512.to_ascii_lowercase(),
             size: item.file.size,
             direct: item.direct || previous_direct,
+            required_dependencies: Some(item_required_dependencies),
         };
         registry
             .mods
@@ -603,6 +836,132 @@ fn remove_replaced_files(
         }
     }
     Ok(())
+}
+
+fn create_removal_staging_directory(
+    paths: &MinecraftPaths,
+    instance: &InstanceManifest,
+) -> Result<std::path::PathBuf, ModInstallError> {
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let staging = paths.instance(&instance.id).join(format!(
+        "modrinth-removal-staging-{}-{timestamp:x}",
+        process::id()
+    ));
+    let expected_parent = paths.instance(&instance.id);
+    if staging.parent() != Some(expected_parent.as_path()) {
+        return Err(ModInstallError::InvalidFileName(
+            staging.display().to_string(),
+        ));
+    }
+    fs::create_dir(&staging)?;
+    Ok(staging)
+}
+
+fn stage_removed_files(
+    paths: &MinecraftPaths,
+    instance: &InstanceManifest,
+    removed: &[InstalledMod],
+    staging: &Path,
+) -> Result<Vec<(std::path::PathBuf, std::path::PathBuf)>, ModInstallError> {
+    let mods_directory = paths.instance_mods_directory(&instance.id);
+    for installed in removed {
+        validate_file_name(&installed.file_name)?;
+        validate_tracked_mod_file(&mods_directory.join(&installed.file_name), installed)?;
+    }
+
+    let mut moved = Vec::new();
+    for installed in removed {
+        let target = mods_directory.join(&installed.file_name);
+        if !validate_tracked_mod_file(&target, installed)? {
+            continue;
+        }
+        let staged = staging.join(&installed.file_name);
+        if let Err(error) = fs::rename(&target, &staged) {
+            return Err(rollback_removal(
+                &moved,
+                staging,
+                ModInstallError::Io(error),
+            ));
+        }
+        moved.push((target, staged.clone()));
+        match validate_tracked_mod_file(&staged, installed) {
+            Ok(true) => {}
+            Ok(false) => {
+                return Err(rollback_removal(
+                    &moved,
+                    staging,
+                    ModInstallError::ModifiedTrackedFile(installed.file_name.clone()),
+                ));
+            }
+            Err(error) => return Err(rollback_removal(&moved, staging, error)),
+        }
+    }
+    Ok(moved)
+}
+
+fn validate_tracked_mod_file(
+    path: &Path,
+    installed: &InstalledMod,
+) -> Result<bool, ModInstallError> {
+    let metadata = match fs::metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(ModInstallError::Io(error)),
+    };
+    if !metadata.is_file()
+        || metadata.len() != installed.size
+        || file_sha512(path)? != installed.sha512
+    {
+        return Err(ModInstallError::ModifiedTrackedFile(
+            installed.file_name.clone(),
+        ));
+    }
+    Ok(true)
+}
+
+fn rollback_removal(
+    moved: &[(std::path::PathBuf, std::path::PathBuf)],
+    staging: &Path,
+    original_error: ModInstallError,
+) -> ModInstallError {
+    for (target, staged) in moved.iter().rev() {
+        if !staged.exists() {
+            continue;
+        }
+        if target.exists() {
+            return ModInstallError::RemovalRollbackFailed(format!(
+                "{original_error}; 復元先に別のファイルがあります: {}",
+                target.display()
+            ));
+        }
+        if let Err(error) = fs::rename(staged, target) {
+            return ModInstallError::RemovalRollbackFailed(format!(
+                "{original_error}; {}: {error}",
+                target.display()
+            ));
+        }
+    }
+    let _ = fs::remove_dir(staging);
+    original_error
+}
+
+fn cleanup_staged_files(
+    moved: &[(std::path::PathBuf, std::path::PathBuf)],
+    staging: &Path,
+) -> bool {
+    let mut cleanup_pending = false;
+    for (_, staged) in moved {
+        if staged.exists() && fs::remove_file(staged).is_err() {
+            cleanup_pending = true;
+        }
+    }
+    if staging.exists() && fs::remove_dir(staging).is_err() {
+        cleanup_pending = true;
+    }
+    cleanup_pending
 }
 
 fn download_mod_file(
@@ -685,10 +1044,37 @@ fn load_registry(
     if metadata.len() > MAX_REGISTRY_SIZE {
         return Err(ModInstallError::RegistryTooLarge);
     }
-    let registry: ModRegistry = serde_json::from_slice(&fs::read(path)?)?;
-    for installed in &registry.mods {
+    let mut registry: ModRegistry = serde_json::from_slice(&fs::read(path)?)?;
+    let mut project_ids = HashSet::new();
+    let mut file_names = HashSet::new();
+    for installed in &mut registry.mods {
+        validate_identifier(&installed.project_id)?;
+        validate_identifier(&installed.version_id)?;
         validate_file_name(&installed.file_name)?;
-        validate_sha512(&installed.sha512)?;
+        installed.sha512 = validate_sha512(&installed.sha512)?;
+        if installed.size > MAX_MOD_SIZE {
+            return Err(ModInstallError::FileTooLarge {
+                file_name: installed.file_name.clone(),
+                size: installed.size,
+            });
+        }
+        if !project_ids.insert(installed.project_id.clone()) {
+            return Err(ModInstallError::DuplicateRegistryProject(
+                installed.project_id.clone(),
+            ));
+        }
+        if !file_names.insert(installed.file_name.to_lowercase()) {
+            return Err(ModInstallError::FileNameConflict(
+                installed.file_name.clone(),
+            ));
+        }
+        if let Some(dependencies) = &mut installed.required_dependencies {
+            for dependency in dependencies.iter() {
+                validate_identifier(dependency)?;
+            }
+            dependencies.sort();
+            dependencies.dedup();
+        }
     }
     Ok(registry)
 }
@@ -798,6 +1184,67 @@ fn sanitize_text(value: String, maximum: usize) -> String {
 mod tests {
     use super::*;
 
+    fn test_instance(test_name: &str) -> (std::path::PathBuf, MinecraftPaths, InstanceManifest) {
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "monalauncher-mod-removal-{test_name}-{}-{timestamp}",
+            process::id()
+        ));
+        let paths = MinecraftPaths::new(root.clone());
+        let instance_id = "testmods";
+        let game_directory = paths.instance_game_directory(instance_id);
+        fs::create_dir_all(&game_directory).unwrap();
+        let instance = InstanceManifest {
+            id: instance_id.to_owned(),
+            name: "Removal test".to_owned(),
+            version_id: "1.21.8".to_owned(),
+            java_path: String::new(),
+            game_directory: game_directory.to_string_lossy().into_owned(),
+            demo: false,
+            sandboxed: true,
+            mod_loader: ModLoader::Fabric {
+                version: "0.17.2".to_owned(),
+            },
+        };
+        (root, paths, instance)
+    }
+
+    fn installed_mod(project_id: &str, direct: bool, dependencies: &[&str]) -> InstalledMod {
+        let contents = project_id.as_bytes();
+        InstalledMod {
+            project_id: project_id.to_owned(),
+            version_id: format!("V{}", &project_id[..7]),
+            title: project_id.to_owned(),
+            version_number: "1.0.0".to_owned(),
+            file_name: format!("{project_id}.jar"),
+            sha512: format!("{:x}", Sha512::digest(contents)),
+            size: contents.len() as u64,
+            direct,
+            required_dependencies: Some(
+                dependencies
+                    .iter()
+                    .map(|dependency| (*dependency).to_owned())
+                    .collect(),
+            ),
+        }
+    }
+
+    fn write_registry(paths: &MinecraftPaths, instance_id: &str, mods: Vec<InstalledMod>) {
+        let mods_directory = paths.instance_mods_directory(instance_id);
+        fs::create_dir_all(&mods_directory).unwrap();
+        for installed in &mods {
+            fs::write(
+                mods_directory.join(&installed.file_name),
+                installed.project_id.as_bytes(),
+            )
+            .unwrap();
+        }
+        save_registry(paths, instance_id, &ModRegistry { mods }).unwrap();
+    }
+
     fn version(version_type: &str) -> ModrinthVersion {
         ModrinthVersion {
             id: "12345678".to_owned(),
@@ -845,5 +1292,121 @@ mod tests {
     fn validates_sha512_hashes() {
         assert!(validate_sha512(&"a".repeat(128)).is_ok());
         assert!(validate_sha512("../bad").is_err());
+    }
+
+    #[test]
+    fn removes_only_the_requested_mod_and_orphaned_dependencies() {
+        let (root, paths, instance) = test_instance("orphans");
+        let first = installed_mod("AAAAAAA1", true, &["CCCCCCC3", "DDDDDDD4"]);
+        let second = installed_mod("BBBBBBB2", true, &["CCCCCCC3"]);
+        let shared = installed_mod("CCCCCCC3", false, &[]);
+        let orphan = installed_mod("DDDDDDD4", false, &[]);
+        write_registry(
+            &paths,
+            &instance.id,
+            vec![
+                first.clone(),
+                second.clone(),
+                shared.clone(),
+                orphan.clone(),
+            ],
+        );
+
+        let result = remove_modrinth_project(&paths, &instance, &first.project_id).unwrap();
+        let removed = result
+            .removed
+            .iter()
+            .map(|installed| installed.project_id.as_str())
+            .collect::<HashSet<_>>();
+        assert_eq!(removed, HashSet::from(["AAAAAAA1", "DDDDDDD4"]));
+        assert!(!result.retained_as_dependency);
+        assert!(!result.cleanup_pending);
+
+        let remaining = list_installed_mods(&paths, &instance.id).unwrap();
+        assert_eq!(remaining.len(), 2);
+        assert!(remaining
+            .iter()
+            .any(|installed| installed.project_id == second.project_id));
+        assert!(remaining
+            .iter()
+            .any(|installed| installed.project_id == shared.project_id));
+        assert!(!paths
+            .instance_mods_directory(&instance.id)
+            .join(first.file_name)
+            .exists());
+        assert!(!paths
+            .instance_mods_directory(&instance.id)
+            .join(orphan.file_name)
+            .exists());
+        assert!(paths
+            .instance_mods_directory(&instance.id)
+            .join(shared.file_name)
+            .is_file());
+
+        assert!(root.starts_with(std::env::temp_dir()));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn keeps_a_removed_direct_mod_when_another_mod_requires_it() {
+        let (root, paths, instance) = test_instance("shared-direct");
+        let requested = installed_mod("AAAAAAA1", true, &[]);
+        let consumer = installed_mod("BBBBBBB2", true, &["AAAAAAA1"]);
+        write_registry(&paths, &instance.id, vec![requested.clone(), consumer]);
+
+        let result = remove_modrinth_project(&paths, &instance, &requested.project_id).unwrap();
+        assert!(result.retained_as_dependency);
+        assert!(result.removed.is_empty());
+        let remaining = list_installed_mods(&paths, &instance.id).unwrap();
+        let retained = remaining
+            .iter()
+            .find(|installed| installed.project_id == requested.project_id)
+            .unwrap();
+        assert!(!retained.direct);
+        assert!(paths
+            .instance_mods_directory(&instance.id)
+            .join(requested.file_name)
+            .is_file());
+
+        assert!(root.starts_with(std::env::temp_dir()));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn refuses_to_remove_a_tracked_mod_that_was_modified() {
+        let (root, paths, instance) = test_instance("modified");
+        let requested = installed_mod("AAAAAAA1", true, &[]);
+        write_registry(&paths, &instance.id, vec![requested.clone()]);
+        let target = paths
+            .instance_mods_directory(&instance.id)
+            .join(&requested.file_name);
+        fs::write(&target, b"CHANGED!").unwrap();
+
+        let error = remove_modrinth_project(&paths, &instance, &requested.project_id).unwrap_err();
+        assert!(matches!(error, ModInstallError::ModifiedTrackedFile(_)));
+        assert!(target.is_file());
+        assert!(
+            list_installed_mods(&paths, &instance.id)
+                .unwrap()
+                .first()
+                .unwrap()
+                .direct
+        );
+
+        assert!(root.starts_with(std::env::temp_dir()));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn refuses_to_remove_a_dependency_directly() {
+        let (root, paths, instance) = test_instance("dependency-only");
+        let dependency = installed_mod("AAAAAAA1", false, &[]);
+        write_registry(&paths, &instance.id, vec![dependency.clone()]);
+
+        let error = remove_modrinth_project(&paths, &instance, &dependency.project_id).unwrap_err();
+        assert!(matches!(error, ModInstallError::DependencyOnly(_)));
+
+        assert!(root.starts_with(std::env::temp_dir()));
+        fs::remove_dir_all(root).unwrap();
     }
 }
