@@ -28,6 +28,7 @@ pub fn run() {
             commands::auth::begin_microsoft_sign_in,
             commands::auth::microsoft_auth_status,
             commands::auth::poll_microsoft_sign_in,
+            commands::auth::refresh_minecraft_account,
             commands::auth::sign_out_microsoft,
             commands::minecraft::detect_java,
             commands::minecraft::delete_minecraft_instance,

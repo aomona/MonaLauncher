@@ -129,6 +129,15 @@ pub struct SpawnedMinecraft {
     pub narrator_token: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct MinecraftIdentity {
+    pub player_name: String,
+    pub uuid: String,
+    pub access_token: String,
+    pub client_id: String,
+    pub xuid: String,
+}
+
 #[derive(Debug)]
 struct SandboxLayout {
     profile_name: String,
@@ -143,6 +152,7 @@ struct SandboxLayout {
 pub fn spawn_instance(
     paths: &MinecraftPaths,
     instance_id: &str,
+    identity: Option<&MinecraftIdentity>,
 ) -> Result<SpawnedMinecraft, MinecraftLaunchError> {
     let instance = load_instance(paths, instance_id)?;
     let version_path = paths.version_json(&instance.version_id);
@@ -194,16 +204,31 @@ pub fn spawn_instance(
         .collect::<Vec<_>>()
         .join(";");
 
-    let substitutions = HashMap::from([
-        (
-            "${auth_player_name}",
+    let player_name = identity
+        .map(|identity| identity.player_name.clone())
+        .unwrap_or_else(|| {
             if instance.demo {
                 "DemoPlayer"
             } else {
                 "Player"
             }
-            .to_owned(),
-        ),
+            .to_owned()
+        });
+    let uuid = identity
+        .map(|identity| identity.uuid.clone())
+        .unwrap_or_else(|| "00000000000000000000000000000000".to_owned());
+    let access_token = identity
+        .map(|identity| identity.access_token.clone())
+        .unwrap_or_else(|| "0".to_owned());
+    let client_id = identity
+        .map(|identity| identity.client_id.clone())
+        .unwrap_or_default();
+    let xuid = identity
+        .map(|identity| identity.xuid.clone())
+        .unwrap_or_default();
+    let user_type = if identity.is_some() { "msa" } else { "legacy" }.to_owned();
+    let substitutions = HashMap::from([
+        ("${auth_player_name}", player_name),
         ("${version_name}", version.id.clone()),
         (
             "${game_directory}",
@@ -216,14 +241,11 @@ pub fn spawn_instance(
                 .into_owned(),
         ),
         ("${assets_index_name}", version.assets.clone()),
-        (
-            "${auth_uuid}",
-            "00000000000000000000000000000000".to_owned(),
-        ),
-        ("${auth_access_token}", "0".to_owned()),
-        ("${clientid}", String::new()),
-        ("${auth_xuid}", String::new()),
-        ("${user_type}", "legacy".to_owned()),
+        ("${auth_uuid}", uuid),
+        ("${auth_access_token}", access_token),
+        ("${clientid}", client_id),
+        ("${auth_xuid}", xuid),
+        ("${user_type}", user_type),
         ("${version_type}", version.version_type.clone()),
         (
             "${natives_directory}",

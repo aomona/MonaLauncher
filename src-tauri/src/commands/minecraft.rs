@@ -5,12 +5,15 @@ use std::time::Duration;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
+use crate::commands::auth::{
+    acquire_minecraft_session, has_microsoft_authorization, MicrosoftAuthState,
+};
 use crate::minecraft::{
     installer::{
         delete_instance, detect_java_path, install_sandbox_instance as install_sandbox_mode,
         list_available_versions, list_instances, rename_instance, version_java_major,
     },
-    launcher::{read_lines, spawn_instance, MinecraftProcess},
+    launcher::{read_lines, spawn_instance, MinecraftIdentity, MinecraftProcess},
     model::{InstanceManifest, VersionManifest},
     paths::MinecraftPaths,
     runtime::install_java_runtime,
@@ -234,11 +237,35 @@ pub async fn install_sandbox_instance(
 pub async fn launch_minecraft_instance(
     app: AppHandle,
     state: State<'_, MinecraftRuntimeState>,
+    auth_state: State<'_, MicrosoftAuthState>,
     instance_id: String,
 ) -> Result<u32, String> {
     let operation = reserve_instance_operation(&state, &instance_id, false)?;
 
     let paths = minecraft_paths(&app)?;
+    let instance = list_instances(&paths)
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .find(|instance| instance.id == instance_id)
+        .ok_or_else(|| format!("Instance was not found: {instance_id}"))?;
+    let identity = if !instance.demo && has_microsoft_authorization()? {
+        emit_launch_progress(
+            &app,
+            &instance_id,
+            "authenticating",
+            "MicrosoftアカウントとMinecraftの所有権を確認しています…",
+        );
+        let session = acquire_minecraft_session(&auth_state).await?;
+        Some(MinecraftIdentity {
+            player_name: session.player_name,
+            uuid: session.uuid,
+            access_token: session.access_token,
+            client_id: session.client_id,
+            xuid: session.xuid,
+        })
+    } else {
+        None
+    };
     emit_launch_progress(
         &app,
         &instance_id,
@@ -247,7 +274,8 @@ pub async fn launch_minecraft_instance(
     );
     let launch_instance_id = instance_id.clone();
     let spawned = tauri::async_runtime::spawn_blocking(move || {
-        spawn_instance(&paths, &launch_instance_id).map_err(|error| error.to_string())
+        spawn_instance(&paths, &launch_instance_id, identity.as_ref())
+            .map_err(|error| error.to_string())
     })
     .await
     .map_err(|error| format!("起動準備への参加に失敗しました: {error}"))??;

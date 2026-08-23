@@ -5,11 +5,18 @@ use serde::Serialize;
 use tauri::State;
 
 use crate::auth::microsoft::{MicrosoftAuthError, MicrosoftOAuthClient, TokenPoll};
+use crate::auth::minecraft_services::{MinecraftServicesClient, MinecraftSession};
 use crate::auth::token_store::{delete_refresh_token, load_refresh_token, save_refresh_token};
 
 #[derive(Clone, Default)]
 pub struct MicrosoftAuthState {
     pending: Arc<Mutex<Option<PendingAuthorization>>>,
+    minecraft_session: Arc<Mutex<Option<CachedMinecraftSession>>>,
+}
+
+struct CachedMinecraftSession {
+    session: MinecraftSession,
+    refresh_at: Instant,
 }
 
 struct PendingAuthorization {
@@ -42,6 +49,13 @@ pub struct MicrosoftSignInChallenge {
 pub struct MicrosoftSignInPoll {
     status: &'static str,
     retry_after: Option<u64>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MinecraftAccountProfile {
+    name: String,
+    uuid: String,
 }
 
 #[tauri::command]
@@ -118,8 +132,8 @@ pub async fn poll_microsoft_sign_in(
 
     let client = MicrosoftOAuthClient::from_configuration().map_err(|error| error.to_string())?;
     match client.poll_device_authorization(&pending.device_code).await {
-        Ok(TokenPoll::Authorized { refresh_token }) => {
-            save_refresh_token(&refresh_token).map_err(|error| error.to_string())?;
+        Ok(TokenPoll::Authorized(token)) => {
+            save_refresh_token(&token.refresh_token).map_err(|error| error.to_string())?;
             Ok(MicrosoftSignInPoll {
                 status: "authorized",
                 retry_after: None,
@@ -154,12 +168,85 @@ pub async fn poll_microsoft_sign_in(
 }
 
 #[tauri::command]
+pub async fn refresh_minecraft_account(
+    state: State<'_, MicrosoftAuthState>,
+) -> Result<MinecraftAccountProfile, String> {
+    let session = acquire_minecraft_session(&state).await?;
+    Ok(MinecraftAccountProfile {
+        name: session.player_name,
+        uuid: session.uuid,
+    })
+}
+
+#[tauri::command]
 pub fn sign_out_microsoft(state: State<'_, MicrosoftAuthState>) -> Result<(), String> {
     *state
         .pending
         .lock()
         .map_err(|_| "Microsoft認証状態を利用できません".to_owned())? = None;
+    *state
+        .minecraft_session
+        .lock()
+        .map_err(|_| "Minecraft認証状態を利用できません".to_owned())? = None;
     delete_refresh_token().map_err(|error| error.to_string())
+}
+
+pub(crate) async fn acquire_minecraft_session(
+    state: &MicrosoftAuthState,
+) -> Result<MinecraftSession, String> {
+    if let Some(session) = cached_minecraft_session(state)? {
+        return Ok(session);
+    }
+
+    let refresh_token = load_refresh_token()
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "Microsoftアカウントへサインインしてください".to_owned())?;
+    let microsoft =
+        MicrosoftOAuthClient::from_configuration().map_err(|error| error.to_string())?;
+    let access = microsoft
+        .refresh_access_token(&refresh_token)
+        .await
+        .map_err(|error| error.to_string())?;
+    save_refresh_token(&access.refresh_token).map_err(|error| error.to_string())?;
+
+    let minecraft = MinecraftServicesClient::new().map_err(|error| error.to_string())?;
+    let session = minecraft
+        .authenticate(&access.access_token, microsoft.client_id())
+        .await
+        .map_err(|error| error.to_string())?;
+    let refresh_at = Instant::now() + session.expires_in.saturating_sub(Duration::from_secs(60));
+    *state
+        .minecraft_session
+        .lock()
+        .map_err(|_| "Minecraft認証状態を利用できません".to_owned())? =
+        Some(CachedMinecraftSession {
+            session: session.clone(),
+            refresh_at,
+        });
+    Ok(session)
+}
+
+fn cached_minecraft_session(
+    state: &MicrosoftAuthState,
+) -> Result<Option<MinecraftSession>, String> {
+    let mut cached = state
+        .minecraft_session
+        .lock()
+        .map_err(|_| "Minecraft認証状態を利用できません".to_owned())?;
+    if cached
+        .as_ref()
+        .is_some_and(|session| Instant::now() < session.refresh_at)
+    {
+        return Ok(cached.as_ref().map(|session| session.session.clone()));
+    }
+    *cached = None;
+    Ok(None)
+}
+
+pub(crate) fn has_microsoft_authorization() -> Result<bool, String> {
+    Ok(load_refresh_token()
+        .map_err(|error| error.to_string())?
+        .is_some())
 }
 
 fn restore_pending(

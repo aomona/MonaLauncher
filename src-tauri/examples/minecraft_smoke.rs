@@ -34,7 +34,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     )?;
 
     println!("[launcher] starting Minecraft");
-    let spawned = spawn_instance(&paths, instance_id)?;
+    let spawned = spawn_instance(&paths, instance_id, None)?;
     println!("[launcher] sandboxed={}", spawned.sandboxed);
     let mut child = spawned.child;
 

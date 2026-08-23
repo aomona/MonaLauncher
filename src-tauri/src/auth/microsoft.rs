@@ -73,7 +73,13 @@ pub struct DeviceAuthorization {
 pub enum TokenPoll {
     Pending,
     SlowDown,
-    Authorized { refresh_token: String },
+    Authorized(MicrosoftAccessToken),
+}
+
+#[derive(Debug)]
+pub struct MicrosoftAccessToken {
+    pub access_token: String,
+    pub refresh_token: String,
 }
 
 #[derive(Clone)]
@@ -146,9 +152,10 @@ impl MicrosoftOAuthClient {
                 if success.refresh_token.is_empty() {
                     Err(MicrosoftAuthError::RefreshTokenMissing)
                 } else {
-                    Ok(TokenPoll::Authorized {
+                    Ok(TokenPoll::Authorized(MicrosoftAccessToken {
+                        access_token: success.access_token,
                         refresh_token: success.refresh_token,
-                    })
+                    }))
                 }
             }
             TokenResponse::Error(error) => match error.error.as_str() {
@@ -162,6 +169,42 @@ impl MicrosoftOAuthClient {
             },
             TokenResponse::Success(_) => Err(MicrosoftAuthError::ServiceStatus(status)),
         }
+    }
+
+    pub async fn refresh_access_token(
+        &self,
+        refresh_token: &str,
+    ) -> Result<MicrosoftAccessToken, MicrosoftAuthError> {
+        let response = self
+            .client
+            .post(TOKEN_URL)
+            .form(&[
+                ("grant_type", "refresh_token"),
+                ("client_id", self.client_id.as_str()),
+                ("refresh_token", refresh_token),
+                ("scope", MINECRAFT_SCOPES),
+            ])
+            .send()
+            .await?;
+        let status = response.status();
+        let body: TokenResponse = parse_bounded_json(response).await?;
+
+        match body {
+            TokenResponse::Success(success) if status.is_success() => Ok(MicrosoftAccessToken {
+                access_token: success.access_token,
+                refresh_token: if success.refresh_token.is_empty() {
+                    refresh_token.to_owned()
+                } else {
+                    success.refresh_token
+                },
+            }),
+            TokenResponse::Error(error) => Err(MicrosoftAuthError::ServiceError(error.error)),
+            TokenResponse::Success(_) => Err(MicrosoftAuthError::ServiceStatus(status)),
+        }
+    }
+
+    pub fn client_id(&self) -> &str {
+        &self.client_id
     }
 }
 
@@ -226,10 +269,11 @@ enum TokenResponse {
 
 #[derive(Deserialize)]
 struct TokenSuccessResponse {
-    #[serde(rename = "access_token")]
-    _access_token: String,
+    access_token: String,
     #[serde(default)]
     refresh_token: String,
+    #[serde(rename = "expires_in")]
+    _expires_in: u64,
 }
 
 #[derive(Deserialize)]
@@ -261,7 +305,7 @@ mod tests {
     #[test]
     fn parses_successful_token_response() {
         let response: TokenResponse = serde_json::from_str(
-            r#"{"access_token":"secret-access","refresh_token":"secret-refresh"}"#,
+            r#"{"access_token":"secret-access","refresh_token":"secret-refresh","expires_in":3600}"#,
         )
         .unwrap();
         assert!(matches!(

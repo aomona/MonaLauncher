@@ -45,7 +45,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     println!("[launcher] starting Minecraft in AppContainer");
-    let spawned = spawn_instance(&paths, instance_id)?;
+    let spawned = spawn_instance(&paths, instance_id, None)?;
     if !spawned.sandboxed {
         return Err("launcher did not use AppContainer".into());
     }
