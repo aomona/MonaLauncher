@@ -9,6 +9,7 @@ use crate::commands::auth::{
     acquire_minecraft_session, has_microsoft_authorization, MicrosoftAuthState,
 };
 use crate::minecraft::{
+    fabric::{list_loader_versions, FabricLoaderVersion},
     installer::{
         delete_instance, detect_java_path, install_sandbox_instance as install_sandbox_mode,
         list_available_versions, list_instances, rename_instance, version_java_major,
@@ -141,6 +142,16 @@ pub async fn list_minecraft_versions() -> Result<VersionManifest, String> {
     tauri::async_runtime::spawn_blocking(list_available_versions)
         .await
         .map_err(|error| format!("バージョン一覧の取得処理への参加に失敗しました: {error}"))?
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn list_fabric_loader_versions(
+    minecraft_version: String,
+) -> Result<Vec<FabricLoaderVersion>, String> {
+    tauri::async_runtime::spawn_blocking(move || list_loader_versions(&minecraft_version))
+        .await
+        .map_err(|error| format!("Fabric Loader一覧の取得処理への参加に失敗しました: {error}"))?
         .map_err(|error| error.to_string())
 }
 

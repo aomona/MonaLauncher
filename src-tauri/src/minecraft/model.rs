@@ -157,6 +157,18 @@ pub struct InstanceManifest {
     pub demo: bool,
     #[serde(default)]
     pub sandboxed: bool,
+    #[serde(default)]
+    pub mod_loader: ModLoader,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum ModLoader {
+    #[default]
+    Vanilla,
+    Fabric {
+        version: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -256,6 +268,35 @@ mod tests {
             tauri_payload["versions"][0]["releaseTime"],
             "2025-07-17T12:00:00+00:00"
         );
+    }
+
+    #[test]
+    fn reads_existing_instance_as_vanilla() {
+        let instance: InstanceManifest = serde_json::from_str(
+            r#"{
+                "id": "existing",
+                "name": "Existing Instance",
+                "versionId": "1.21.8",
+                "javaPath": "java.exe",
+                "gameDirectory": "game",
+                "demo": false,
+                "sandboxed": true
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(instance.mod_loader, ModLoader::Vanilla);
+    }
+
+    #[test]
+    fn serializes_fabric_loader_configuration() {
+        let loader = ModLoader::Fabric {
+            version: "0.19.3".to_owned(),
+        };
+        let value = serde_json::to_value(loader).unwrap();
+
+        assert_eq!(value["type"], "fabric");
+        assert_eq!(value["version"], "0.19.3");
     }
 
     #[test]

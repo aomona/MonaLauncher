@@ -13,8 +13,8 @@ use serde::de::DeserializeOwned;
 use sha1::{Digest, Sha1};
 
 use super::model::{
-    rules_allow, AssetIndex, DownloadInfo, InstallProgress, InstanceManifest, VersionManifest,
-    VersionMetadata,
+    rules_allow, AssetIndex, DownloadInfo, InstallProgress, InstanceManifest, ModLoader,
+    VersionManifest, VersionMetadata,
 };
 use super::paths::MinecraftPaths;
 
@@ -433,6 +433,7 @@ where
         game_directory: game_directory.to_string_lossy().into_owned(),
         demo: options.demo,
         sandboxed: options.sandboxed,
+        mod_loader: ModLoader::Vanilla,
     };
 
     let instance_directory = paths.instance(instance_id);
@@ -816,6 +817,7 @@ mod tests {
             game_directory: directory.join("game").to_string_lossy().into_owned(),
             demo: false,
             sandboxed: true,
+            mod_loader: ModLoader::Vanilla,
         };
         fs::write(
             paths.instance_manifest(directory_id),
