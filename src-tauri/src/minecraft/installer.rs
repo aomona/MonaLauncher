@@ -509,6 +509,30 @@ pub fn rename_instance(
     Ok(instance)
 }
 
+pub fn delete_instance(
+    paths: &MinecraftPaths,
+    instance_id: &str,
+) -> Result<(), MinecraftInstallError> {
+    validate_instance_id(instance_id)?;
+    let manifest_path = paths.instance_manifest(instance_id);
+    if !manifest_path.is_file() {
+        return Err(MinecraftInstallError::InstanceMissing(
+            instance_id.to_owned(),
+        ));
+    }
+
+    let instance: InstanceManifest = serde_json::from_slice(&fs::read(manifest_path)?)?;
+    if instance.id != instance_id {
+        return Err(MinecraftInstallError::InstanceIdMismatch {
+            expected: instance_id.to_owned(),
+            actual: instance.id,
+        });
+    }
+
+    fs::remove_dir_all(paths.instance(instance_id))?;
+    Ok(())
+}
+
 pub fn detect_java_path() -> Option<PathBuf> {
     let mut candidates = Vec::<PathBuf>::new();
 
@@ -768,6 +792,37 @@ impl DownloadTask {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temporary_minecraft_paths(test_name: &str) -> MinecraftPaths {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        MinecraftPaths::new(std::env::temp_dir().join(format!(
+            "monalauncher-{test_name}-{}-{nonce}",
+            std::process::id()
+        )))
+    }
+
+    fn write_test_instance(paths: &MinecraftPaths, directory_id: &str, manifest_id: &str) {
+        let directory = paths.instance(directory_id);
+        fs::create_dir_all(directory.join("game/saves/test-world")).unwrap();
+        let manifest = InstanceManifest {
+            id: manifest_id.to_owned(),
+            name: "Test Instance".to_owned(),
+            version_id: "1.21.8".to_owned(),
+            java_path: "java.exe".to_owned(),
+            game_directory: directory.join("game").to_string_lossy().into_owned(),
+            demo: false,
+            sandboxed: true,
+        };
+        fs::write(
+            paths.instance_manifest(directory_id),
+            serde_json::to_vec_pretty(&manifest).unwrap(),
+        )
+        .unwrap();
+    }
 
     #[test]
     fn rejects_parent_directory_from_metadata() {
@@ -808,5 +863,33 @@ mod tests {
             validate_instance_name(&"a".repeat(MAX_INSTANCE_NAME_LENGTH + 1)),
             Err(MinecraftInstallError::InstanceNameTooLong(_))
         ));
+    }
+
+    #[test]
+    fn deletes_only_the_requested_instance_directory() {
+        let paths = temporary_minecraft_paths("delete-instance");
+        write_test_instance(&paths, "delete-me", "delete-me");
+        write_test_instance(&paths, "keep-me", "keep-me");
+
+        delete_instance(&paths, "delete-me").unwrap();
+
+        assert!(!paths.instance("delete-me").exists());
+        assert!(paths.instance("keep-me").exists());
+        fs::remove_dir_all(paths.root()).unwrap();
+    }
+
+    #[test]
+    fn refuses_to_delete_when_manifest_id_does_not_match_directory() {
+        let paths = temporary_minecraft_paths("delete-mismatch");
+        write_test_instance(&paths, "requested", "different");
+
+        let result = delete_instance(&paths, "requested");
+
+        assert!(matches!(
+            result,
+            Err(MinecraftInstallError::InstanceIdMismatch { .. })
+        ));
+        assert!(paths.instance("requested").exists());
+        fs::remove_dir_all(paths.root()).unwrap();
     }
 }

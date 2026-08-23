@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -7,7 +7,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::minecraft::{
     installer::{
-        detect_java_path, install_sandbox_instance as install_sandbox_mode,
+        delete_instance, detect_java_path, install_sandbox_instance as install_sandbox_mode,
         list_available_versions, list_instances, rename_instance, version_java_major,
     },
     launcher::{read_lines, spawn_instance, MinecraftProcess},
@@ -20,7 +20,26 @@ type SharedChild = Arc<Mutex<MinecraftProcess>>;
 
 #[derive(Clone, Default)]
 pub struct MinecraftRuntimeState {
-    processes: Arc<Mutex<HashMap<String, SharedChild>>>,
+    registry: Arc<Mutex<MinecraftProcessRegistry>>,
+}
+
+#[derive(Default)]
+struct MinecraftProcessRegistry {
+    processes: HashMap<String, SharedChild>,
+    operations: HashSet<String>,
+}
+
+struct InstanceOperationGuard {
+    registry: Arc<Mutex<MinecraftProcessRegistry>>,
+    instance_id: String,
+}
+
+impl Drop for InstanceOperationGuard {
+    fn drop(&mut self) {
+        if let Ok(mut registry) = self.registry.lock() {
+            registry.operations.remove(&self.instance_id);
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -89,10 +108,29 @@ pub fn list_minecraft_instances(app: AppHandle) -> Result<Vec<InstanceManifest>,
 #[tauri::command]
 pub fn rename_minecraft_instance(
     app: AppHandle,
+    state: State<'_, MinecraftRuntimeState>,
     instance_id: String,
     name: String,
 ) -> Result<InstanceManifest, String> {
+    let _operation = reserve_instance_operation(&state, &instance_id, true)?;
     rename_instance(&minecraft_paths(&app)?, &instance_id, &name).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn delete_minecraft_instance(
+    app: AppHandle,
+    state: State<'_, MinecraftRuntimeState>,
+    instance_id: String,
+) -> Result<(), String> {
+    let operation = reserve_instance_operation(&state, &instance_id, false)?;
+    let paths = minecraft_paths(&app)?;
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        delete_instance(&paths, &instance_id).map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| format!("削除処理への参加に失敗しました: {error}"))?;
+    drop(operation);
+    result
 }
 
 #[tauri::command]
@@ -106,8 +144,10 @@ pub async fn list_minecraft_versions() -> Result<VersionManifest, String> {
 #[tauri::command]
 pub fn prepare_instance_sandbox(
     app: AppHandle,
+    state: State<'_, MinecraftRuntimeState>,
     instance_id: String,
 ) -> Result<SandboxPreparation, String> {
+    let _operation = reserve_instance_operation(&state, &instance_id, false)?;
     prepare_instance_sandbox_for_platform(&app, &instance_id)
 }
 
@@ -150,11 +190,13 @@ fn prepare_instance_sandbox_for_platform(
 #[tauri::command]
 pub async fn install_sandbox_instance(
     app: AppHandle,
+    state: State<'_, MinecraftRuntimeState>,
     instance_id: String,
     name: String,
     version_id: String,
     demo: bool,
 ) -> Result<InstanceManifest, String> {
+    let operation = reserve_instance_operation(&state, &instance_id, false)?;
     let paths = minecraft_paths(&app)?;
     let event_app = app.clone();
     let display_name = if name.trim().is_empty() {
@@ -163,7 +205,7 @@ pub async fn install_sandbox_instance(
         name
     };
 
-    tauri::async_runtime::spawn_blocking(move || {
+    let result = tauri::async_runtime::spawn_blocking(move || {
         let java_major = version_java_major(&version_id).map_err(|error| error.to_string())?;
         let java = install_java_runtime(&paths, java_major, |progress| {
             let _ = event_app.emit("minecraft-install-progress", progress);
@@ -183,7 +225,9 @@ pub async fn install_sandbox_instance(
         .map_err(|error| error.to_string())
     })
     .await
-    .map_err(|error| format!("インストール処理への参加に失敗しました: {error}"))?
+    .map_err(|error| format!("インストール処理への参加に失敗しました: {error}"))?;
+    drop(operation);
+    result
 }
 
 #[tauri::command]
@@ -192,15 +236,7 @@ pub async fn launch_minecraft_instance(
     state: State<'_, MinecraftRuntimeState>,
     instance_id: String,
 ) -> Result<u32, String> {
-    {
-        let processes = state
-            .processes
-            .lock()
-            .map_err(|_| "Minecraft process state is unavailable".to_owned())?;
-        if processes.contains_key(&instance_id) {
-            return Err("This instance is already running".to_owned());
-        }
-    }
+    let operation = reserve_instance_operation(&state, &instance_id, false)?;
 
     let paths = minecraft_paths(&app)?;
     emit_launch_progress(
@@ -233,10 +269,12 @@ pub async fn launch_minecraft_instance(
     let child = Arc::new(Mutex::new(spawned.child));
 
     state
-        .processes
+        .registry
         .lock()
         .map_err(|_| "Minecraft process state is unavailable".to_owned())?
+        .processes
         .insert(instance_id.clone(), Arc::clone(&child));
+    drop(operation);
 
     emit_status(&app, &instance_id, "running", None);
     spawn_stdout_reader(
@@ -247,7 +285,7 @@ pub async fn launch_minecraft_instance(
     );
     spawn_log_reader(app.clone(), instance_id.clone(), "stderr", spawned.stderr);
 
-    let processes = Arc::clone(&state.processes);
+    let registry = Arc::clone(&state.registry);
     std::thread::spawn(move || loop {
         let exit_status = match child.lock() {
             Ok(mut child) => child.try_wait(),
@@ -256,8 +294,8 @@ pub async fn launch_minecraft_instance(
 
         match exit_status {
             Ok(Some(status)) => {
-                if let Ok(mut running) = processes.lock() {
-                    running.remove(&instance_id);
+                if let Ok(mut registry) = registry.lock() {
+                    registry.processes.remove(&instance_id);
                 }
                 emit_status(&app, &instance_id, "stopped", status.code());
                 return;
@@ -279,9 +317,10 @@ pub fn stop_minecraft_instance(
     instance_id: String,
 ) -> Result<(), String> {
     let child = state
-        .processes
+        .registry
         .lock()
         .map_err(|_| "Minecraft process state is unavailable".to_owned())?
+        .processes
         .get(&instance_id)
         .cloned()
         .ok_or_else(|| "This instance is not running".to_owned())?;
@@ -293,6 +332,30 @@ pub fn stop_minecraft_instance(
         .map_err(|error| format!("Failed to stop Minecraft: {error}"));
 
     result
+}
+
+fn reserve_instance_operation(
+    state: &MinecraftRuntimeState,
+    instance_id: &str,
+    allow_running: bool,
+) -> Result<InstanceOperationGuard, String> {
+    let registry = Arc::clone(&state.registry);
+    {
+        let mut state = registry
+            .lock()
+            .map_err(|_| "Minecraft process state is unavailable".to_owned())?;
+        if !allow_running && state.processes.contains_key(instance_id) {
+            return Err("This instance is currently running".to_owned());
+        }
+        if !state.operations.insert(instance_id.to_owned()) {
+            return Err("Another operation is already using this instance".to_owned());
+        }
+    }
+
+    Ok(InstanceOperationGuard {
+        registry,
+        instance_id: instance_id.to_owned(),
+    })
 }
 
 fn spawn_log_reader<R>(app: AppHandle, instance_id: String, stream: &'static str, reader: R)
@@ -380,4 +443,21 @@ fn emit_launch_progress(app: &AppHandle, instance_id: &str, stage: &str, message
             message: message.to_owned(),
         },
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn instance_operation_guard_blocks_only_the_same_instance() {
+        let state = MinecraftRuntimeState::default();
+        let first = reserve_instance_operation(&state, "first", false).unwrap();
+
+        assert!(reserve_instance_operation(&state, "first", false).is_err());
+        assert!(reserve_instance_operation(&state, "second", false).is_ok());
+
+        drop(first);
+        assert!(reserve_instance_operation(&state, "first", false).is_ok());
+    }
 }

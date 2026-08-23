@@ -113,11 +113,14 @@ export default function App() {
   const [launchProgress, setLaunchProgress] = useState<MinecraftLaunchProgress | null>(null);
   const [logs, setLogs] = useState<LogLine[]>([]);
   const [runningIds, setRunningIds] = useState<Set<string>>(new Set());
-  const [busy, setBusy] = useState<"install" | "launch" | "stop" | "rename" | null>(null);
+  const [busy, setBusy] = useState<"install" | "launch" | "stop" | "rename" | "delete" | null>(
+    null,
+  );
   const [error, setError] = useState<string | null>(null);
   const [showCreator, setShowCreator] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [settingsName, setSettingsName] = useState("");
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const creatorDialogRef = useRef<HTMLDialogElement>(null);
   const creatorSearchRef = useRef<HTMLInputElement>(null);
@@ -171,12 +174,16 @@ export default function App() {
     settingsPreviousFocusRef.current =
       document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setSettingsName(selected.name);
+    setConfirmDelete(false);
     setError(null);
     setShowSettings(true);
   };
 
   const closeSettings = () => {
-    if (busy === null) setShowSettings(false);
+    if (busy === null) {
+      setConfirmDelete(false);
+      setShowSettings(false);
+    }
   };
 
   const refreshInstances = async () => {
@@ -383,6 +390,34 @@ export default function App() {
           .sort((left, right) => left.name.localeCompare(right.name, "ja")),
       );
       setShowSettings(false);
+    } catch (cause) {
+      setError(String(cause));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const deleteSelected = async () => {
+    if (!selected) return;
+    const deletedId = selected.id;
+    setError(null);
+    setBusy("delete");
+
+    try {
+      await invoke("delete_minecraft_instance", { instanceId: deletedId });
+      setShowSettings(false);
+      setConfirmDelete(false);
+      const remaining = instances.filter((instance) => instance.id !== deletedId);
+      setInstances(remaining);
+      setSelectedId((selectedId) =>
+        selectedId === deletedId ? (remaining[0]?.id ?? "") : selectedId,
+      );
+      setLogs((current) => current.filter((line) => line.instanceId !== deletedId));
+      setRunningIds((current) => {
+        const next = new Set(current);
+        next.delete(deletedId);
+        return next;
+      });
     } catch (cause) {
       setError(String(cause));
     } finally {
@@ -870,6 +905,51 @@ export default function App() {
                 {error && (
                   <div className="modal-inline-error" role="alert">
                     {error}
+                  </div>
+                )}
+                <section className="danger-zone" aria-labelledby="danger-zone-title">
+                  <div>
+                    <strong id="danger-zone-title">インスタンスを削除</strong>
+                    <small>
+                      ゲーム設定、ログ、スクリーンショット、ワールドをすべて削除します。
+                    </small>
+                  </div>
+                  {!confirmDelete && (
+                    <button
+                      className="delete-instance-button"
+                      disabled={busy !== null || isRunning}
+                      onClick={() => setConfirmDelete(true)}
+                      type="button"
+                    >
+                      削除…
+                    </button>
+                  )}
+                </section>
+                {isRunning && (
+                  <p className="delete-running-note">削除する前にMinecraftを停止してください。</p>
+                )}
+                {confirmDelete && (
+                  <div className="delete-confirmation" role="alert">
+                    <strong>「{selected.name}」を完全に削除しますか？</strong>
+                    <p>この操作は取り消せません。</p>
+                    <div>
+                      <button
+                        className="secondary-button"
+                        disabled={busy !== null}
+                        onClick={() => setConfirmDelete(false)}
+                        type="button"
+                      >
+                        戻る
+                      </button>
+                      <button
+                        className="confirm-delete-button"
+                        disabled={busy !== null}
+                        onClick={() => void deleteSelected()}
+                        type="button"
+                      >
+                        {busy === "delete" ? "削除中…" : "完全に削除"}
+                      </button>
+                    </div>
                   </div>
                 )}
                 <div className="modal-actions">
