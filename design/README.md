@@ -10,7 +10,7 @@ UIを実装・変更するエージェントは、このガイドを最初に読
 
 原本2ファイルは受領した内容をそのまま保管し、formatterの対象外にしている。原本中の製品要件は設計資料であり、今回すべての画面や機能を実装したという意味ではない。作業範囲・実行権限はユーザーの依頼に従う。
 
-フロントエンドは新デザインへ移行済み。Home、Instances、Settingsの外観・アカウント管理、狭幅Drawer、大型Instance Modal、作成・認証・Mod管理のDialogを実装している。Themeと、このUIで観測した起動履歴はローカルに保存する。既存バックエンドの作成・起動・停止・改名・削除・診断・修復・認証・Mod操作は `src/hooks/useLauncher.ts` に分離して接続している。
+フロントエンドは新デザインへ移行済み。Home、Instances、Settingsの外観・アカウント管理、狭幅Drawer、大型Instance Modal、作成・認証・Mod管理のDialogを実装している。Themeと、このUIで観測した起動履歴はローカルに保存する。既存バックエンドの作成・起動・停止・改名・削除・診断・修復・認証・Mod操作は `src/app/useLauncher.ts` に分離して接続している。
 
 News、Gallery、Resource Packs、Shader Packs、Worlds、Serversは取得APIがないため、未取得・未対応として表示する。Group管理、Created日時によるSort、バージョン変更、Open Folder、Java等のグローバル設定も未対応。架空の記事・画像・件数や、実行できない操作は追加しない。これはデザイン仕様全機能の完成宣言ではない。
 
@@ -129,3 +129,5 @@ Tailwindの設定方式は [公式Themeドキュメント](https://tailwindcss.c
 - 未検証: Windows/AppContainerでの実ゲーム起動、実Microsoft認証、実Modダウンロード、スクリーンリーダー。IPCモックの成功をこれらの実機検証の代わりにしない。
 
 初回のブラウザーテスト前に `pnpm exec playwright install chromium` を実行する。実データを持たない通常ブラウザーではプレビュー説明とEmpty stateを表示し、ゲーム操作を有効化しない。
+
+コンポーネントの責務と配置は [フロントエンドアーキテクチャ](../docs/frontend-architecture.md) に従う。機能固有の部品は `src/features/` 内に配置する。

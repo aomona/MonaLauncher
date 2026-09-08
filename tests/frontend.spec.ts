@@ -33,6 +33,8 @@ async function mockDesktop(page: Page, count = 2) {
       calls: [] as string[],
       failRename: false,
       failStop: false,
+      delayModSearch: false,
+      rejectSearch: null as (() => void) | null,
       emit: (event: string, payload: unknown) => {
         for (const id of handlers[event] ?? []) callbacks[id]?.({ event, payload, id });
       },
@@ -63,12 +65,28 @@ async function mockDesktop(page: Page, count = 2) {
               return [...instances];
             case "microsoft_auth_status":
               return { configured: true, authorized: false };
+            case "begin_microsoft_sign_in":
+              return {
+                sessionId: "test-session",
+                userCode: "TEST-CODE",
+                verificationUri: "https://www.microsoft.com/link",
+                expiresIn: 900,
+                interval: 0.01,
+              };
+            case "plugin:opener|open_url":
+            case "sign_out_microsoft":
+              return;
+            case "poll_microsoft_sign_in":
+              return { status: "authorized", retryAfter: null };
+            case "refresh_minecraft_account":
+              return { name: "TestPlayer", uuid: "test-profile" };
             case "list_minecraft_versions":
               return {
                 latest: { release: "1.21.1", snapshot: "24w01a" },
                 versions: [
                   { id: "1.21.1", versionType: "release", releaseTime: "2024-08-08" },
                   { id: "24w01a", versionType: "snapshot", releaseTime: "2024-01-01" },
+                  { id: "a1.2.6", versionType: "old_alpha", releaseTime: "2010-12-03" },
                 ],
               };
             case "list_fabric_loader_versions":
@@ -76,6 +94,10 @@ async function mockDesktop(page: Page, count = 2) {
             case "list_instance_mods":
               return [];
             case "search_modrinth_mods":
+              if (state.delayModSearch)
+                return new Promise((_resolve, reject) => {
+                  state.rejectSearch = () => reject(new Error("以前の検索のエラー"));
+                });
               return { hits: [], offset: 0, limit: 20, totalHits: 0 };
             case "rename_minecraft_instance": {
               if (state.failRename) throw new Error("保存テストエラー");
@@ -289,4 +311,88 @@ test("200 instances scroll locally and search across the list", async ({ page })
   await page.getByRole("textbox", { name: "インスタンスを検索" }).fill("Instance 199");
   await expect(page.locator(".instance-row")).toHaveCount(1);
   await expect(page.getByRole("button", { name: "Instance 199", exact: true })).toBeVisible();
+});
+
+test("authentication controller signs in and out across the account UI", async ({ page }) => {
+  await mockDesktop(page);
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  const auth = page.getByRole("dialog", { name: "Microsoft account", exact: true });
+  await auth.getByRole("button", { name: "Microsoftでサインイン" }).click();
+  await expect(auth.getByText("TestPlayer", { exact: true })).toBeVisible();
+  await auth.getByRole("button", { name: "Sign out", exact: true }).click();
+  await expect(auth.getByRole("button", { name: "Microsoftでサインイン" })).toBeEnabled();
+});
+
+test("instance search and tab memory survive page and dialog navigation", async ({ page }) => {
+  await mockDesktop(page);
+  await page.getByRole("button", { name: "Instances", exact: true }).click();
+  await page.getByRole("textbox", { name: "インスタンスを検索" }).fill("Survival");
+  await page.getByRole("button", { name: "Home", exact: true }).click();
+  await page.getByRole("button", { name: "Instances", exact: true }).click();
+  await expect(page.getByRole("textbox", { name: "インスタンスを検索" })).toHaveValue("Survival");
+  await page.getByRole("button", { name: "Survival", exact: true }).click();
+  await page.getByRole("tab", { name: "Version", exact: true }).click();
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Survival", exact: true }).click();
+  await expect(page.getByRole("tab", { name: "Version", exact: true })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("tab", { name: "Java", exact: true }).click();
+  await page.getByRole("button", { name: "Home", exact: true }).click();
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await expect(page.getByRole("tab", { name: "Java", exact: true })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await page.getByRole("button", { name: "Home", exact: true }).click();
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await expect(page.getByRole("tab", { name: "General", exact: true })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+});
+
+test("late Mod search results cannot leak into another instance", async ({ page }) => {
+  await mockDesktop(page);
+  await openSurvival(page);
+  await page.evaluate(() => {
+    (window as unknown as { __test: { delayModSearch: boolean } }).__test.delayModSearch = true;
+  });
+  await page.getByRole("tab", { name: "Mods", exact: true }).click();
+  await page.getByRole("button", { name: "Add mods", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "Add mods", exact: true })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: /^とても長い日本語/ }).click();
+  await page.getByRole("tab", { name: "Mods", exact: true }).click();
+  await page.evaluate(() => {
+    (
+      window as unknown as { __test: { rejectSearch: (() => void) | null } }
+    ).__test.rejectSearch?.();
+  });
+  await expect(page.getByText("以前の検索のエラー")).toHaveCount(0);
+  await expect(page.getByRole("dialog")).toHaveCount(1);
+});
+
+test("version selector preserves legacy versions when the creation form reopens", async ({
+  page,
+}) => {
+  await mockDesktop(page);
+  await page.getByRole("button", { name: "Add instance" }).click();
+  await page.getByLabel("Releaseのみ").uncheck();
+  await page
+    .getByRole("combobox", { name: "Minecraft version", exact: true })
+    .selectOption("a1.2.6");
+  await page.getByRole("button", { name: "Create", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "Minecraft", exact: true })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Add instance" }).click();
+  await expect(page.getByLabel("Releaseのみ")).not.toBeChecked();
+  await expect(page.getByRole("combobox", { name: "Minecraft version", exact: true })).toHaveValue(
+    "a1.2.6",
+  );
 });

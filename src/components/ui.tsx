@@ -1,5 +1,6 @@
 /* Native dialog backdrop clicks complement onCancel (Escape); the dialog itself is not a button. */
 /* eslint-disable jsx-a11y/no-noninteractive-element-interactions, jsx-a11y/click-events-have-key-events */
+import { Check, ChevronLeft, ChevronRight, Copy, X } from "lucide-react";
 import {
   useEffect,
   useId,
@@ -8,7 +9,6 @@ import {
   type ButtonHTMLAttributes,
   type ReactNode,
 } from "react";
-import { Check, ChevronLeft, ChevronRight, Copy, X } from "lucide-react";
 
 export function Button({
   tone = "secondary",
