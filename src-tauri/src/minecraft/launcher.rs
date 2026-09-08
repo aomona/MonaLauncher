@@ -3,9 +3,11 @@ use std::error::Error;
 use std::ffi::OsString;
 use std::fmt;
 use std::fs;
-use std::io::{BufReader, Read};
+use std::io::{BufReader, Read, Write};
 use std::path::{Component, Path, PathBuf};
-use std::process::{Child, Command, ExitStatus, Stdio};
+use std::process::ExitStatus;
+#[cfg(windows)]
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use zip::ZipArchive;
@@ -13,16 +15,26 @@ use zip::ZipArchive;
 use super::fabric::{
     load_fabric_profile, maven_artifact_path, validate_profile, FabricError, FabricProfile,
 };
-use super::installer::list_instances;
+use super::file_io::{path_is_link_or_reparse, read_bounded_file};
+use super::installer::{
+    load_instance as load_instance_manifest, managed_java_major as installed_java_major,
+};
 use super::model::{
     rules_allow, Argument, ArgumentValue, InstanceManifest, ModLoader, VersionMetadata,
 };
 use super::paths::MinecraftPaths;
 
+const MAX_NATIVE_ARCHIVE_ENTRIES: usize = 10_000;
+const MAX_NATIVE_FILE_SIZE: u64 = 128 * 1024 * 1024;
+const MAX_NATIVE_TOTAL_SIZE: u64 = 512 * 1024 * 1024;
+const MAX_JNA_DISPATCH_SIZE: u64 = 64 * 1024 * 1024;
+const MAX_LOCAL_VERSION_METADATA_SIZE: u64 = 16 * 1024 * 1024;
+
 #[derive(Debug)]
 pub enum MinecraftLaunchError {
     InstanceNotFound(String),
     UnsafeLibraryPath(String),
+    ArchiveTooLarge(String),
     MissingFile(PathBuf),
     IncompatibleJava { required: u32, found: String },
     Io(std::io::Error),
@@ -31,6 +43,7 @@ pub enum MinecraftLaunchError {
     Fabric(FabricError),
     Sandbox(String),
     SandboxedProcessNotIsolated,
+    SandboxRequired,
 }
 
 impl fmt::Display for MinecraftLaunchError {
@@ -42,6 +55,9 @@ impl fmt::Display for MinecraftLaunchError {
                     formatter,
                     "version metadata contains an unsafe path: {path}"
                 )
+            }
+            Self::ArchiveTooLarge(reason) => {
+                write!(formatter, "native library archive is unsafe: {reason}")
             }
             Self::MissingFile(path) => {
                 write!(formatter, "required file is missing: {}", path.display())
@@ -58,6 +74,10 @@ impl fmt::Display for MinecraftLaunchError {
             Self::SandboxedProcessNotIsolated => {
                 write!(formatter, "Minecraft did not receive an AppContainer token")
             }
+            Self::SandboxRequired => write!(
+                formatter,
+                "安全でない通常起動は無効です。インスタンスを再作成してください"
+            ),
         }
     }
 }
@@ -89,7 +109,6 @@ impl From<FabricError> for MinecraftLaunchError {
 }
 
 pub enum MinecraftProcess {
-    Normal(Child),
     #[cfg(windows)]
     Sandboxed(crate::platform::windows::appcontainer_process::SpawnedAppContainerProcess),
 }
@@ -97,7 +116,6 @@ pub enum MinecraftProcess {
 impl MinecraftProcess {
     pub fn id(&self) -> u32 {
         match self {
-            Self::Normal(child) => child.id(),
             #[cfg(windows)]
             Self::Sandboxed(child) => child.id(),
         }
@@ -105,7 +123,6 @@ impl MinecraftProcess {
 
     pub fn try_wait(&mut self) -> Result<Option<ExitStatus>, MinecraftLaunchError> {
         match self {
-            Self::Normal(child) => Ok(child.try_wait()?),
             #[cfg(windows)]
             Self::Sandboxed(child) => child
                 .try_wait()
@@ -115,7 +132,6 @@ impl MinecraftProcess {
 
     pub fn kill(&mut self) -> Result<(), MinecraftLaunchError> {
         match self {
-            Self::Normal(child) => Ok(child.kill()?),
             #[cfg(windows)]
             Self::Sandboxed(child) => child
                 .kill()
@@ -125,11 +141,21 @@ impl MinecraftProcess {
 
     pub fn wait(&mut self) -> Result<ExitStatus, MinecraftLaunchError> {
         match self {
-            Self::Normal(child) => Ok(child.wait()?),
             #[cfg(windows)]
             Self::Sandboxed(child) => child
                 .wait()
                 .map_err(|error| MinecraftLaunchError::Sandbox(error.to_string())),
+        }
+    }
+}
+
+impl Drop for MinecraftProcess {
+    fn drop(&mut self) {
+        // Enforce ownership here so registry or monitoring failures cannot turn a launched game
+        // into an untracked process.
+        if self.try_wait().ok().flatten().is_none() {
+            let _ = self.kill();
+            let _ = self.wait();
         }
     }
 }
@@ -140,15 +166,14 @@ pub struct SpawnedMinecraft {
     pub stderr: Box<dyn Read + Send>,
     pub sandboxed: bool,
     pub narrator_token: Option<String>,
+    #[cfg(windows)]
+    pub cursor_broker: Option<Arc<crate::platform::windows::cursor_broker::CursorBroker>>,
 }
 
 #[derive(Debug, Clone)]
 pub struct MinecraftIdentity {
     pub player_name: String,
     pub uuid: String,
-    pub access_token: String,
-    pub client_id: String,
-    pub xuid: String,
 }
 
 #[derive(Debug)]
@@ -168,19 +193,34 @@ pub fn spawn_instance(
     identity: Option<&MinecraftIdentity>,
 ) -> Result<SpawnedMinecraft, MinecraftLaunchError> {
     let instance = load_instance(paths, instance_id)?;
+    if !instance.sandboxed {
+        return Err(MinecraftLaunchError::SandboxRequired);
+    }
     let version_path = paths.version_json(&instance.version_id);
     require_file(&version_path)?;
 
-    let version: VersionMetadata = serde_json::from_slice(&fs::read(version_path)?)?;
+    let version: VersionMetadata = serde_json::from_slice(&read_bounded_file(
+        &version_path,
+        MAX_LOCAL_VERSION_METADATA_SIZE,
+    )?)?;
     let fabric = load_instance_fabric_profile(paths, &instance)?;
+    let detected_java_major = installed_java_major(paths, Path::new(&instance.java_path))?;
     if let Some(java_version) = &version.java_version {
-        validate_java_version(Path::new(&instance.java_path), java_version.major_version)?;
+        if detected_java_major < java_version.major_version {
+            return Err(MinecraftLaunchError::IncompatibleJava {
+                required: java_version.major_version,
+                found: format!("Java {detected_java_major}"),
+            });
+        }
     }
     let mut sandbox = prepare_sandbox_layout(paths, &instance)?;
     let narrator_token = sandbox
         .as_ref()
         .map(|_| generate_narrator_token())
         .transpose()?;
+    let sandbox_narrator_token = narrator_token.as_deref().ok_or_else(|| {
+        MinecraftLaunchError::Sandbox("sandbox layout has no narrator token".to_owned())
+    })?;
     let mut classpath = fabric
         .as_ref()
         .map(|profile| build_fabric_classpath(paths, profile))
@@ -209,6 +249,7 @@ pub fn spawn_instance(
     };
 
     let narrator_bridge = prepare_narrator_bridge(&sandbox)?;
+    let cursor_agent = prepare_cursor_agent(&sandbox)?;
     let mut classpath_entries = narrator_bridge.into_iter().collect::<Vec<_>>();
     classpath_entries.extend(
         classpath
@@ -236,16 +277,6 @@ pub fn spawn_instance(
     let uuid = identity
         .map(|identity| identity.uuid.clone())
         .unwrap_or_else(|| "00000000000000000000000000000000".to_owned());
-    let access_token = identity
-        .map(|identity| identity.access_token.clone())
-        .unwrap_or_else(|| "0".to_owned());
-    let client_id = identity
-        .map(|identity| identity.client_id.clone())
-        .unwrap_or_default();
-    let xuid = identity
-        .map(|identity| identity.xuid.clone())
-        .unwrap_or_default();
-    let user_type = if identity.is_some() { "msa" } else { "legacy" }.to_owned();
     let substitutions = HashMap::from([
         ("${auth_player_name}", player_name),
         (
@@ -267,10 +298,10 @@ pub fn spawn_instance(
         ),
         ("${assets_index_name}", version.assets.clone()),
         ("${auth_uuid}", uuid),
-        ("${auth_access_token}", access_token),
-        ("${clientid}", client_id),
-        ("${auth_xuid}", xuid),
-        ("${user_type}", user_type),
+        ("${auth_access_token}", "0".to_owned()),
+        ("${clientid}", String::new()),
+        ("${auth_xuid}", String::new()),
+        ("${user_type}", "legacy".to_owned()),
         ("${version_type}", version.version_type.clone()),
         (
             "${natives_directory}",
@@ -328,9 +359,15 @@ pub fn spawn_instance(
         arguments.push(OsString::from("-Djna.nounpack=true"));
         arguments.push(OsString::from(format!(
             "-Dmonalauncher.narrator.token={}",
-            narrator_token
-                .as_deref()
-                .expect("sandboxed launches have a narrator token")
+            sandbox_narrator_token
+        )));
+        arguments.push(OsString::from(format!(
+            "-agentpath:{}={}",
+            cursor_agent
+                .as_ref()
+                .expect("sandbox layout has a cursor agent")
+                .display(),
+            sandbox_narrator_token
         )));
         if std::env::var_os("MONALAUNCHER_EXPECT_NARRATOR").is_some() {
             arguments.push(OsString::from("-Dmonalauncher.narrator.smoke=true"));
@@ -361,36 +398,17 @@ pub fn spawn_instance(
     }
     arguments.extend(game_arguments.into_iter().map(OsString::from));
 
-    if instance.sandboxed {
-        return spawn_sandboxed(
-            paths,
-            &instance,
-            sandbox.as_mut().expect("sandbox layout is prepared"),
-            &arguments,
-            &game_directory,
-            narrator_token
-                .as_deref()
-                .expect("sandboxed launches have a narrator token"),
-        );
-    }
-
-    let mut command = Command::new(&instance.java_path);
-    command
-        .args(&arguments)
-        .current_dir(&game_directory)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    let mut child = command.spawn()?;
-    let stdout = child.stdout.take().expect("stdout is piped");
-    let stderr = child.stderr.take().expect("stderr is piped");
-    Ok(SpawnedMinecraft {
-        child: MinecraftProcess::Normal(child),
-        stdout: Box::new(stdout),
-        stderr: Box::new(stderr),
-        sandboxed: false,
-        narrator_token: None,
-    })
+    let sandbox = sandbox.as_mut().ok_or_else(|| {
+        MinecraftLaunchError::Sandbox("sandbox layout was not prepared".to_owned())
+    })?;
+    spawn_sandboxed(
+        paths,
+        &instance,
+        sandbox,
+        &arguments,
+        &game_directory,
+        sandbox_narrator_token,
+    )
 }
 
 #[cfg(windows)]
@@ -415,27 +433,42 @@ fn spawn_sandboxed(
         let _ = child.kill();
         return Err(MinecraftLaunchError::SandboxedProcessNotIsolated);
     }
-    child.retain_cursor_broker(
-        crate::platform::windows::cursor_broker::CursorBroker::start(child.id()),
+    let cursor_broker = Arc::new(
+        crate::platform::windows::cursor_broker::CursorBroker::start(
+            child.id(),
+            narrator_token.to_owned(),
+        )
+        .map_err(MinecraftLaunchError::Sandbox)?,
     );
+    child.retain_cursor_broker(Arc::clone(&cursor_broker));
     child.retain_sandbox_drive(
         sandbox
             .drive
             .take()
             .expect("sandbox drive exists while launching"),
     );
-    let stdout = child.take_stdout().ok_or_else(|| {
-        MinecraftLaunchError::Sandbox("sandboxed stdout is unavailable".to_owned())
-    })?;
-    let stderr = child.take_stderr().ok_or_else(|| {
-        MinecraftLaunchError::Sandbox("sandboxed stderr is unavailable".to_owned())
-    })?;
+    child.retain_cleanup_directory(sandbox.launch_root.clone());
+    let Some(stdout) = child.take_stdout() else {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(MinecraftLaunchError::Sandbox(
+            "sandboxed stdout is unavailable".to_owned(),
+        ));
+    };
+    let Some(stderr) = child.take_stderr() else {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(MinecraftLaunchError::Sandbox(
+            "sandboxed stderr is unavailable".to_owned(),
+        ));
+    };
     Ok(SpawnedMinecraft {
         child: MinecraftProcess::Sandboxed(child),
         stdout: Box::new(stdout),
         stderr: Box::new(stderr),
         sandboxed: true,
         narrator_token: Some(narrator_token.to_owned()),
+        cursor_broker: Some(cursor_broker),
     })
 }
 
@@ -469,12 +502,15 @@ fn prepare_sandbox_layout(
         .map_err(|error| MinecraftLaunchError::Sandbox(error.to_string()))?;
     let profile = ensure_appcontainer_profile(&profile_name)
         .map_err(|error| MinecraftLaunchError::Sandbox(error.to_string()))?;
-    let physical_root = paths.root().to_owned();
+    // `validate_managed_java` returns a canonical Windows path (usually prefixed with `\\?\`).
+    // Keep the sandbox root in the same canonical form so all containment checks compare like
+    // with like and cannot be bypassed through junctions or alternate path spellings.
+    let physical_root = fs::canonicalize(paths.root())?;
     let drive = crate::platform::windows::sandbox_drive::SandboxDrive::create(&physical_root)
         .map_err(|error| MinecraftLaunchError::Sandbox(error.to_string()))?;
     let virtual_root = drive.root().to_owned();
     let launches = paths.instance(&instance.id).join("sandbox-launches");
-    fs::create_dir_all(&launches)?;
+    reset_sandbox_launches_directory(&launches)?;
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|error| MinecraftLaunchError::Sandbox(error.to_string()))?
@@ -496,6 +532,37 @@ fn prepare_sandbox_layout(
     }))
 }
 
+#[cfg(windows)]
+fn reset_sandbox_launches_directory(path: &Path) -> Result<(), MinecraftLaunchError> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            // Older releases granted the AppContainer modify access to the instance root. A game
+            // launched by such a release could have left a junction here. Never recurse through
+            // or apply ACLs to a path whose destination is outside the validated instance root.
+            if !metadata.is_dir() || path_is_link_or_reparse(path)? {
+                return Err(MinecraftLaunchError::Sandbox(format!(
+                    "sandbox launch workspace is not a regular directory: {}",
+                    path.display()
+                )));
+            }
+            // std::fs::remove_dir_all does not follow directory symlinks. The top-level path was
+            // checked above as well, so stale per-launch contents can be removed safely.
+            fs::remove_dir_all(path)?;
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+    fs::create_dir(path)?;
+    if path_is_link_or_reparse(path)? {
+        let _ = fs::remove_dir(path);
+        return Err(MinecraftLaunchError::Sandbox(format!(
+            "sandbox launch workspace became a reparse point: {}",
+            path.display()
+        )));
+    }
+    Ok(())
+}
+
 fn sandbox_path(
     sandbox: &Option<SandboxLayout>,
     physical: &Path,
@@ -510,12 +577,15 @@ fn sandbox_alias(
     sandbox: &SandboxLayout,
     physical: &Path,
 ) -> Result<PathBuf, MinecraftLaunchError> {
-    let relative = physical.strip_prefix(&sandbox.physical_root).map_err(|_| {
-        MinecraftLaunchError::Sandbox(format!(
-            "sandbox path is outside Minecraft storage: {}",
-            physical.display()
-        ))
-    })?;
+    let canonical = fs::canonicalize(physical)?;
+    let relative = canonical
+        .strip_prefix(&sandbox.physical_root)
+        .map_err(|_| {
+            MinecraftLaunchError::Sandbox(format!(
+                "sandbox path is outside Minecraft storage: {}",
+                physical.display()
+            ))
+        })?;
     Ok(sandbox.virtual_root.join(relative))
 }
 
@@ -532,6 +602,28 @@ fn prepare_narrator_bridge(
         include_bytes!(concat!(env!("OUT_DIR"), "/narrator-bridge.jar")),
     )?;
     Ok(Some(sandbox_alias(layout, &physical)?))
+}
+
+#[cfg(windows)]
+fn prepare_cursor_agent(
+    sandbox: &Option<SandboxLayout>,
+) -> Result<Option<PathBuf>, MinecraftLaunchError> {
+    let Some(layout) = sandbox else {
+        return Ok(None);
+    };
+    let physical = layout.launch_root.join("cursor-agent.dll");
+    fs::write(
+        &physical,
+        include_bytes!(concat!(env!("OUT_DIR"), "/cursor-agent.dll")),
+    )?;
+    Ok(Some(sandbox_alias(layout, &physical)?))
+}
+
+#[cfg(not(windows))]
+fn prepare_cursor_agent(
+    _sandbox: &Option<SandboxLayout>,
+) -> Result<Option<PathBuf>, MinecraftLaunchError> {
+    Ok(None)
 }
 
 #[cfg(not(windows))]
@@ -600,8 +692,19 @@ fn extract_jna_dispatch(
         .by_name(&resource)
         .map_err(|error| MinecraftLaunchError::Sandbox(error.to_string()))?;
     fs::create_dir_all(destination)?;
-    let mut output = fs::File::create(destination.join("jnidispatch.dll"))?;
-    std::io::copy(&mut entry, &mut output)?;
+    let target = destination.join("jnidispatch.dll");
+    let expected_size = entry.size();
+    let mut output = fs::File::create(&target)?;
+    if let Err(error) = copy_exact_bounded(
+        &mut entry,
+        &mut output,
+        expected_size,
+        MAX_JNA_DISPATCH_SIZE,
+    ) {
+        drop(output);
+        let _ = fs::remove_file(target);
+        return Err(error);
+    }
     Ok(())
 }
 
@@ -637,6 +740,13 @@ where
     let input = fs::File::open(archive)?;
     let mut zip =
         ZipArchive::new(input).map_err(|error| MinecraftLaunchError::Sandbox(error.to_string()))?;
+    if zip.len() > MAX_NATIVE_ARCHIVE_ENTRIES {
+        return Err(MinecraftLaunchError::ArchiveTooLarge(format!(
+            "archive contains {} entries (limit: {MAX_NATIVE_ARCHIVE_ENTRIES})",
+            zip.len()
+        )));
+    }
+    let mut extracted_size = 0_u64;
     for index in 0..zip.len() {
         let mut entry = zip
             .by_index(index)
@@ -650,6 +760,21 @@ where
         if entry.is_dir() || !include(&relative) {
             continue;
         }
+        let expected_size = entry.size();
+        if expected_size > MAX_NATIVE_FILE_SIZE {
+            return Err(MinecraftLaunchError::ArchiveTooLarge(format!(
+                "{} is {expected_size} bytes (per-file limit: {MAX_NATIVE_FILE_SIZE})",
+                entry.name()
+            )));
+        }
+        extracted_size = extracted_size
+            .checked_add(expected_size)
+            .filter(|size| *size <= MAX_NATIVE_TOTAL_SIZE)
+            .ok_or_else(|| {
+                MinecraftLaunchError::ArchiveTooLarge(format!(
+                    "selected entries exceed {MAX_NATIVE_TOTAL_SIZE} bytes"
+                ))
+            })?;
         let target =
             if destination.ends_with("natives") {
                 destination.join(relative.file_name().ok_or_else(|| {
@@ -661,8 +786,34 @@ where
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent)?;
         }
-        let mut output = fs::File::create(target)?;
-        std::io::copy(&mut entry, &mut output)?;
+        let mut output = fs::File::create(&target)?;
+        if let Err(error) =
+            copy_exact_bounded(&mut entry, &mut output, expected_size, MAX_NATIVE_FILE_SIZE)
+        {
+            drop(output);
+            let _ = fs::remove_file(target);
+            return Err(error);
+        }
+    }
+    Ok(())
+}
+
+fn copy_exact_bounded<R: Read, W: Write>(
+    reader: &mut R,
+    writer: &mut W,
+    expected_size: u64,
+    maximum: u64,
+) -> Result<(), MinecraftLaunchError> {
+    if expected_size > maximum {
+        return Err(MinecraftLaunchError::ArchiveTooLarge(format!(
+            "entry is {expected_size} bytes (limit: {maximum})"
+        )));
+    }
+    let copied = std::io::copy(&mut reader.take(expected_size + 1), writer)?;
+    if copied != expected_size {
+        return Err(MinecraftLaunchError::ArchiveTooLarge(format!(
+            "entry size mismatch: expected {expected_size}, extracted {copied}"
+        )));
     }
     Ok(())
 }
@@ -738,10 +889,13 @@ fn load_instance(
     paths: &MinecraftPaths,
     instance_id: &str,
 ) -> Result<InstanceManifest, MinecraftLaunchError> {
-    list_instances(paths)?
-        .into_iter()
-        .find(|instance| instance.id == instance_id)
-        .ok_or_else(|| MinecraftLaunchError::InstanceNotFound(instance_id.to_owned()))
+    match load_instance_manifest(paths, instance_id) {
+        Ok(instance) => Ok(instance),
+        Err(super::installer::MinecraftInstallError::InstanceMissing(_)) => Err(
+            MinecraftLaunchError::InstanceNotFound(instance_id.to_owned()),
+        ),
+        Err(error) => Err(error.into()),
+    }
 }
 
 fn load_instance_fabric_profile(
@@ -865,36 +1019,6 @@ fn require_file(path: &Path) -> Result<(), MinecraftLaunchError> {
     }
 }
 
-fn validate_java_version(java_path: &Path, required: u32) -> Result<(), MinecraftLaunchError> {
-    require_file(java_path)?;
-    let output = Command::new(java_path).arg("-version").output()?;
-    let reported = format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let version_text = reported.lines().next().unwrap_or("unknown").trim();
-    let numbers = version_text
-        .split(|character: char| !character.is_ascii_digit())
-        .filter(|part| !part.is_empty())
-        .filter_map(|part| part.parse::<u32>().ok())
-        .collect::<Vec<_>>();
-    let detected = match numbers.as_slice() {
-        [1, legacy, ..] => Some(*legacy),
-        [major, ..] => Some(*major),
-        [] => None,
-    };
-
-    if detected.is_some_and(|major| major >= required) {
-        Ok(())
-    } else {
-        Err(MinecraftLaunchError::IncompatibleJava {
-            required,
-            found: version_text.to_owned(),
-        })
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -940,6 +1064,23 @@ mod tests {
     }
 
     #[test]
+    fn bounds_native_archive_entry_extraction() {
+        let bytes = [1_u8; 8];
+        let mut output = Vec::new();
+        copy_exact_bounded(&mut bytes.as_slice(), &mut output, 8, 8).unwrap();
+        assert_eq!(output, bytes);
+
+        assert!(matches!(
+            copy_exact_bounded(&mut bytes.as_slice(), &mut Vec::new(), 8, 7),
+            Err(MinecraftLaunchError::ArchiveTooLarge(_))
+        ));
+        assert!(matches!(
+            copy_exact_bounded(&mut bytes.as_slice(), &mut Vec::new(), 7, 8),
+            Err(MinecraftLaunchError::ArchiveTooLarge(_))
+        ));
+    }
+
+    #[test]
     fn bounds_oversized_log_lines_and_continues_reading() {
         let input = format!("{}\nnext\n", "x".repeat(300 * 1024));
         let mut lines = Vec::new();
@@ -958,5 +1099,32 @@ mod tests {
 
         assert_eq!(token.len(), 64);
         assert!(token.bytes().all(|byte| byte.is_ascii_hexdigit()));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn aliases_canonical_windows_paths_inside_the_minecraft_root() {
+        let root =
+            std::env::temp_dir().join(format!("monalauncher-sandbox-alias-{}", std::process::id()));
+        let java = root.join("runtimes/temurin-25/checksum/runtime/bin/java.exe");
+        fs::create_dir_all(java.parent().unwrap()).unwrap();
+        fs::write(&java, []).unwrap();
+        let canonical_java = fs::canonicalize(&java).unwrap();
+        assert!(canonical_java.to_string_lossy().starts_with(r"\\?\"));
+
+        let layout = SandboxLayout {
+            profile_name: "test".to_owned(),
+            sid: "test".to_owned(),
+            launch_root: root.join("launch"),
+            physical_root: fs::canonicalize(&root).unwrap(),
+            virtual_root: PathBuf::from(r"P:\"),
+            drive: None,
+        };
+
+        assert_eq!(
+            sandbox_alias(&layout, &canonical_java).unwrap(),
+            PathBuf::from(r"P:\runtimes\temurin-25\checksum\runtime\bin\java.exe")
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 }

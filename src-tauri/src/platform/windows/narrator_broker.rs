@@ -13,11 +13,12 @@ use windows::Win32::System::Com::{
 };
 
 const PROTOCOL_PREFIX: &str = "MONALAUNCHER_NARRATOR\t";
-const MAX_TEXT_BYTES: usize = 32 * 1024;
+const MAX_TEXT_BYTES: usize = 4 * 1024;
 const MAX_ENCODED_BYTES: usize = MAX_TEXT_BYTES.div_ceil(3) * 4;
-const QUEUE_CAPACITY: usize = 32;
-const MAX_COMMANDS_PER_SECOND: u32 = 32;
+const QUEUE_CAPACITY: usize = 8;
+const MAX_COMMANDS_PER_SECOND: u32 = 8;
 const DUPLICATE_WINDOW: Duration = Duration::from_millis(100);
+const INITIALIZATION_TIMEOUT: Duration = Duration::from_secs(5);
 
 enum NarratorCommand {
     Say {
@@ -78,8 +79,8 @@ impl NarratorBroker {
         });
 
         ready_receiver
-            .recv()
-            .map_err(|_| "narrator broker stopped during initialization".to_owned())??;
+            .recv_timeout(INITIALIZATION_TIMEOUT)
+            .map_err(|_| "narrator broker initialization timed out".to_owned())??;
         Ok(Self {
             expected_token,
             sender,

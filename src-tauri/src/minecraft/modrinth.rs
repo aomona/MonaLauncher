@@ -1,5 +1,6 @@
 use std::error::Error;
 use std::fmt;
+use std::io::Read;
 use std::time::Duration;
 
 use reqwest::blocking::{Client, Response};
@@ -7,13 +8,18 @@ use reqwest::{StatusCode, Url};
 use serde::{Deserialize, Serialize};
 
 const MODRINTH_API_BASE_URL: &str = "https://api.modrinth.com/v2";
+const MODRINTH_ALLOWED_HOSTS: &[&str] = &["api.modrinth.com", "cdn.modrinth.com"];
 const MAX_API_RESPONSE_SIZE: u64 = 4 * 1024 * 1024;
 const SEARCH_LIMIT: u32 = 20;
 const MAX_SEARCH_QUERY_LENGTH: usize = 100;
+const MAX_VERSION_RESULTS: usize = 1024;
+const MAX_VERSION_DEPENDENCIES: usize = 256;
+const MAX_VERSION_FILES: usize = 256;
 
 #[derive(Debug)]
 pub enum ModrinthError {
     Http(reqwest::Error),
+    Io(std::io::Error),
     InvalidBaseUrl,
     ResponseTooLarge,
     Json(serde_json::Error),
@@ -27,12 +33,14 @@ pub enum ModrinthError {
         expected: String,
         actual: String,
     },
+    InvalidResponseData(&'static str),
 }
 
 impl fmt::Display for ModrinthError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Http(error) => write!(formatter, "Modrinthへの接続に失敗しました: {error}"),
+            Self::Io(error) => write!(formatter, "Modrinthの応答を読み取れませんでした: {error}"),
             Self::InvalidBaseUrl => write!(formatter, "Modrinth APIのURL設定が正しくありません"),
             Self::ResponseTooLarge => write!(formatter, "Modrinth APIの応答が大きすぎます"),
             Self::Json(error) => {
@@ -56,6 +64,9 @@ impl fmt::Display for ModrinthError {
                 formatter,
                 "Modrinth APIのIDが一致しません: expected {expected}, got {actual}"
             ),
+            Self::InvalidResponseData(field) => {
+                write!(formatter, "Modrinth APIの応答フィールドが不正です: {field}")
+            }
         }
     }
 }
@@ -64,6 +75,7 @@ impl Error for ModrinthError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Http(error) => Some(error),
+            Self::Io(error) => Some(error),
             Self::Json(error) => Some(error),
             _ => None,
         }
@@ -73,6 +85,12 @@ impl Error for ModrinthError {
 impl From<reqwest::Error> for ModrinthError {
     fn from(error: reqwest::Error) -> Self {
         Self::Http(error)
+    }
+}
+
+impl From<std::io::Error> for ModrinthError {
+    fn from(error: std::io::Error) -> Self {
+        Self::Io(error)
     }
 }
 
@@ -163,9 +181,19 @@ pub struct ModrinthClient {
 
 impl ModrinthClient {
     pub fn new() -> Result<Self, ModrinthError> {
+        let redirect_policy = reqwest::redirect::Policy::custom(|attempt| {
+            if attempt.previous().len() >= 10 {
+                attempt.error("too many redirects")
+            } else if !modrinth_url_allowed(attempt.url()) {
+                attempt.error("Modrinth redirect must use an approved HTTPS host")
+            } else {
+                attempt.follow()
+            }
+        });
         let client = Client::builder()
             .connect_timeout(Duration::from_secs(10))
             .timeout(Duration::from_secs(30))
+            .redirect(redirect_policy)
             .user_agent(concat!(
                 "aomona/MonaLauncher/",
                 env!("CARGO_PKG_VERSION"),
@@ -200,6 +228,9 @@ impl ModrinthClient {
             .append_pair("offset", &offset.to_string())
             .append_pair("limit", &SEARCH_LIMIT.to_string());
         let mut response: ModSearchResponse = self.get_json(url)?;
+        if response.hits.len() > SEARCH_LIMIT as usize || response.limit > SEARCH_LIMIT {
+            return Err(ModrinthError::InvalidResponseData("search.hits"));
+        }
         for hit in &mut response.hits {
             validate_identifier(&hit.project_id)?;
             hit.title = sanitize_text(&hit.title, 120);
@@ -225,10 +256,12 @@ impl ModrinthClient {
             .append_pair("loaders", &loaders)
             .append_pair("game_versions", &game_versions)
             .append_pair("include_changelog", "false");
-        let versions: Vec<ModrinthVersion> = self.get_json(url)?;
-        for version in &versions {
-            validate_identifier(&version.id)?;
-            validate_identifier(&version.project_id)?;
+        let mut versions: Vec<ModrinthVersion> = self.get_json(url)?;
+        if versions.len() > MAX_VERSION_RESULTS {
+            return Err(ModrinthError::InvalidResponseData("versions"));
+        }
+        for version in &mut versions {
+            validate_version_response(version)?;
             if version.project_id != project_id {
                 return Err(ModrinthError::IdentifierMismatch {
                     expected: project_id.to_owned(),
@@ -241,14 +274,14 @@ impl ModrinthClient {
 
     pub fn version(&self, version_id: &str) -> Result<ModrinthVersion, ModrinthError> {
         validate_identifier(version_id)?;
-        let version: ModrinthVersion = self.get_json(api_url(&["version", version_id])?)?;
+        let mut version: ModrinthVersion = self.get_json(api_url(&["version", version_id])?)?;
         if version.id != version_id {
             return Err(ModrinthError::IdentifierMismatch {
                 expected: version_id.to_owned(),
                 actual: version.id,
             });
         }
-        validate_identifier(&version.project_id)?;
+        validate_version_response(&mut version)?;
         Ok(version)
     }
 
@@ -286,6 +319,61 @@ impl ModrinthClient {
     }
 }
 
+fn modrinth_url_allowed(url: &Url) -> bool {
+    url.scheme() == "https"
+        && url.username().is_empty()
+        && url.password().is_none()
+        && url.port().is_none_or(|port| port == 443)
+        && url
+            .host_str()
+            .is_some_and(|host| MODRINTH_ALLOWED_HOSTS.contains(&host))
+}
+
+fn validate_version_response(version: &mut ModrinthVersion) -> Result<(), ModrinthError> {
+    validate_identifier(&version.id)?;
+    validate_identifier(&version.project_id)?;
+    if version.dependencies.len() > MAX_VERSION_DEPENDENCIES {
+        return Err(ModrinthError::InvalidResponseData("dependencies"));
+    }
+    if version.files.len() > MAX_VERSION_FILES {
+        return Err(ModrinthError::InvalidResponseData("files"));
+    }
+    version.name = sanitize_text(&version.name, 120);
+    version.version_number = sanitize_text(&version.version_number, 80);
+    version.version_type = sanitize_text(&version.version_type, 16);
+    version.date_published = sanitize_text(&version.date_published, 64);
+    for dependency in &mut version.dependencies {
+        if let Some(version_id) = &dependency.version_id {
+            validate_identifier(version_id)?;
+        }
+        if let Some(project_id) = &dependency.project_id {
+            validate_identifier(project_id)?;
+        }
+        dependency.file_name = dependency
+            .file_name
+            .take()
+            .map(|name| sanitize_text(&name, 240));
+        dependency.dependency_type = sanitize_text(&dependency.dependency_type, 32);
+    }
+    for file in &mut version.files {
+        file.filename = sanitize_text(&file.filename, 240);
+        if let Some(file_type) = &mut file.file_type {
+            *file_type = sanitize_text(file_type, 32);
+        }
+    }
+    if version.game_versions.len() > 256 || version.loaders.len() > 64 {
+        return Err(ModrinthError::InvalidResponseData("compatibility"));
+    }
+    for item in version
+        .game_versions
+        .iter_mut()
+        .chain(version.loaders.iter_mut())
+    {
+        *item = sanitize_text(item, 128);
+    }
+    Ok(())
+}
+
 fn api_url(segments: &[&str]) -> Result<Url, ModrinthError> {
     let mut url = Url::parse(MODRINTH_API_BASE_URL).map_err(|_| ModrinthError::InvalidBaseUrl)?;
     let mut path = url
@@ -298,18 +386,22 @@ fn api_url(segments: &[&str]) -> Result<Url, ModrinthError> {
     Ok(url)
 }
 
-fn read_bounded(response: Response) -> Result<Vec<u8>, ModrinthError> {
+fn read_bounded(mut response: Response) -> Result<Vec<u8>, ModrinthError> {
     if response
         .content_length()
         .is_some_and(|length| length > MAX_API_RESPONSE_SIZE)
     {
         return Err(ModrinthError::ResponseTooLarge);
     }
-    let bytes = response.bytes()?;
+    let mut bytes = Vec::new();
+    response
+        .by_ref()
+        .take(MAX_API_RESPONSE_SIZE + 1)
+        .read_to_end(&mut bytes)?;
     if bytes.len() as u64 > MAX_API_RESPONSE_SIZE {
         return Err(ModrinthError::ResponseTooLarge);
     }
-    Ok(bytes.to_vec())
+    Ok(bytes)
 }
 
 pub(crate) fn validate_identifier(identifier: &str) -> Result<(), ModrinthError> {

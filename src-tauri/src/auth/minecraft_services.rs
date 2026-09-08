@@ -13,6 +13,9 @@ const MINECRAFT_LOGIN_URL: &str =
 const MINECRAFT_ENTITLEMENTS_URL: &str = "https://api.minecraftservices.com/entitlements/mcstore";
 const MINECRAFT_PROFILE_URL: &str = "https://api.minecraftservices.com/minecraft/profile";
 const MAX_SERVICE_RESPONSE_SIZE: u64 = 256 * 1024;
+const MAX_TOKEN_LENGTH: usize = 32 * 1024;
+const MAX_USER_HASH_LENGTH: usize = 256;
+const MAX_SESSION_LIFETIME: u64 = 7 * 24 * 60 * 60;
 
 #[derive(Debug)]
 pub enum MinecraftAuthError {
@@ -30,6 +33,7 @@ pub enum MinecraftAuthError {
     MissingXboxClaim,
     MissingEntitlement,
     InvalidProfile,
+    InvalidSession(&'static str),
 }
 
 impl fmt::Display for MinecraftAuthError {
@@ -64,6 +68,10 @@ impl fmt::Display for MinecraftAuthError {
             Self::InvalidProfile => {
                 write!(formatter, "Minecraftプロフィールの形式が正しくありません")
             }
+            Self::InvalidSession(field) => write!(
+                formatter,
+                "Minecraft認証サービスの応答フィールドが正しくありません: {field}"
+            ),
         }
     }
 }
@@ -88,9 +96,6 @@ impl From<reqwest::Error> for MinecraftAuthError {
 pub struct MinecraftSession {
     pub player_name: String,
     pub uuid: String,
-    pub access_token: String,
-    pub client_id: String,
-    pub xuid: String,
     pub expires_in: Duration,
 }
 
@@ -104,6 +109,7 @@ impl MinecraftServicesClient {
         let client = Client::builder()
             .connect_timeout(Duration::from_secs(10))
             .timeout(Duration::from_secs(30))
+            .redirect(reqwest::redirect::Policy::none())
             .user_agent(concat!("MonaLauncher/", env!("CARGO_PKG_VERSION")))
             .build()?;
         Ok(Self { client })
@@ -112,8 +118,8 @@ impl MinecraftServicesClient {
     pub async fn authenticate(
         &self,
         microsoft_access_token: &str,
-        client_id: &str,
     ) -> Result<MinecraftSession, MinecraftAuthError> {
+        validate_token(microsoft_access_token, "microsoft_access_token")?;
         let xbox: XboxTokenResponse = self
             .post_json(
                 "Xbox Live authentication",
@@ -129,6 +135,7 @@ impl MinecraftServicesClient {
                 },
             )
             .await?;
+        validate_token(&xbox.token, "xbox_token")?;
         let xsts: XboxTokenResponse = self
             .post_json(
                 "Xbox Secure Token Service",
@@ -143,9 +150,10 @@ impl MinecraftServicesClient {
                 },
             )
             .await?;
+        validate_token(&xsts.token, "xsts_token")?;
         let xsts_claim = first_claim(&xsts)?;
+        validate_user_hash(&xsts_claim.uhs)?;
         let user_hash = xsts_claim.uhs.clone();
-        let xuid = xsts_claim.xid.clone().unwrap_or_default();
 
         let minecraft: MinecraftLoginResponse = self
             .post_json(
@@ -156,6 +164,10 @@ impl MinecraftServicesClient {
                 },
             )
             .await?;
+        validate_token(&minecraft.access_token, "minecraft_access_token")?;
+        if minecraft.expires_in == 0 || minecraft.expires_in > MAX_SESSION_LIFETIME {
+            return Err(MinecraftAuthError::InvalidSession("expires_in"));
+        }
 
         let entitlements: MinecraftEntitlements = self
             .get_bearer_json(
@@ -182,9 +194,6 @@ impl MinecraftServicesClient {
         Ok(MinecraftSession {
             player_name: profile.name,
             uuid: profile.id,
-            access_token: minecraft.access_token,
-            client_id: client_id.to_owned(),
-            xuid,
             expires_in: Duration::from_secs(minecraft.expires_in),
         })
     }
@@ -225,7 +234,7 @@ fn first_claim(response: &XboxTokenResponse) -> Result<&XboxUserClaim, Minecraft
 
 async fn parse_service_response<T: DeserializeOwned>(
     service: &'static str,
-    response: Response,
+    mut response: Response,
 ) -> Result<T, MinecraftAuthError> {
     let status = response.status();
     if response
@@ -234,9 +243,12 @@ async fn parse_service_response<T: DeserializeOwned>(
     {
         return Err(MinecraftAuthError::ResponseTooLarge(service));
     }
-    let body = response.bytes().await?;
-    if body.len() as u64 > MAX_SERVICE_RESPONSE_SIZE {
-        return Err(MinecraftAuthError::ResponseTooLarge(service));
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await? {
+        if body.len().saturating_add(chunk.len()) as u64 > MAX_SERVICE_RESPONSE_SIZE {
+            return Err(MinecraftAuthError::ResponseTooLarge(service));
+        }
+        body.extend_from_slice(&chunk);
     }
     if !status.is_success() {
         let message = serde_json::from_slice::<ServiceErrorResponse>(&body)
@@ -271,6 +283,23 @@ fn valid_player_name(value: &str) -> bool {
         && value
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+}
+
+fn validate_token(value: &str, field: &'static str) -> Result<(), MinecraftAuthError> {
+    if value.is_empty() || value.len() > MAX_TOKEN_LENGTH || value.chars().any(char::is_control) {
+        return Err(MinecraftAuthError::InvalidSession(field));
+    }
+    Ok(())
+}
+
+fn validate_user_hash(value: &str) -> Result<(), MinecraftAuthError> {
+    if value.is_empty()
+        || value.len() > MAX_USER_HASH_LENGTH
+        || !value.bytes().all(|byte| byte.is_ascii_alphanumeric())
+    {
+        return Err(MinecraftAuthError::InvalidSession("uhs"));
+    }
+    Ok(())
 }
 
 #[derive(Serialize)]
@@ -319,7 +348,6 @@ struct XboxDisplayClaims {
 #[derive(Deserialize)]
 struct XboxUserClaim {
     uhs: String,
-    xid: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -388,5 +416,13 @@ mod tests {
             sanitize_service_message("Invalid app\nregistration".to_owned()),
             "Invalid appregistration"
         );
+    }
+
+    #[test]
+    fn validates_remote_session_fields() {
+        assert!(validate_token("header.payload.signature", "token").is_ok());
+        assert!(validate_token("", "token").is_err());
+        assert!(validate_user_hash("1234567890abcdef").is_ok());
+        assert!(validate_user_hash("bad;claim").is_err());
     }
 }

@@ -10,15 +10,22 @@ use reqwest::{StatusCode, Url};
 use serde::{Deserialize, Serialize};
 use sha1::{Digest, Sha1};
 
-use super::model::{Arguments, InstallProgress};
+use super::file_io::{read_bounded_file, replace_file_atomic, write_atomic};
+use super::model::{Argument, ArgumentValue, Arguments, InstallProgress};
 use super::paths::MinecraftPaths;
 
 const FABRIC_META_BASE_URL: &str = "https://meta.fabricmc.net/v2/versions/loader";
 const FABRIC_MAVEN_BASE_URL: &str = "https://maven.fabricmc.net/";
+const FABRIC_DOWNLOAD_HOSTS: &[&str] = &["meta.fabricmc.net", "maven.fabricmc.net"];
 pub const FABRIC_CLIENT_MAIN_CLASS: &str = "net.fabricmc.loader.impl.launch.knot.KnotClient";
 const MAX_META_RESPONSE_SIZE: u64 = 2 * 1024 * 1024;
 const MAX_CHECKSUM_RESPONSE_SIZE: u64 = 1024;
 const MAX_LIBRARY_SIZE: u64 = 64 * 1024 * 1024;
+const MAX_LIBRARIES: usize = 256;
+const MAX_LIBRARY_PLAN_SIZE: u64 = 2 * 1024 * 1024 * 1024;
+const MAX_PROFILE_ARGUMENTS: usize = 4096;
+const MAX_PROFILE_ARGUMENT_LENGTH: usize = 8192;
+const MAX_LOADER_VERSIONS: usize = 2048;
 
 #[derive(Debug)]
 pub enum FabricError {
@@ -54,6 +61,10 @@ pub enum FabricError {
         expected: u64,
         actual: u64,
     },
+    LibraryPlanTooLarge,
+    InvalidArgument,
+    InvalidVersionIdentifier(String),
+    InvalidInstanceIdentifier(String),
 }
 
 impl fmt::Display for FabricError {
@@ -117,6 +128,19 @@ impl fmt::Display for FabricError {
                 "Fabricライブラリのサイズが一致しません: {}: expected {expected}, got {actual}",
                 path.display()
             ),
+            Self::LibraryPlanTooLarge => write!(
+                formatter,
+                "Fabric profileのライブラリ数または合計サイズが上限を超えています"
+            ),
+            Self::InvalidArgument => {
+                write!(formatter, "Fabric profileの起動引数が大きすぎるか不正です")
+            }
+            Self::InvalidVersionIdentifier(value) => {
+                write!(formatter, "Fabricのバージョン識別子が不正です: {value}")
+            }
+            Self::InvalidInstanceIdentifier(value) => {
+                write!(formatter, "Fabricのインスタンス識別子が不正です: {value}")
+            }
         }
     }
 }
@@ -196,6 +220,13 @@ pub fn list_loader_versions(
     let status = response.status();
     let bytes = read_bounded(response, MAX_META_RESPONSE_SIZE)?;
     let entries = parse_loader_response(status, &bytes)?;
+    if entries.len() > MAX_LOADER_VERSIONS {
+        return Err(FabricError::ResponseTooLarge);
+    }
+
+    for entry in &entries {
+        validate_version_identifier(&entry.loader.version)?;
+    }
 
     Ok(entries
         .into_iter()
@@ -233,6 +264,9 @@ pub fn install_fabric<F>(
 where
     F: Fn(InstallProgress),
 {
+    validate_instance_identifier(instance_id)?;
+    validate_version_identifier(minecraft_version)?;
+    validate_version_identifier(loader_version)?;
     let available = list_loader_versions(minecraft_version)?;
     if !available
         .iter()
@@ -257,6 +291,7 @@ where
     validate_profile(&profile, minecraft_version, loader_version)?;
 
     let total = profile.libraries.len();
+    let mut installed_size = 0_u64;
     for (index, library) in profile.libraries.iter().enumerate() {
         progress(InstallProgress {
             stage: "loader".to_owned(),
@@ -264,13 +299,16 @@ where
             total,
             message: format!("Fabricライブラリを確認しています: {}", library.name),
         });
-        install_library(&client, paths, library)?;
+        installed_size = installed_size
+            .checked_add(install_library(&client, paths, library)?)
+            .filter(|size| *size <= MAX_LIBRARY_PLAN_SIZE)
+            .ok_or(FabricError::LibraryPlanTooLarge)?;
     }
 
     let instance_directory = paths.instance(instance_id);
     fs::create_dir_all(&instance_directory)?;
     fs::create_dir_all(paths.instance_game_directory(instance_id).join("mods"))?;
-    fs::write(paths.instance_fabric_profile(instance_id), profile_bytes)?;
+    write_atomic(&paths.instance_fabric_profile(instance_id), &profile_bytes)?;
     progress(InstallProgress {
         stage: "loader".to_owned(),
         completed: total,
@@ -284,8 +322,10 @@ pub fn load_fabric_profile(
     paths: &MinecraftPaths,
     instance_id: &str,
 ) -> Result<FabricProfile, FabricError> {
-    Ok(serde_json::from_slice(&fs::read(
-        paths.instance_fabric_profile(instance_id),
+    validate_instance_identifier(instance_id)?;
+    Ok(serde_json::from_slice(&read_bounded_file(
+        &paths.instance_fabric_profile(instance_id),
+        MAX_META_RESPONSE_SIZE,
     )?)?)
 }
 
@@ -309,6 +349,53 @@ pub fn validate_profile(
     }
     if profile.main_class != FABRIC_CLIENT_MAIN_CLASS {
         return Err(FabricError::UnexpectedMainClass(profile.main_class.clone()));
+    }
+    if profile.libraries.len() > MAX_LIBRARIES {
+        return Err(FabricError::LibraryPlanTooLarge);
+    }
+    let mut planned_size = 0_u64;
+    for library in &profile.libraries {
+        maven_artifact_path(&library.name)?;
+        let repository = library.url.as_deref().unwrap_or(FABRIC_MAVEN_BASE_URL);
+        if repository.trim_end_matches('/') != FABRIC_MAVEN_BASE_URL.trim_end_matches('/') {
+            return Err(FabricError::UnsupportedRepository(repository.to_owned()));
+        }
+        if let Some(checksum) = &library.sha1 {
+            validate_checksum(checksum)?;
+        }
+        if let Some(size) = library.size {
+            if size > MAX_LIBRARY_SIZE {
+                return Err(FabricError::LibraryPlanTooLarge);
+            }
+            planned_size = planned_size
+                .checked_add(size)
+                .filter(|total| *total <= MAX_LIBRARY_PLAN_SIZE)
+                .ok_or(FabricError::LibraryPlanTooLarge)?;
+        }
+    }
+    validate_arguments(&profile.arguments)?;
+    Ok(())
+}
+
+fn validate_arguments(arguments: &Arguments) -> Result<(), FabricError> {
+    let mut count = 0_usize;
+    for argument in arguments.game.iter().chain(&arguments.jvm) {
+        let values: Vec<&str> = match argument {
+            Argument::Plain(value) => vec![value],
+            Argument::Conditional { value, .. } => match value {
+                ArgumentValue::One(value) => vec![value],
+                ArgumentValue::Many(values) => values.iter().map(String::as_str).collect(),
+            },
+        };
+        count = count
+            .checked_add(values.len())
+            .filter(|total| *total <= MAX_PROFILE_ARGUMENTS)
+            .ok_or(FabricError::InvalidArgument)?;
+        if values.iter().any(|value| {
+            value.len() > MAX_PROFILE_ARGUMENT_LENGTH || value.chars().any(|item| item == '\0')
+        }) {
+            return Err(FabricError::InvalidArgument);
+        }
     }
     Ok(())
 }
@@ -361,14 +448,35 @@ fn valid_maven_component(value: &str) -> bool {
 }
 
 fn fabric_client() -> Result<Client, FabricError> {
+    let redirect_policy = reqwest::redirect::Policy::custom(|attempt| {
+        if attempt.previous().len() >= 10 {
+            attempt.error("too many redirects")
+        } else if !fabric_download_url_allowed(attempt.url()) {
+            attempt.error("Fabric redirect must use an approved HTTPS host")
+        } else {
+            attempt.follow()
+        }
+    });
     Ok(Client::builder()
         .connect_timeout(Duration::from_secs(10))
         .timeout(Duration::from_secs(60))
+        .redirect(redirect_policy)
         .user_agent(concat!("MonaLauncher/", env!("CARGO_PKG_VERSION")))
         .build()?)
 }
 
+fn fabric_download_url_allowed(url: &Url) -> bool {
+    url.scheme() == "https"
+        && url.username().is_empty()
+        && url.password().is_none()
+        && url.port().is_none_or(|port| port == 443)
+        && url
+            .host_str()
+            .is_some_and(|host| FABRIC_DOWNLOAD_HOSTS.contains(&host))
+}
+
 fn loader_versions_url(minecraft_version: &str) -> Result<Url, FabricError> {
+    validate_version_identifier(minecraft_version)?;
     let mut url = Url::parse(FABRIC_META_BASE_URL).map_err(|_| FabricError::InvalidBaseUrl)?;
     url.path_segments_mut()
         .map_err(|_| FabricError::InvalidBaseUrl)?
@@ -377,6 +485,7 @@ fn loader_versions_url(minecraft_version: &str) -> Result<Url, FabricError> {
 }
 
 fn loader_profile_url(minecraft_version: &str, loader_version: &str) -> Result<Url, FabricError> {
+    validate_version_identifier(loader_version)?;
     let mut url = loader_versions_url(minecraft_version)?;
     url.path_segments_mut()
         .map_err(|_| FabricError::InvalidBaseUrl)?
@@ -386,11 +495,36 @@ fn loader_profile_url(minecraft_version: &str, loader_version: &str) -> Result<U
     Ok(url)
 }
 
+fn validate_version_identifier(value: &str) -> Result<(), FabricError> {
+    if value.is_empty()
+        || value.len() > 128
+        || matches!(value, "." | "..")
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-' | b'+'))
+    {
+        return Err(FabricError::InvalidVersionIdentifier(value.to_owned()));
+    }
+    Ok(())
+}
+
+fn validate_instance_identifier(value: &str) -> Result<(), FabricError> {
+    if value.is_empty()
+        || value.len() > 41
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    {
+        return Err(FabricError::InvalidInstanceIdentifier(value.to_owned()));
+    }
+    Ok(())
+}
+
 fn install_library(
     client: &Client,
     paths: &MinecraftPaths,
     library: &FabricLibrary,
-) -> Result<(), FabricError> {
+) -> Result<u64, FabricError> {
     let repository = library.url.as_deref().unwrap_or(FABRIC_MAVEN_BASE_URL);
     if repository.trim_end_matches('/') != FABRIC_MAVEN_BASE_URL.trim_end_matches('/') {
         return Err(FabricError::UnsupportedRepository(repository.to_owned()));
@@ -409,7 +543,7 @@ fn install_library(
             .size
             .is_none_or(|expected| fs::metadata(&target).is_ok_and(|item| item.len() == expected))
     {
-        return Ok(());
+        return Ok(fs::metadata(&target)?.len());
     }
     download_library(client, url, &target, &expected_sha1, library.size)
 }
@@ -453,18 +587,22 @@ fn fetch_bounded(client: &Client, url: Url, maximum: u64) -> Result<Vec<u8>, Fab
     read_bounded(response, maximum)
 }
 
-fn read_bounded(response: Response, maximum: u64) -> Result<Vec<u8>, FabricError> {
+fn read_bounded(mut response: Response, maximum: u64) -> Result<Vec<u8>, FabricError> {
     if response
         .content_length()
         .is_some_and(|length| length > maximum)
     {
         return Err(FabricError::ResponseTooLarge);
     }
-    let bytes = response.bytes()?;
+    let mut bytes = Vec::new();
+    response
+        .by_ref()
+        .take(maximum + 1)
+        .read_to_end(&mut bytes)?;
     if bytes.len() as u64 > maximum {
         return Err(FabricError::ResponseTooLarge);
     }
-    Ok(bytes.to_vec())
+    Ok(bytes)
 }
 
 fn download_library(
@@ -473,7 +611,7 @@ fn download_library(
     target: &Path,
     expected_sha1: &str,
     expected_size: Option<u64>,
-) -> Result<(), FabricError> {
+) -> Result<u64, FabricError> {
     if expected_size.is_some_and(|size| size > MAX_LIBRARY_SIZE) {
         return Err(FabricError::ResponseTooLarge);
     }
@@ -529,11 +667,8 @@ fn download_library(
             });
         }
     }
-    if target.exists() {
-        fs::remove_file(target)?;
-    }
-    fs::rename(part, target)?;
-    Ok(())
+    replace_file_atomic(&part, target)?;
+    Ok(actual_size)
 }
 
 fn part_path_for(target: &Path) -> PathBuf {
@@ -564,13 +699,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn encodes_minecraft_version_as_one_url_segment() {
-        let url = loader_versions_url("../unsafe value").unwrap();
+    fn accepts_only_safe_minecraft_version_segments() {
+        let url = loader_versions_url("1.21.8").unwrap();
 
         assert_eq!(
             url.as_str(),
-            "https://meta.fabricmc.net/v2/versions/loader/..%2Funsafe%20value"
+            "https://meta.fabricmc.net/v2/versions/loader/1.21.8"
         );
+        assert!(loader_versions_url("../unsafe value").is_err());
     }
 
     #[test]

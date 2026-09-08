@@ -3,23 +3,43 @@ use std::fmt;
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
-use reqwest::blocking::Client;
+use reqwest::blocking::{Client, Response};
+use reqwest::Url;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use zip::ZipArchive;
 
+use super::file_io::replace_file_atomic;
 use super::model::InstallProgress;
 use super::paths::MinecraftPaths;
+
+const MAX_RUNTIME_METADATA_SIZE: u64 = 1024 * 1024;
+const MAX_RUNTIME_ARCHIVE_SIZE: u64 = 512 * 1024 * 1024;
+const MAX_EXTRACTED_RUNTIME_SIZE: u64 = 2 * 1024 * 1024 * 1024;
+const MAX_ARCHIVE_ENTRIES: usize = 100_000;
+const RUNTIME_DOWNLOAD_HOSTS: &[&str] = &[
+    "api.adoptium.net",
+    "github.com",
+    "objects.githubusercontent.com",
+    "release-assets.githubusercontent.com",
+];
 
 #[derive(Debug)]
 pub enum RuntimeInstallError {
     AssetMissing(u32),
+    InvalidPackageName(String),
+    InvalidChecksum(String),
+    InvalidDownloadUrl(String),
+    ResponseTooLarge,
+    ArchiveTooLarge,
     UnsafeArchivePath(String),
     JavaMissing(PathBuf),
     HashMismatch { expected: String, actual: String },
     Io(std::io::Error),
     Http(reqwest::Error),
+    Json(serde_json::Error),
     Zip(zip::result::ZipError),
 }
 
@@ -29,6 +49,26 @@ impl fmt::Display for RuntimeInstallError {
             Self::AssetMissing(major) => {
                 write!(formatter, "Adoptium did not return a Java {major} runtime")
             }
+            Self::InvalidPackageName(name) => {
+                write!(
+                    formatter,
+                    "Adoptium returned an unsafe Java package name: {name}"
+                )
+            }
+            Self::InvalidChecksum(checksum) => {
+                write!(
+                    formatter,
+                    "Adoptium returned an invalid SHA-256: {checksum}"
+                )
+            }
+            Self::InvalidDownloadUrl(url) => {
+                write!(
+                    formatter,
+                    "Adoptium returned an unsafe Java download URL: {url}"
+                )
+            }
+            Self::ResponseTooLarge => write!(formatter, "Java runtime response is too large"),
+            Self::ArchiveTooLarge => write!(formatter, "Java runtime archive expands too large"),
             Self::UnsafeArchivePath(path) => {
                 write!(formatter, "Java archive contains an unsafe path: {path}")
             }
@@ -43,6 +83,7 @@ impl fmt::Display for RuntimeInstallError {
             ),
             Self::Io(error) => write!(formatter, "Java runtime file system error: {error}"),
             Self::Http(error) => write!(formatter, "Java runtime download error: {error}"),
+            Self::Json(error) => write!(formatter, "Java runtime metadata error: {error}"),
             Self::Zip(error) => write!(formatter, "Java runtime archive error: {error}"),
         }
     }
@@ -59,6 +100,12 @@ impl From<std::io::Error> for RuntimeInstallError {
 impl From<reqwest::Error> for RuntimeInstallError {
     fn from(error: reqwest::Error) -> Self {
         Self::Http(error)
+    }
+}
+
+impl From<serde_json::Error> for RuntimeInstallError {
+    fn from(error: serde_json::Error) -> Self {
+        Self::Json(error)
     }
 }
 
@@ -129,8 +176,8 @@ where
         1,
         &format!("Java {major} metadataを取得しています"),
     );
-    let client = Client::builder().user_agent("MonaLauncher/0.1.0").build()?;
-    let package = fetch_runtime_package(&client, major)?;
+    let client = runtime_client()?;
+    let package = validate_runtime_package(fetch_runtime_package(&client, major)?)?;
     let runtime_family = format!("temurin-{major}");
     let runtime_directory = paths
         .runtimes()
@@ -185,8 +232,9 @@ fn fetch_runtime_package(
         let assets_url = format!(
             "https://api.adoptium.net/v3/assets/latest/{major}/hotspot?architecture=x64&image_type={image_type}&os=windows&vendor=eclipse"
         );
+        let response = client.get(assets_url).send()?.error_for_status()?;
         let assets: Vec<AdoptiumAsset> =
-            client.get(assets_url).send()?.error_for_status()?.json()?;
+            serde_json::from_slice(&read_bounded(response, MAX_RUNTIME_METADATA_SIZE)?)?;
 
         if let Some(asset) = assets.into_iter().next() {
             return Ok(asset.binary.package);
@@ -202,19 +250,34 @@ fn download_and_verify(
     expected: &str,
     target: &Path,
 ) -> Result<(), RuntimeInstallError> {
+    let url = validate_download_url(url)?;
+    let expected = validate_sha256(expected)?;
     if target.is_file() && file_sha256(target)? == expected {
         return Ok(());
     }
 
     let part = target.with_extension("zip.part");
     let mut response = client.get(url).send()?.error_for_status()?;
+    if response
+        .content_length()
+        .is_some_and(|length| length > MAX_RUNTIME_ARCHIVE_SIZE)
+    {
+        return Err(RuntimeInstallError::ResponseTooLarge);
+    }
     let mut output = File::create(&part)?;
     let mut hasher = Sha256::new();
+    let mut downloaded = 0_u64;
     let mut buffer = [0_u8; 64 * 1024];
     loop {
         let count = response.read(&mut buffer)?;
         if count == 0 {
             break;
+        }
+        downloaded += count as u64;
+        if downloaded > MAX_RUNTIME_ARCHIVE_SIZE {
+            drop(output);
+            let _ = fs::remove_file(&part);
+            return Err(RuntimeInstallError::ResponseTooLarge);
         }
         output.write_all(&buffer[..count])?;
         hasher.update(&buffer[..count]);
@@ -224,15 +287,10 @@ fn download_and_verify(
 
     let actual = format!("{:x}", hasher.finalize());
     if actual != expected {
-        return Err(RuntimeInstallError::HashMismatch {
-            expected: expected.to_owned(),
-            actual,
-        });
+        let _ = fs::remove_file(&part);
+        return Err(RuntimeInstallError::HashMismatch { expected, actual });
     }
-    if target.exists() {
-        fs::remove_file(target)?;
-    }
-    fs::rename(part, target)?;
+    replace_file_atomic(&part, target)?;
     Ok(())
 }
 
@@ -253,8 +311,17 @@ fn file_sha256(path: &Path) -> Result<String, RuntimeInstallError> {
 fn extract_archive(archive: &Path, destination: &Path) -> Result<(), RuntimeInstallError> {
     let input = File::open(archive)?;
     let mut zip = ZipArchive::new(input)?;
+    if zip.len() > MAX_ARCHIVE_ENTRIES {
+        return Err(RuntimeInstallError::ArchiveTooLarge);
+    }
+    let mut extracted_size = 0_u64;
     for index in 0..zip.len() {
         let mut entry = zip.by_index(index)?;
+        let expected_size = entry.size();
+        extracted_size = extracted_size
+            .checked_add(expected_size)
+            .filter(|size| *size <= MAX_EXTRACTED_RUNTIME_SIZE)
+            .ok_or(RuntimeInstallError::ArchiveTooLarge)?;
         let enclosed = entry
             .enclosed_name()
             .ok_or_else(|| RuntimeInstallError::UnsafeArchivePath(entry.name().to_owned()))?;
@@ -267,9 +334,107 @@ fn extract_archive(archive: &Path, destination: &Path) -> Result<(), RuntimeInst
             fs::create_dir_all(parent)?;
         }
         let mut output = File::create(target)?;
-        std::io::copy(&mut entry, &mut output)?;
+        let copied = std::io::copy(&mut entry.by_ref().take(expected_size + 1), &mut output)?;
+        if copied != expected_size {
+            return Err(RuntimeInstallError::ArchiveTooLarge);
+        }
     }
     Ok(())
+}
+
+fn runtime_client() -> Result<Client, RuntimeInstallError> {
+    let redirect_policy = reqwest::redirect::Policy::custom(|attempt| {
+        if attempt.previous().len() >= 10 {
+            attempt.error("too many redirects")
+        } else if !runtime_download_url_allowed(attempt.url()) {
+            attempt.error("Java download redirect must use an approved HTTPS host")
+        } else {
+            attempt.follow()
+        }
+    });
+    Ok(Client::builder()
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(10 * 60))
+        .redirect(redirect_policy)
+        .user_agent(concat!("MonaLauncher/", env!("CARGO_PKG_VERSION")))
+        .build()?)
+}
+
+fn read_bounded(mut response: Response, maximum: u64) -> Result<Vec<u8>, RuntimeInstallError> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > maximum)
+    {
+        return Err(RuntimeInstallError::ResponseTooLarge);
+    }
+    let mut bytes = Vec::new();
+    response
+        .by_ref()
+        .take(maximum + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > maximum {
+        return Err(RuntimeInstallError::ResponseTooLarge);
+    }
+    Ok(bytes)
+}
+
+fn validate_runtime_package(
+    mut package: AdoptiumPackage,
+) -> Result<AdoptiumPackage, RuntimeInstallError> {
+    validate_package_name(&package.name)?;
+    validate_download_url(&package.link)?;
+    package.checksum = validate_sha256(&package.checksum)?;
+    Ok(package)
+}
+
+fn validate_package_name(name: &str) -> Result<(), RuntimeInstallError> {
+    let path = Path::new(name);
+    let mut components = path.components();
+    let single_component = matches!(components.next(), Some(std::path::Component::Normal(_)))
+        && components.next().is_none();
+    if !single_component
+        || name.chars().count() > 240
+        || name.chars().any(char::is_control)
+        || !path
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("zip"))
+    {
+        return Err(RuntimeInstallError::InvalidPackageName(name.to_owned()));
+    }
+    Ok(())
+}
+
+fn validate_download_url(value: &str) -> Result<Url, RuntimeInstallError> {
+    let url =
+        Url::parse(value).map_err(|_| RuntimeInstallError::InvalidDownloadUrl(value.to_owned()))?;
+    if url.scheme() != "https"
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.port().is_some_and(|port| port != 443)
+        || !runtime_download_url_allowed(&url)
+    {
+        return Err(RuntimeInstallError::InvalidDownloadUrl(value.to_owned()));
+    }
+    Ok(url)
+}
+
+fn runtime_download_url_allowed(url: &Url) -> bool {
+    url.scheme() == "https"
+        && url.username().is_empty()
+        && url.password().is_none()
+        && url.port().is_none_or(|port| port == 443)
+        && url
+            .host_str()
+            .is_some_and(|host| RUNTIME_DOWNLOAD_HOSTS.contains(&host))
+}
+
+fn validate_sha256(value: &str) -> Result<String, RuntimeInstallError> {
+    let value = value.trim();
+    if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(RuntimeInstallError::InvalidChecksum(value.to_owned()));
+    }
+    Ok(value.to_ascii_lowercase())
 }
 
 fn find_java(root: &Path) -> Result<Option<PathBuf>, RuntimeInstallError> {
@@ -296,4 +461,26 @@ where
         total,
         message: message.to_owned(),
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validates_runtime_package_metadata() {
+        assert!(validate_package_name("OpenJDK-jre_x64_windows_hotspot.zip").is_ok());
+        assert!(validate_package_name("../runtime.zip").is_err());
+        assert!(validate_package_name("runtime.tar.gz").is_err());
+
+        assert!(validate_download_url("https://github.com/adoptium/runtime.zip").is_ok());
+        assert!(validate_download_url("http://example.com/runtime.zip").is_err());
+        assert!(validate_download_url("https://user@example.com/runtime.zip").is_err());
+        assert!(validate_download_url("https://example.com/runtime.zip").is_err());
+        assert!(validate_download_url("https://github.com:444/runtime.zip").is_err());
+
+        let checksum = "A".repeat(64);
+        assert_eq!(validate_sha256(&checksum).unwrap(), "a".repeat(64));
+        assert!(validate_sha256("../invalid").is_err());
+    }
 }

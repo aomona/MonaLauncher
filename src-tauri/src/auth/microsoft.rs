@@ -12,6 +12,15 @@ const TOKEN_URL: &str = "https://login.microsoftonline.com/consumers/oauth2/v2.0
 const MINECRAFT_SCOPES: &str = "XboxLive.signin offline_access";
 const DEFAULT_CLIENT_ID: &str = "f8d68570-e721-4aba-9c3e-1052d41e431a";
 const MAX_AUTH_RESPONSE_SIZE: u64 = 64 * 1024;
+const VERIFICATION_URIS: [&str; 2] = [
+    "https://www.microsoft.com/link",
+    "https://microsoft.com/devicelogin",
+];
+const MAX_DEVICE_CODE_LENGTH: usize = 4096;
+const MAX_USER_CODE_LENGTH: usize = 64;
+const MAX_TOKEN_LENGTH: usize = 32 * 1024;
+const MAX_DEVICE_CODE_LIFETIME: u64 = 60 * 60;
+const MAX_POLL_INTERVAL: u64 = 60;
 
 #[derive(Debug)]
 pub enum MicrosoftAuthError {
@@ -19,6 +28,7 @@ pub enum MicrosoftAuthError {
     Request(reqwest::Error),
     ResponseTooLarge,
     InvalidResponse(serde_json::Error),
+    InvalidResponseData(&'static str),
     ServiceStatus(reqwest::StatusCode),
     AuthorizationDeclined,
     AuthorizationExpired,
@@ -42,6 +52,10 @@ impl fmt::Display for MicrosoftAuthError {
             Self::InvalidResponse(error) => write!(
                 formatter,
                 "Microsoft認証サービスの応答を解釈できませんでした: {error}"
+            ),
+            Self::InvalidResponseData(field) => write!(
+                formatter,
+                "Microsoft認証サービスの応答フィールドが正しくありません: {field}"
             ),
             Self::ServiceStatus(status) => write!(
                 formatter,
@@ -117,6 +131,7 @@ impl MicrosoftOAuthClient {
         let client = Client::builder()
             .connect_timeout(Duration::from_secs(10))
             .timeout(Duration::from_secs(30))
+            .redirect(reqwest::redirect::Policy::none())
             .user_agent(concat!("MonaLauncher/", env!("CARGO_PKG_VERSION")))
             .build()?;
         Ok(Self { client, client_id })
@@ -139,13 +154,14 @@ impl MicrosoftOAuthClient {
         if !status.is_success() {
             return Err(MicrosoftAuthError::ServiceStatus(status));
         }
+        validate_device_authorization(&body)?;
 
         Ok(DeviceAuthorization {
             device_code: body.device_code,
             user_code: body.user_code,
             verification_uri: body.verification_uri,
             expires_in: Duration::from_secs(body.expires_in),
-            interval: Duration::from_secs(body.interval.max(1)),
+            interval: Duration::from_secs(body.interval),
         })
     }
 
@@ -172,8 +188,8 @@ impl MicrosoftOAuthClient {
                     Err(MicrosoftAuthError::RefreshTokenMissing)
                 } else {
                     Ok(TokenPoll::Authorized(MicrosoftAccessToken {
-                        access_token: success.access_token,
-                        refresh_token: success.refresh_token,
+                        access_token: validate_token(success.access_token, "access_token")?,
+                        refresh_token: validate_token(success.refresh_token, "refresh_token")?,
                     }))
                 }
             }
@@ -184,7 +200,7 @@ impl MicrosoftOAuthClient {
                 "expired_token" | "bad_verification_code" => {
                     Err(MicrosoftAuthError::AuthorizationExpired)
                 }
-                code => Err(MicrosoftAuthError::ServiceError(code.to_owned())),
+                code => Err(MicrosoftAuthError::ServiceError(sanitize_error_code(code))),
             },
             TokenResponse::Success(_) => Err(MicrosoftAuthError::ServiceStatus(status)),
         }
@@ -210,21 +226,58 @@ impl MicrosoftOAuthClient {
 
         match body {
             TokenResponse::Success(success) if status.is_success() => Ok(MicrosoftAccessToken {
-                access_token: success.access_token,
+                access_token: validate_token(success.access_token, "access_token")?,
                 refresh_token: if success.refresh_token.is_empty() {
-                    refresh_token.to_owned()
+                    validate_token(refresh_token.to_owned(), "refresh_token")?
                 } else {
-                    success.refresh_token
+                    validate_token(success.refresh_token, "refresh_token")?
                 },
             }),
-            TokenResponse::Error(error) => Err(MicrosoftAuthError::ServiceError(error.error)),
+            TokenResponse::Error(error) => Err(MicrosoftAuthError::ServiceError(
+                sanitize_error_code(&error.error),
+            )),
             TokenResponse::Success(_) => Err(MicrosoftAuthError::ServiceStatus(status)),
         }
     }
+}
 
-    pub fn client_id(&self) -> &str {
-        &self.client_id
+fn validate_device_authorization(body: &DeviceCodeResponse) -> Result<(), MicrosoftAuthError> {
+    if body.device_code.is_empty()
+        || body.device_code.len() > MAX_DEVICE_CODE_LENGTH
+        || body.device_code.chars().any(char::is_control)
+    {
+        return Err(MicrosoftAuthError::InvalidResponseData("device_code"));
     }
+    if body.user_code.is_empty()
+        || body.user_code.chars().count() > MAX_USER_CODE_LENGTH
+        || body.user_code.chars().any(char::is_control)
+    {
+        return Err(MicrosoftAuthError::InvalidResponseData("user_code"));
+    }
+    if !VERIFICATION_URIS.contains(&body.verification_uri.as_str()) {
+        return Err(MicrosoftAuthError::InvalidResponseData("verification_uri"));
+    }
+    if body.expires_in == 0 || body.expires_in > MAX_DEVICE_CODE_LIFETIME {
+        return Err(MicrosoftAuthError::InvalidResponseData("expires_in"));
+    }
+    if body.interval == 0 || body.interval > MAX_POLL_INTERVAL {
+        return Err(MicrosoftAuthError::InvalidResponseData("interval"));
+    }
+    Ok(())
+}
+
+fn validate_token(token: String, field: &'static str) -> Result<String, MicrosoftAuthError> {
+    if token.is_empty() || token.len() > MAX_TOKEN_LENGTH || token.chars().any(char::is_control) {
+        return Err(MicrosoftAuthError::InvalidResponseData(field));
+    }
+    Ok(token)
+}
+
+fn sanitize_error_code(code: &str) -> String {
+    code.chars()
+        .filter(|character| character.is_ascii_alphanumeric() || matches!(character, '_' | '-'))
+        .take(64)
+        .collect()
 }
 
 fn configured_client_id() -> Result<String, MicrosoftAuthError> {
@@ -254,7 +307,7 @@ fn is_guid(value: &str) -> bool {
 }
 
 async fn parse_bounded_json<T: DeserializeOwned>(
-    response: Response,
+    mut response: Response,
 ) -> Result<T, MicrosoftAuthError> {
     if response
         .content_length()
@@ -262,9 +315,12 @@ async fn parse_bounded_json<T: DeserializeOwned>(
     {
         return Err(MicrosoftAuthError::ResponseTooLarge);
     }
-    let body = response.bytes().await?;
-    if body.len() as u64 > MAX_AUTH_RESPONSE_SIZE {
-        return Err(MicrosoftAuthError::ResponseTooLarge);
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await? {
+        if body.len().saturating_add(chunk.len()) as u64 > MAX_AUTH_RESPONSE_SIZE {
+            return Err(MicrosoftAuthError::ResponseTooLarge);
+        }
+        body.extend_from_slice(&chunk);
     }
     Ok(serde_json::from_slice(&body)?)
 }
@@ -337,5 +393,38 @@ mod tests {
             TokenResponse::Success(TokenSuccessResponse { refresh_token, .. })
                 if refresh_token == "secret-refresh"
         ));
+    }
+
+    #[test]
+    fn validates_device_authorization_bounds_and_allowed_uri() {
+        let valid = DeviceCodeResponse {
+            device_code: "device-secret".to_owned(),
+            user_code: "ABCD-EFGH".to_owned(),
+            verification_uri: VERIFICATION_URIS[0].to_owned(),
+            expires_in: 900,
+            interval: 5,
+        };
+        assert!(validate_device_authorization(&valid).is_ok());
+
+        let legacy = DeviceCodeResponse {
+            verification_uri: VERIFICATION_URIS[1].to_owned(),
+            ..valid
+        };
+        assert!(validate_device_authorization(&legacy).is_ok());
+
+        let deceptive = DeviceCodeResponse {
+            verification_uri: "https://example.com/device".to_owned(),
+            ..legacy
+        };
+        assert!(matches!(
+            validate_device_authorization(&deceptive),
+            Err(MicrosoftAuthError::InvalidResponseData("verification_uri"))
+        ));
+    }
+
+    #[test]
+    fn sanitizes_unknown_remote_error_codes() {
+        assert_eq!(sanitize_error_code("bad\ncode:secret"), "badcodesecret");
+        assert_eq!(sanitize_error_code(&"a".repeat(100)).len(), 64);
     }
 }

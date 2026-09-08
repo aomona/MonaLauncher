@@ -137,6 +137,23 @@ type ModInstallProgress = {
   message: string;
 };
 
+type DiagnosticCheck = {
+  id: string;
+  label: string;
+  status: "ok" | "warning" | "error";
+  detail: string;
+  repairable: boolean;
+};
+
+type InstanceDiagnosis = {
+  instanceId: string;
+  status: "healthy" | "repairable" | "attention";
+  checkedFiles: number;
+  issueCount: number;
+  repairableCount: number;
+  checks: DiagnosticCheck[];
+};
+
 type LogLine = MinecraftLogEvent & { id: number };
 
 const stageLabels: Record<string, string> = {
@@ -180,7 +197,7 @@ function keepFocusInsideDialog(event: KeyboardEvent, dialog: HTMLDialogElement |
 
   const focusable = Array.from(
     dialog?.querySelectorAll<HTMLElement>(
-      'button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
     ) ?? [],
   );
   const first = focusable[0];
@@ -198,6 +215,7 @@ function keepFocusInsideDialog(event: KeyboardEvent, dialog: HTMLDialogElement |
 
 export default function App() {
   const [instances, setInstances] = useState<MinecraftInstance[]>([]);
+  const [instancesLoading, setInstancesLoading] = useState(true);
   const [selectedId, setSelectedId] = useState("");
   const [instanceId, setInstanceId] = useState("minecraft");
   const [instanceName, setInstanceName] = useState("Minecraft");
@@ -216,10 +234,12 @@ export default function App() {
   const [launchProgress, setLaunchProgress] = useState<MinecraftLaunchProgress | null>(null);
   const [logs, setLogs] = useState<LogLine[]>([]);
   const [runningIds, setRunningIds] = useState<Set<string>>(new Set());
-  const [busy, setBusy] = useState<"install" | "launch" | "stop" | "rename" | "delete" | null>(
-    null,
-  );
+  const [busy, setBusy] = useState<
+    "install" | "launch" | "stop" | "rename" | "delete" | "diagnose" | "repair" | null
+  >(null);
   const [error, setError] = useState<string | null>(null);
+  const [creatorError, setCreatorError] = useState<string | null>(null);
+  const [versionsError, setVersionsError] = useState<string | null>(null);
   const [showCreator, setShowCreator] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [settingsName, setSettingsName] = useState("");
@@ -247,6 +267,7 @@ export default function App() {
   const [modError, setModError] = useState<string | null>(null);
   const [modSuccess, setModSuccess] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
+  const [diagnosis, setDiagnosis] = useState<InstanceDiagnosis | null>(null);
   const creatorDialogRef = useRef<HTMLDialogElement>(null);
   const creatorSearchRef = useRef<HTMLInputElement>(null);
   const creatorPreviousFocusRef = useRef<HTMLElement | null>(null);
@@ -261,6 +282,8 @@ export default function App() {
   const modRemoveConfirmRef = useRef<HTMLButtonElement>(null);
   const modsPreviousFocusRef = useRef<HTMLElement | null>(null);
   const modSearchRequestRef = useRef(0);
+  const installedModsRequestRef = useRef(0);
+  const authRequestGenerationRef = useRef(0);
 
   const selected = useMemo(
     () => instances.find((instance) => instance.id === selectedId) ?? null,
@@ -295,19 +318,30 @@ export default function App() {
   const progressPercent = progress
     ? progress.total === 0
       ? 0
-      : Math.round((progress.completed / progress.total) * 100)
+      : Math.min(100, Math.max(0, Math.round((progress.completed / progress.total) * 100)))
     : 0;
   const currentModInstallProgress =
     modInstallProgress?.instanceId === selected?.id ? modInstallProgress : null;
   const modInstallPercent = currentModInstallProgress
     ? currentModInstallProgress.total === 0
       ? 0
-      : Math.round((currentModInstallProgress.completed / currentModInstallProgress.total) * 100)
+      : Math.min(
+          100,
+          Math.max(
+            0,
+            Math.round(
+              (currentModInstallProgress.completed / currentModInstallProgress.total) * 100,
+            ),
+          ),
+        )
     : 0;
+  const modalOpen = showCreator || showAuth || showMods || showSettings;
 
   const openCreator = () => {
     creatorPreviousFocusRef.current =
       document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setCreatorError(null);
+    setProgress(null);
     setShowCreator(true);
   };
 
@@ -344,12 +378,16 @@ export default function App() {
   };
 
   const refreshInstalledMods = async (instanceId: string) => {
+    const requestId = installedModsRequestRef.current + 1;
+    installedModsRequestRef.current = requestId;
     setInstalledModsLoading(true);
     try {
       const mods = await invoke<InstalledMod[]>("list_instance_mods", { instanceId });
-      setInstalledMods(mods);
+      if (installedModsRequestRef.current === requestId) setInstalledMods(mods);
+    } catch (cause) {
+      if (installedModsRequestRef.current === requestId) throw cause;
     } finally {
-      setInstalledModsLoading(false);
+      if (installedModsRequestRef.current === requestId) setInstalledModsLoading(false);
     }
   };
 
@@ -395,6 +433,8 @@ export default function App() {
   const closeMods = () => {
     if (modOperationActive) return;
     modSearchRequestRef.current += 1;
+    installedModsRequestRef.current += 1;
+    setInstalledModsLoading(false);
     setModRemovalTarget(null);
     setShowMods(false);
   };
@@ -475,15 +515,22 @@ export default function App() {
   };
 
   const refreshInstances = async () => {
-    const found = await invoke<MinecraftInstance[]>("list_minecraft_instances");
-    setInstances(found);
-    setSelectedId((current) => {
-      if (found.some((instance) => instance.id === current)) return current;
-      return found[0]?.id ?? "";
-    });
+    setInstancesLoading(true);
+    try {
+      const found = await invoke<MinecraftInstance[]>("list_minecraft_instances");
+      setInstances(found);
+      setSelectedId((current) => {
+        if (found.some((instance) => instance.id === current)) return current;
+        return found[0]?.id ?? "";
+      });
+    } finally {
+      setInstancesLoading(false);
+    }
   };
 
   const refreshVersions = async () => {
+    setCreatorError(null);
+    setVersionsError(null);
     setVersionsLoading(true);
     try {
       const catalog = await invoke<MinecraftVersionCatalog>("list_minecraft_versions");
@@ -493,33 +540,44 @@ export default function App() {
           ? current
           : catalog.latest.release,
       );
+    } catch (cause) {
+      setVersionsError(String(cause));
+      throw cause;
     } finally {
       setVersionsLoading(false);
     }
   };
 
   const refreshMinecraftProfile = async () => {
+    const generation = authRequestGenerationRef.current;
     setMinecraftProfileLoading(true);
     try {
       const profile = await invoke<MinecraftAccountProfile>("refresh_minecraft_account");
+      if (authRequestGenerationRef.current !== generation) return;
       setMinecraftProfile(profile);
       setAuthError(null);
     } catch (cause) {
+      if (authRequestGenerationRef.current !== generation) return;
       setMinecraftProfile(null);
       setAuthError(String(cause));
     } finally {
-      setMinecraftProfileLoading(false);
+      if (authRequestGenerationRef.current === generation) setMinecraftProfileLoading(false);
     }
   };
 
   const refreshAuthStatus = async () => {
+    const generation = authRequestGenerationRef.current;
     const status = await invoke<MicrosoftAuthStatus>("microsoft_auth_status");
+    if (authRequestGenerationRef.current !== generation) return;
     setAuthStatus(status);
     if (status.authorized) void refreshMinecraftProfile();
   };
 
   useEffect(() => {
-    if (!hasTauriRuntime()) return;
+    if (!hasTauriRuntime()) {
+      setInstancesLoading(false);
+      return;
+    }
 
     void refreshInstances().catch((cause) => setError(String(cause)));
     void refreshVersions().catch((cause) => setError(String(cause)));
@@ -571,6 +629,10 @@ export default function App() {
       void unlistenStatus.then((unlisten) => unlisten());
     };
   }, []);
+
+  useEffect(() => {
+    setDiagnosis(null);
+  }, [selectedId]);
 
   useEffect(() => {
     if (!showCreator) return;
@@ -726,6 +788,9 @@ export default function App() {
         });
         if (cancelled) return;
         if (result.status === "authorized") {
+          authRequestGenerationRef.current += 1;
+          setMinecraftProfileLoading(false);
+          setMinecraftProfile(null);
           setAuthStatus((current) => ({ ...current, authorized: true }));
           setAuthChallenge(null);
           setAuthError(null);
@@ -749,7 +814,7 @@ export default function App() {
   }, [authChallenge, authStatus.authorized]);
 
   const install = async () => {
-    setError(null);
+    setCreatorError(null);
     setProgress({ stage: "metadata", completed: 0, total: 1, message: "準備中" });
     setBusy("install");
 
@@ -768,8 +833,9 @@ export default function App() {
       setSelectedId(installed.id);
       setShowCreator(false);
     } catch (cause) {
-      setError(String(cause));
+      setCreatorError(String(cause));
     } finally {
+      setProgress(null);
       setBusy(null);
     }
   };
@@ -816,6 +882,42 @@ export default function App() {
     } catch (cause) {
       setError(String(cause));
     } finally {
+      setBusy(null);
+    }
+  };
+
+  const diagnoseSelected = async () => {
+    if (!selected) return;
+    setError(null);
+    setBusy("diagnose");
+    try {
+      const result = await invoke<InstanceDiagnosis>("diagnose_minecraft_instance", {
+        instanceId: selected.id,
+      });
+      setDiagnosis(result);
+    } catch (cause) {
+      setDiagnosis(null);
+      setError(String(cause));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const repairSelected = async () => {
+    if (!selected) return;
+    setError(null);
+    setProgress({ stage: "metadata", completed: 0, total: 1, message: "修復準備中" });
+    setBusy("repair");
+    try {
+      const result = await invoke<InstanceDiagnosis>("repair_minecraft_instance", {
+        instanceId: selected.id,
+      });
+      setDiagnosis(result);
+      await refreshInstances();
+    } catch (cause) {
+      setError(String(cause));
+    } finally {
+      setProgress(null);
       setBusy(null);
     }
   };
@@ -894,6 +996,8 @@ export default function App() {
   };
 
   const signOutMicrosoft = async () => {
+    authRequestGenerationRef.current += 1;
+    setMinecraftProfileLoading(false);
     setAuthBusy("signout");
     setAuthError(null);
     try {
@@ -910,7 +1014,7 @@ export default function App() {
 
   return (
     <main className="app-shell">
-      <header className="topbar">
+      <header aria-hidden={modalOpen} className="topbar" inert={modalOpen}>
         <div className="brand">
           <div className="brand-mark" aria-hidden="true">
             <span />
@@ -926,13 +1030,15 @@ export default function App() {
           </button>
           <button
             className="toolbar-button"
+            disabled={instancesLoading || busy !== null}
             onClick={() => void refreshInstances().catch((cause) => setError(String(cause)))}
             type="button"
           >
-            <span aria-hidden="true">↻</span>更新
+            <span aria-hidden="true">↻</span>
+            {instancesLoading ? "更新中…" : "更新"}
           </button>
         </div>
-        <button className="account-chip" onClick={openAuth} type="button">
+        <button aria-haspopup="dialog" className="account-chip" onClick={openAuth} type="button">
           <span className="account-avatar" aria-hidden="true">
             M
           </span>
@@ -960,9 +1066,17 @@ export default function App() {
       </header>
 
       <section className="workspace">
-        <nav className="rail" aria-label="メインメニュー">
-          <button className="rail-button active" type="button">
-            <span>▦</span>ライブラリ
+        <nav aria-hidden={modalOpen} className="rail" aria-label="メインメニュー" inert={modalOpen}>
+          <button
+            aria-current="page"
+            aria-label="ライブラリ"
+            className="rail-button active"
+            type="button"
+          >
+            <span aria-hidden="true" className="rail-icon">
+              ▦
+            </span>
+            <span className="rail-label">ライブラリ</span>
           </button>
           <button
             aria-label="ニュース（準備中）"
@@ -971,14 +1085,28 @@ export default function App() {
             title="ニュース機能は準備中です"
             type="button"
           >
-            <span>◫</span>ニュース
+            <span aria-hidden="true" className="rail-icon">
+              ◫
+            </span>
+            <span className="rail-label">ニュース</span>
           </button>
           <div className="rail-spacer" />
-          <div className="security-pill" title="AppContainerによる隔離が有効です">
+          <div
+            className={`security-pill${selected && !selected.sandboxed ? " warning" : ""}`}
+            title={
+              selected
+                ? selected.sandboxed
+                  ? "このインスタンスはネットワーク権限なしのAppContainerで隔離されます"
+                  : "安全でない旧形式のため起動は無効です。再作成してください"
+                : "作成したインスタンスはAppContainerで隔離されます"
+            }
+          >
             <span className="shield">◆</span>
             <span>
-              <strong>保護中</strong>
-              <small>AppContainer</small>
+              <strong>
+                {selected ? (selected.sandboxed ? "保護中" : "要再作成") : "隔離起動"}
+              </strong>
+              <small>{selected && !selected.sandboxed ? "起動無効" : "AppContainer"}</small>
             </span>
           </div>
           <button
@@ -988,11 +1116,19 @@ export default function App() {
             title="設定機能は準備中です"
             type="button"
           >
-            <span>⚙</span>設定
+            <span aria-hidden="true" className="rail-icon">
+              ⚙
+            </span>
+            <span className="rail-label">設定</span>
           </button>
         </nav>
 
-        <section className="library">
+        <section
+          aria-busy={instancesLoading}
+          aria-hidden={modalOpen}
+          className="library"
+          inert={modalOpen}
+        >
           <div className="library-heading">
             <div>
               <p className="eyebrow">YOUR LIBRARY</p>
@@ -1025,31 +1161,38 @@ export default function App() {
             className={`instance-grid ${viewMode === "list" ? "list-view" : ""}`}
             aria-label="Minecraftインスタンス"
           >
-            {instances.length === 0 && (
+            {instancesLoading && (
+              <output aria-live="polite" className="empty-library library-loading">
+                <span aria-hidden="true" className="loading-spinner" />
+                <strong>インスタンスを読み込んでいます</strong>
+              </output>
+            )}
+            {!instancesLoading && instances.length === 0 && (
               <button className="empty-library" onClick={openCreator} type="button">
                 <span className="empty-cube">＋</span>
                 <strong>最初のインスタンスを作成</strong>
                 <small>公式の全バージョンからMinecraftを追加できます</small>
               </button>
             )}
-            {instances.map((instance) => (
-              <button
-                className={"instance-tile " + (selectedId === instance.id ? "selected" : "")}
-                key={instance.id}
-                onClick={() => setSelectedId(instance.id)}
-                aria-pressed={selectedId === instance.id}
-                type="button"
-              >
-                <span className="instance-art">
-                  <span className="grass-cube">{instance.name.slice(0, 1).toUpperCase()}</span>
-                  {runningIds.has(instance.id) && <span className="playing-badge">PLAYING</span>}
-                </span>
-                <span className="tile-copy">
-                  <strong>{instance.name}</strong>
-                  <small>{instanceVersionLabel(instance)}</small>
-                </span>
-              </button>
-            ))}
+            {!instancesLoading &&
+              instances.map((instance) => (
+                <button
+                  className={"instance-tile " + (selectedId === instance.id ? "selected" : "")}
+                  key={instance.id}
+                  onClick={() => setSelectedId(instance.id)}
+                  aria-pressed={selectedId === instance.id}
+                  type="button"
+                >
+                  <span className="instance-art">
+                    <span className="grass-cube">{instance.name.slice(0, 1).toUpperCase()}</span>
+                    {runningIds.has(instance.id) && <span className="playing-badge">PLAYING</span>}
+                  </span>
+                  <span className="tile-copy">
+                    <strong>{instance.name}</strong>
+                    <small>{instanceVersionLabel(instance)}</small>
+                  </span>
+                </button>
+              ))}
           </div>
 
           {progress && progress.stage !== "complete" && (
@@ -1061,9 +1204,12 @@ export default function App() {
                   <span>{progress.message}</span>
                   <b>{progressPercent}%</b>
                 </div>
-                <div className="progress-track">
-                  <div className="progress-value" style={{ width: progressPercent + "%" }} />
-                </div>
+                <progress
+                  aria-label={`${stageLabels[progress.stage] ?? progress.stage}の進捗`}
+                  className="progress-track"
+                  max={100}
+                  value={progressPercent}
+                />
               </div>
             </div>
           )}
@@ -1079,13 +1225,13 @@ export default function App() {
           )}
         </section>
 
-        <aside className="details-panel">
+        <aside aria-hidden={modalOpen} className="details-panel" inert={modalOpen}>
           <div className="details-hero">
             <div className="detail-icon">{selected?.name.slice(0, 1).toUpperCase() ?? "?"}</div>
             <div>
               <span className={"state-label " + (isRunning ? "online" : "")}>
-                <span className={"status-dot " + (isRunning ? "running" : "")} />
-                {isRunning ? "実行中" : "起動準備完了"}
+                {selected && <span className={"status-dot " + (isRunning ? "running" : "")} />}
+                {selected ? (isRunning ? "実行中" : "停止中") : "インスタンス未選択"}
               </span>
               <h2>{selected?.name ?? "未選択"}</h2>
               <p>{selected ? instanceVersionLabel(selected) : "インスタンスを選択してください"}</p>
@@ -1105,12 +1251,16 @@ export default function App() {
             ) : (
               <button
                 className="primary-button"
-                disabled={!selected || busy !== null}
+                disabled={!selected || !selected.sandboxed || busy !== null}
                 onClick={launch}
                 type="button"
               >
                 <span aria-hidden="true">▶</span>
-                {busy === "launch" ? "起動中…" : "起動"}
+                {selected && !selected.sandboxed
+                  ? "再作成が必要"
+                  : busy === "launch"
+                    ? "起動中…"
+                    : "起動"}
               </button>
             )}
             <button
@@ -1140,6 +1290,16 @@ export default function App() {
             >
               ◈
             </button>
+            <button
+              aria-label="インスタンスを診断"
+              className="icon-button"
+              disabled={!selected || busy !== null}
+              onClick={() => void diagnoseSelected()}
+              title="管理対象ファイルと隔離設定を検証"
+              type="button"
+            >
+              ♢
+            </button>
           </div>
 
           {busy === "launch" && launchProgress?.instanceId === selected?.id && (
@@ -1155,7 +1315,9 @@ export default function App() {
           <dl className="instance-facts">
             <div>
               <dt>実行方式</dt>
-              <dd>{selected?.sandboxed ? "AppContainer" : selected ? "通常" : "—"}</dd>
+              <dd>
+                {selected?.sandboxed ? "AppContainer" : selected ? "旧形式（起動無効）" : "—"}
+              </dd>
             </div>
             <div>
               <dt>ゲームモード</dt>
@@ -1177,6 +1339,65 @@ export default function App() {
             </div>
           </dl>
 
+          {(busy === "diagnose" || diagnosis) && (
+            <section className="diagnostic-card" aria-live="polite">
+              <div className="diagnostic-heading">
+                <div>
+                  <span
+                    className={`diagnostic-indicator ${
+                      diagnosis?.status === "healthy" ? "healthy" : "attention"
+                    }`}
+                  />
+                  <strong>
+                    {busy === "diagnose"
+                      ? "診断しています…"
+                      : diagnosis?.status === "healthy"
+                        ? "問題は見つかりませんでした"
+                        : "修復できる問題があります"}
+                  </strong>
+                </div>
+                {diagnosis && (
+                  <small>{diagnosis.checkedFiles.toLocaleString("ja-JP")}ファイル検証</small>
+                )}
+              </div>
+              {busy === "diagnose" ? (
+                <div className="diagnostic-loading">
+                  <span className="loading-spinner" aria-hidden="true" />
+                  SHA-1と保存先を確認中
+                </div>
+              ) : (
+                diagnosis && (
+                  <>
+                    <ul className="diagnostic-list">
+                      {diagnosis.checks.map((check) => (
+                        <li key={check.id}>
+                          <span className={`diagnostic-result ${check.status}`}>
+                            {check.status === "ok" ? "✓" : "!"}
+                          </span>
+                          <div>
+                            <strong>{check.label}</strong>
+                            <small>{check.detail}</small>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                    {diagnosis.repairableCount > 0 && (
+                      <button
+                        className="secondary-button diagnostic-repair"
+                        disabled={isRunning || busy !== null}
+                        onClick={() => void repairSelected()}
+                        title={isRunning ? "Minecraftを停止してから修復してください" : undefined}
+                        type="button"
+                      >
+                        {busy === "repair" ? "修復中…" : "管理対象ファイルを修復"}
+                      </button>
+                    )}
+                  </>
+                )
+              )}
+            </section>
+          )}
+
           <div className="console">
             <div className="console-heading">
               <div>
@@ -1185,6 +1406,7 @@ export default function App() {
               </div>
               <button
                 className="text-button"
+                disabled={!selected || visibleLogs.length === 0}
                 onClick={() =>
                   selected &&
                   setLogs((current) => current.filter((line) => line.instanceId !== selected.id))
@@ -1208,11 +1430,23 @@ export default function App() {
             </div>
           </div>
 
-          <div className="isolation-note">
+          <div className={`isolation-note${selected && !selected.sandboxed ? " warning" : ""}`}>
             <span>◆</span>
             <p>
-              <strong>サンドボックス保護</strong>
-              <small>専用SIDと最小限の権限で実行されます</small>
+              <strong>
+                {selected
+                  ? selected.sandboxed
+                    ? "サンドボックス保護"
+                    : "安全のため起動無効"
+                  : "AppContainer対応"}
+              </strong>
+              <small>
+                {selected
+                  ? selected.sandboxed
+                    ? "専用SID・限定ファイル権限・ネットワーク権限なしで実行されます"
+                    : "通常権限では起動しません。新しい隔離インスタンスを作成してください"
+                  : "専用SID・限定ファイル権限・ネットワーク権限なしで隔離します"}
+              </small>
             </p>
           </div>
         </aside>
@@ -1222,6 +1456,7 @@ export default function App() {
             <dialog
               aria-describedby="creator-description"
               aria-labelledby="creator-title"
+              aria-modal="true"
               className="creator-modal"
               open
               ref={creatorDialogRef}
@@ -1299,12 +1534,15 @@ export default function App() {
                       : versionCatalog
                         ? `${versionCatalog.versions.length}件から選択できます`
                         : "バージョン一覧を取得できませんでした"}
+                    {!versionsLoading && !versionCatalog && versionsError && (
+                      <small>{versionsError}</small>
+                    )}
                   </span>
                   {!versionsLoading && !versionCatalog && (
                     <button
                       type="button"
                       onClick={() =>
-                        void refreshVersions().catch((cause) => setError(String(cause)))
+                        void refreshVersions().catch((cause) => setCreatorError(String(cause)))
                       }
                     >
                       再試行
@@ -1392,13 +1630,15 @@ export default function App() {
                   <span aria-hidden="true">i</span>
                   {gameMode === "offline"
                     ? minecraftProfile
-                      ? `${minecraftProfile.name}のMinecraftプロフィールで起動します。`
-                      : "ワールド作成とシングルプレイができます。オンライン機能にはMicrosoft認証が必要です。"
-                    : "時間制限付きの公式デモワールドを起動します。"}
+                      ? `${minecraftProfile.name}のMinecraftプロフィールで起動します。ゲームのネットワーク権限は無効です。`
+                      : "ワールド作成とシングルプレイ向けです。ゲームのネットワーク権限は無効です。"
+                    : "時間制限付きの公式デモワールドを、ネットワーク権限なしで起動します。"}
                 </div>
                 <label>
                   表示名
                   <input
+                    autoComplete="off"
+                    maxLength={80}
                     value={instanceName}
                     onChange={(event) => setInstanceName(event.target.value)}
                     required
@@ -1407,13 +1647,26 @@ export default function App() {
                 <label>
                   ID
                   <input
+                    aria-describedby="instance-id-help"
+                    autoCapitalize="none"
+                    autoComplete="off"
+                    maxLength={41}
                     value={instanceId}
                     onChange={(event) => setInstanceId(event.target.value)}
                     pattern="[A-Za-z0-9_-]+"
+                    spellCheck={false}
                     title="英数字、_、- が使えます"
                     required
                   />
+                  <small className="field-hint" id="instance-id-help">
+                    41文字以内の英数字・_・-。作成後は変更できません。
+                  </small>
                 </label>
+                {creatorError && (
+                  <div className="modal-inline-error" role="alert">
+                    {creatorError}
+                  </div>
+                )}
                 <div className="modal-actions">
                   <button
                     className="secondary-button"
@@ -1448,6 +1701,7 @@ export default function App() {
             <dialog
               aria-describedby="auth-description"
               aria-labelledby="auth-title"
+              aria-modal="true"
               className="creator-modal auth-modal"
               open
               ref={authDialogRef}
@@ -1517,7 +1771,9 @@ export default function App() {
                   <span aria-hidden="true">◆</span>
                   <p>
                     <strong>トークンはReactへ渡しません</strong>
-                    <small>device codeと更新トークンはRust側だけで処理されます。</small>
+                    <small>
+                      OAuthのdevice_code・更新トークン・アクセストークンはRust側だけで処理し、ゲームやModへ渡しません。
+                    </small>
                   </p>
                 </div>
 
@@ -1585,6 +1841,7 @@ export default function App() {
               aria-describedby="mods-description"
               aria-labelledby="mods-title"
               aria-busy={modOperationActive}
+              aria-modal="true"
               className="creator-modal mods-modal"
               open
               ref={modsDialogRef}
@@ -1893,6 +2150,7 @@ export default function App() {
             <dialog
               aria-describedby="settings-description"
               aria-labelledby="settings-title"
+              aria-modal="true"
               className="creator-modal settings-modal"
               open
               ref={settingsDialogRef}

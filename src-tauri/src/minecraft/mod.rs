@@ -1,4 +1,6 @@
+pub mod diagnostics;
 pub mod fabric;
+pub(crate) mod file_io;
 pub mod installer;
 pub mod launcher;
 pub mod model;

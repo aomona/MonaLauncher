@@ -1,5 +1,6 @@
 use std::error::Error;
 use std::fmt;
+use std::fs;
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -91,6 +92,7 @@ pub fn lock_sandbox_launch_directory(
             });
         }
     }
+    set_integrity_level(path, "L")?;
     Ok(())
 }
 
@@ -104,39 +106,74 @@ impl From<std::io::Error> for SandboxAclError {
 
 /// Minecraftに必要な場所だけをAppContainer SIDへ公開する。
 ///
-/// 共有ゲームファイルとJavaは読み取り・実行、インスタンス固有の場所は変更を許可する。
+/// 設定・起動メタデータは読み取り専用に保ち、ゲームが変更できるのは `game` と
+/// 起動ごとの作業ディレクトリだけにする。`grant:r` を使うことで、旧バージョンが
+/// インスタンス全体へ付けた変更権限も起動時に縮小される。
 pub fn grant_minecraft_access(
     paths: &MinecraftPaths,
     instance: &InstanceManifest,
     appcontainer_sid: &str,
 ) -> Result<(), SandboxAclError> {
-    let java_path = Path::new(&instance.java_path);
+    let java_path = fs::canonicalize(Path::new(&instance.java_path))
+        .map_err(|_| SandboxAclError::InvalidJavaPath(PathBuf::from(&instance.java_path)))?;
+    let runtimes = fs::canonicalize(paths.runtimes())
+        .map_err(|_| SandboxAclError::InvalidJavaPath(java_path.clone()))?;
+    if !java_path.starts_with(&runtimes)
+        || !java_path
+            .file_name()
+            .is_some_and(|name| name.eq_ignore_ascii_case("java.exe"))
+    {
+        return Err(SandboxAclError::InvalidJavaPath(java_path));
+    }
     let java_root = java_path
         .parent()
         .and_then(Path::parent)
         .ok_or_else(|| SandboxAclError::InvalidJavaPath(java_path.to_owned()))?;
 
-    for read_execute_path in [
+    // Traverse-only roots are deliberately non-inheriting: an instance must not be able to read
+    // another instance's settings merely because all data lives below the same Minecraft root.
+    for traverse_path in [
         paths.root(),
+        paths.instances().as_path(),
+        paths.runtimes().as_path(),
+    ] {
+        grant(traverse_path, appcontainer_sid, "RX", false)?;
+    }
+    let mut java_ancestor = java_root.parent();
+    while let Some(ancestor) = java_ancestor {
+        if ancestor == paths.runtimes() {
+            break;
+        }
+        if ancestor.starts_with(&runtimes) {
+            grant(ancestor, appcontainer_sid, "RX", false)?;
+        }
+        java_ancestor = ancestor.parent();
+    }
+
+    for read_execute_path in [
         java_root,
         paths.assets().as_path(),
         paths.libraries().as_path(),
         paths.versions().as_path(),
     ] {
-        grant(read_execute_path, appcontainer_sid, "RX")?;
+        grant(read_execute_path, appcontainer_sid, "RX", true)?;
     }
 
     let instance_directory = paths.instance(&instance.id);
-    grant(&instance_directory, appcontainer_sid, "M")?;
-    set_low_integrity(&instance_directory)?;
+    let game_directory = paths.instance_game_directory(&instance.id);
+    grant(&instance_directory, appcontainer_sid, "RX", true)?;
+    set_integrity_level(&instance_directory, "M")?;
+    grant(&game_directory, appcontainer_sid, "M", true)?;
+    set_integrity_level(&game_directory, "L")?;
 
     Ok(())
 }
 
-fn set_low_integrity(path: &Path) -> Result<(), SandboxAclError> {
+fn set_integrity_level(path: &Path, level: &str) -> Result<(), SandboxAclError> {
+    let label = format!("(OI)(CI){level}");
     let output = Command::new("icacls.exe")
         .arg(path)
-        .args(["/setintegritylevel", "(OI)(CI)L", "/Q"])
+        .args(["/setintegritylevel", &label, "/Q"])
         .creation_flags(CREATE_NO_WINDOW)
         .output()?;
 
@@ -155,15 +192,16 @@ fn set_low_integrity(path: &Path) -> Result<(), SandboxAclError> {
     })
 }
 
-fn grant(path: &Path, sid: &str, permission: &str) -> Result<(), SandboxAclError> {
+fn grant(path: &Path, sid: &str, permission: &str, inherit: bool) -> Result<(), SandboxAclError> {
     if !path.exists() {
         return Err(SandboxAclError::MissingPath(path.to_owned()));
     }
 
-    let principal = format!("*{sid}:(OI)(CI){permission}");
+    let inheritance = if inherit { "(OI)(CI)" } else { "" };
+    let principal = format!("*{sid}:{inheritance}{permission}");
     let output = Command::new("icacls.exe")
         .arg(path)
-        .args(["/grant", &principal, "/Q"])
+        .args(["/grant:r", &principal, "/Q"])
         .creation_flags(CREATE_NO_WINDOW)
         .output()?;
 

@@ -8,10 +8,13 @@ use crate::auth::microsoft::{MicrosoftAuthError, MicrosoftOAuthClient, TokenPoll
 use crate::auth::minecraft_services::{MinecraftServicesClient, MinecraftSession};
 use crate::auth::token_store::{delete_refresh_token, load_refresh_token, save_refresh_token};
 
+const MAX_SIGN_IN_POLL_INTERVAL: Duration = Duration::from_secs(60);
+
 #[derive(Clone, Default)]
 pub struct MicrosoftAuthState {
     pending: Arc<Mutex<Option<PendingAuthorization>>>,
     minecraft_session: Arc<Mutex<Option<CachedMinecraftSession>>>,
+    credential_operation: Arc<tokio::sync::Mutex<()>>,
 }
 
 struct CachedMinecraftSession {
@@ -72,6 +75,7 @@ pub fn microsoft_auth_status() -> Result<MicrosoftAuthStatus, String> {
 pub async fn begin_microsoft_sign_in(
     state: State<'_, MicrosoftAuthState>,
 ) -> Result<MicrosoftSignInChallenge, String> {
+    let _operation = state.credential_operation.lock().await;
     let client = MicrosoftOAuthClient::from_configuration().map_err(|error| error.to_string())?;
     let authorization = client
         .begin_device_authorization()
@@ -106,6 +110,7 @@ pub async fn poll_microsoft_sign_in(
     state: State<'_, MicrosoftAuthState>,
     session_id: String,
 ) -> Result<MicrosoftSignInPoll, String> {
+    let _operation = state.credential_operation.lock().await;
     let now = Instant::now();
     let mut pending = state
         .pending
@@ -134,6 +139,7 @@ pub async fn poll_microsoft_sign_in(
     match client.poll_device_authorization(&pending.device_code).await {
         Ok(TokenPoll::Authorized(token)) => {
             save_refresh_token(&token.refresh_token).map_err(|error| error.to_string())?;
+            clear_cached_minecraft_session(&state)?;
             Ok(MicrosoftSignInPoll {
                 status: "authorized",
                 retry_after: None,
@@ -149,7 +155,8 @@ pub async fn poll_microsoft_sign_in(
             })
         }
         Ok(TokenPoll::SlowDown) => {
-            pending.interval += Duration::from_secs(5);
+            pending.interval =
+                (pending.interval + Duration::from_secs(5)).min(MAX_SIGN_IN_POLL_INTERVAL);
             pending.next_poll_at = Instant::now() + pending.interval;
             let retry_after = pending.interval.as_secs();
             restore_pending(&state, pending)?;
@@ -179,21 +186,21 @@ pub async fn refresh_minecraft_account(
 }
 
 #[tauri::command]
-pub fn sign_out_microsoft(state: State<'_, MicrosoftAuthState>) -> Result<(), String> {
+pub async fn sign_out_microsoft(state: State<'_, MicrosoftAuthState>) -> Result<(), String> {
+    let _operation = state.credential_operation.lock().await;
     *state
         .pending
         .lock()
         .map_err(|_| "Microsoft認証状態を利用できません".to_owned())? = None;
-    *state
-        .minecraft_session
-        .lock()
-        .map_err(|_| "Minecraft認証状態を利用できません".to_owned())? = None;
+    clear_cached_minecraft_session(&state)?;
     delete_refresh_token().map_err(|error| error.to_string())
 }
 
 pub(crate) async fn acquire_minecraft_session(
     state: &MicrosoftAuthState,
 ) -> Result<MinecraftSession, String> {
+    let _operation = state.credential_operation.lock().await;
+    // Check after taking the single-flight lock: another caller may just have refreshed it.
     if let Some(session) = cached_minecraft_session(state)? {
         return Ok(session);
     }
@@ -211,7 +218,7 @@ pub(crate) async fn acquire_minecraft_session(
 
     let minecraft = MinecraftServicesClient::new().map_err(|error| error.to_string())?;
     let session = minecraft
-        .authenticate(&access.access_token, microsoft.client_id())
+        .authenticate(&access.access_token)
         .await
         .map_err(|error| error.to_string())?;
     let refresh_at = Instant::now() + session.expires_in.saturating_sub(Duration::from_secs(60));
@@ -243,6 +250,14 @@ fn cached_minecraft_session(
     Ok(None)
 }
 
+fn clear_cached_minecraft_session(state: &MicrosoftAuthState) -> Result<(), String> {
+    *state
+        .minecraft_session
+        .lock()
+        .map_err(|_| "Minecraft認証状態を利用できません".to_owned())? = None;
+    Ok(())
+}
+
 pub(crate) fn has_microsoft_authorization() -> Result<bool, String> {
     Ok(load_refresh_token()
         .map_err(|error| error.to_string())?
@@ -253,10 +268,14 @@ fn restore_pending(
     state: &MicrosoftAuthState,
     pending: PendingAuthorization,
 ) -> Result<(), String> {
-    *state
+    let mut slot = state
         .pending
         .lock()
-        .map_err(|_| "Microsoft認証状態を利用できません".to_owned())? = Some(pending);
+        .map_err(|_| "Microsoft認証状態を利用できません".to_owned())?;
+    // Never overwrite a challenge created after this one was taken from the slot.
+    if slot.is_none() {
+        *slot = Some(pending);
+    }
     Ok(())
 }
 
@@ -278,5 +297,26 @@ mod tests {
         assert_eq!(first.len(), 64);
         assert!(first.bytes().all(|byte| byte.is_ascii_hexdigit()));
         assert_ne!(first, second);
+    }
+
+    #[test]
+    fn restoring_an_old_poll_does_not_overwrite_a_new_challenge() {
+        let state = MicrosoftAuthState::default();
+        let now = Instant::now();
+        let pending = |session_id: &str| PendingAuthorization {
+            session_id: session_id.to_owned(),
+            device_code: "code".to_owned(),
+            expires_at: now + Duration::from_secs(60),
+            next_poll_at: now,
+            interval: Duration::from_secs(5),
+        };
+        *state.pending.lock().unwrap() = Some(pending("new"));
+
+        restore_pending(&state, pending("old")).unwrap();
+
+        assert_eq!(
+            state.pending.lock().unwrap().as_ref().unwrap().session_id,
+            "new"
+        );
     }
 }
