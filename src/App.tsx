@@ -1,51 +1,2284 @@
-import { useState } from "react";
-import reactLogo from "./assets/react.svg";
-import { invoke } from "@tauri-apps/api/core";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { invoke, isTauri } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import "./App.css";
 
-function App() {
-  const [greetMsg, setGreetMsg] = useState("");
-  const [name, setName] = useState("");
+type MinecraftInstance = {
+  id: string;
+  name: string;
+  versionId: string;
+  javaPath: string;
+  gameDirectory: string;
+  demo: boolean;
+  sandboxed: boolean;
+  modLoader:
+    | {
+        type: "vanilla";
+      }
+    | {
+        type: "fabric";
+        version: string;
+      };
+};
 
-  async function greet() {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    setGreetMsg(await invoke("greet", { name }));
-  }
+type MinecraftVersion = {
+  id: string;
+  versionType: "release" | "snapshot" | "old_beta" | "old_alpha" | string;
+  releaseTime: string;
+};
+
+type MinecraftVersionCatalog = {
+  latest: {
+    release: string;
+    snapshot: string;
+  };
+  versions: MinecraftVersion[];
+};
+
+type FabricLoaderVersion = {
+  version: string;
+  stable: boolean;
+};
+
+type InstallProgress = {
+  stage: string;
+  completed: number;
+  total: number;
+  message: string;
+};
+
+type MinecraftLogEvent = {
+  instanceId: string;
+  stream: string;
+  line: string;
+};
+
+type MinecraftStatusEvent = {
+  instanceId: string;
+  status: "running" | "stopped";
+  exitCode: number | null;
+};
+
+type MinecraftLaunchProgress = {
+  instanceId: string;
+  stage: string;
+  message: string;
+};
+
+type MicrosoftAuthStatus = {
+  configured: boolean;
+  authorized: boolean;
+};
+
+type MicrosoftSignInChallenge = {
+  sessionId: string;
+  userCode: string;
+  verificationUri: string;
+  expiresIn: number;
+  interval: number;
+};
+
+type MicrosoftSignInPoll = {
+  status: "pending" | "authorized";
+  retryAfter: number | null;
+};
+
+type MinecraftAccountProfile = {
+  name: string;
+  uuid: string;
+};
+
+type ModSearchHit = {
+  projectId: string;
+  slug: string | null;
+  title: string;
+  description: string;
+  author: string;
+  downloads: number;
+  follows: number;
+  dateModified: string;
+};
+
+type ModSearchResponse = {
+  hits: ModSearchHit[];
+  offset: number;
+  limit: number;
+  totalHits: number;
+};
+
+type InstalledMod = {
+  projectId: string;
+  versionId: string;
+  title: string;
+  versionNumber: string;
+  fileName: string;
+  sha512: string;
+  size: number;
+  direct: boolean;
+  requiredDependencies?: string[] | null;
+};
+
+type ModInstallResult = {
+  installed: InstalledMod[];
+};
+
+type ModRemovalResult = {
+  requested: InstalledMod;
+  removed: InstalledMod[];
+  retainedAsDependency: boolean;
+  cleanupPending: boolean;
+};
+
+type ModInstallProgress = {
+  instanceId: string;
+  completed: number;
+  total: number;
+  message: string;
+};
+
+type DiagnosticCheck = {
+  id: string;
+  label: string;
+  status: "ok" | "warning" | "error";
+  detail: string;
+  repairable: boolean;
+};
+
+type InstanceDiagnosis = {
+  instanceId: string;
+  status: "healthy" | "repairable" | "attention";
+  checkedFiles: number;
+  issueCount: number;
+  repairableCount: number;
+  checks: DiagnosticCheck[];
+};
+
+type LogLine = MinecraftLogEvent & { id: number };
+
+const stageLabels: Record<string, string> = {
+  metadata: "バージョン情報",
+  client: "Minecraft本体",
+  libraries: "ライブラリ",
+  "assets-index": "アセット一覧",
+  assets: "ゲーム素材",
+  loader: "Modローダー",
+  runtime: "隔離用Java",
+  complete: "完了",
+};
+
+function hasTauriRuntime() {
+  const internals = (
+    window as typeof window & {
+      __TAURI_INTERNALS__?: { invoke?: unknown; transformCallback?: unknown };
+    }
+  ).__TAURI_INTERNALS__;
 
   return (
-    <main className="container">
-      <h1>Welcome to Tauri + React</h1>
-
-      <div className="row">
-        <a href="https://vite.dev" target="_blank">
-          <img src="/vite.svg" className="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank">
-          <img src="/tauri.svg" className="logo tauri" alt="Tauri logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <p>Click on the Tauri, Vite, and React logos to learn more.</p>
-
-      <form
-        className="row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          greet();
-        }}
-      >
-        <input
-          id="greet-input"
-          onChange={(e) => setName(e.currentTarget.value)}
-          placeholder="Enter a name..."
-        />
-        <button type="submit">Greet</button>
-      </form>
-      <p>{greetMsg}</p>
-    </main>
+    isTauri() &&
+    typeof internals?.invoke === "function" &&
+    typeof internals.transformCallback === "function"
   );
 }
 
-export default App;
+function instanceVersionLabel(instance: MinecraftInstance) {
+  return instance.modLoader.type === "fabric"
+    ? `Minecraft ${instance.versionId} · Fabric ${instance.modLoader.version}`
+    : `Minecraft ${instance.versionId}`;
+}
+
+const compactNumber = new Intl.NumberFormat("ja-JP", {
+  notation: "compact",
+  maximumFractionDigits: 1,
+});
+
+function keepFocusInsideDialog(event: KeyboardEvent, dialog: HTMLDialogElement | null) {
+  if (event.key !== "Tab") return;
+
+  const focusable = Array.from(
+    dialog?.querySelectorAll<HTMLElement>(
+      'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    ) ?? [],
+  );
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (!first || !last) return;
+
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
+export default function App() {
+  const [instances, setInstances] = useState<MinecraftInstance[]>([]);
+  const [instancesLoading, setInstancesLoading] = useState(true);
+  const [selectedId, setSelectedId] = useState("");
+  const [instanceId, setInstanceId] = useState("minecraft");
+  const [instanceName, setInstanceName] = useState("Minecraft");
+  const [versionCatalog, setVersionCatalog] = useState<MinecraftVersionCatalog | null>(null);
+  const [selectedVersionId, setSelectedVersionId] = useState("");
+  const [versionQuery, setVersionQuery] = useState("");
+  const [versionsLoading, setVersionsLoading] = useState(false);
+  const [gameMode, setGameMode] = useState<"offline" | "demo">("offline");
+  const [modLoaderType, setModLoaderType] = useState<"vanilla" | "fabric">("vanilla");
+  const [fabricLoaders, setFabricLoaders] = useState<FabricLoaderVersion[]>([]);
+  const [selectedFabricLoader, setSelectedFabricLoader] = useState("");
+  const [fabricLoadersLoading, setFabricLoadersLoading] = useState(false);
+  const [fabricLoadersError, setFabricLoadersError] = useState<string | null>(null);
+  const [fabricReloadKey, setFabricReloadKey] = useState(0);
+  const [progress, setProgress] = useState<InstallProgress | null>(null);
+  const [launchProgress, setLaunchProgress] = useState<MinecraftLaunchProgress | null>(null);
+  const [logs, setLogs] = useState<LogLine[]>([]);
+  const [runningIds, setRunningIds] = useState<Set<string>>(new Set());
+  const [busy, setBusy] = useState<
+    "install" | "launch" | "stop" | "rename" | "delete" | "diagnose" | "repair" | null
+  >(null);
+  const [error, setError] = useState<string | null>(null);
+  const [creatorError, setCreatorError] = useState<string | null>(null);
+  const [versionsError, setVersionsError] = useState<string | null>(null);
+  const [showCreator, setShowCreator] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [settingsName, setSettingsName] = useState("");
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [authStatus, setAuthStatus] = useState<MicrosoftAuthStatus>({
+    configured: false,
+    authorized: false,
+  });
+  const [showAuth, setShowAuth] = useState(false);
+  const [authChallenge, setAuthChallenge] = useState<MicrosoftSignInChallenge | null>(null);
+  const [authBusy, setAuthBusy] = useState<"begin" | "signout" | null>(null);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [minecraftProfile, setMinecraftProfile] = useState<MinecraftAccountProfile | null>(null);
+  const [minecraftProfileLoading, setMinecraftProfileLoading] = useState(false);
+  const [showMods, setShowMods] = useState(false);
+  const [modQuery, setModQuery] = useState("");
+  const [modSearch, setModSearch] = useState<ModSearchResponse | null>(null);
+  const [modSearchLoading, setModSearchLoading] = useState(false);
+  const [installedMods, setInstalledMods] = useState<InstalledMod[]>([]);
+  const [installedModsLoading, setInstalledModsLoading] = useState(false);
+  const [modInstallingProjectId, setModInstallingProjectId] = useState<string | null>(null);
+  const [modRemovingProjectId, setModRemovingProjectId] = useState<string | null>(null);
+  const [modRemovalTarget, setModRemovalTarget] = useState<InstalledMod | null>(null);
+  const [modInstallProgress, setModInstallProgress] = useState<ModInstallProgress | null>(null);
+  const [modError, setModError] = useState<string | null>(null);
+  const [modSuccess, setModSuccess] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
+  const [diagnosis, setDiagnosis] = useState<InstanceDiagnosis | null>(null);
+  const creatorDialogRef = useRef<HTMLDialogElement>(null);
+  const creatorSearchRef = useRef<HTMLInputElement>(null);
+  const creatorPreviousFocusRef = useRef<HTMLElement | null>(null);
+  const settingsDialogRef = useRef<HTMLDialogElement>(null);
+  const settingsNameRef = useRef<HTMLInputElement>(null);
+  const settingsPreviousFocusRef = useRef<HTMLElement | null>(null);
+  const authDialogRef = useRef<HTMLDialogElement>(null);
+  const authPrimaryRef = useRef<HTMLButtonElement>(null);
+  const authPreviousFocusRef = useRef<HTMLElement | null>(null);
+  const modsDialogRef = useRef<HTMLDialogElement>(null);
+  const modSearchInputRef = useRef<HTMLInputElement>(null);
+  const modRemoveConfirmRef = useRef<HTMLButtonElement>(null);
+  const modsPreviousFocusRef = useRef<HTMLElement | null>(null);
+  const modSearchRequestRef = useRef(0);
+  const installedModsRequestRef = useRef(0);
+  const authRequestGenerationRef = useRef(0);
+
+  const selected = useMemo(
+    () => instances.find((instance) => instance.id === selectedId) ?? null,
+    [instances, selectedId],
+  );
+  const isRunning = selected ? runningIds.has(selected.id) : false;
+  const visibleLogs = selected ? logs.filter((line) => line.instanceId === selected.id) : [];
+  const installedProjectIds = useMemo(
+    () => new Set(installedMods.map((item) => item.projectId)),
+    [installedMods],
+  );
+  const modOperationActive = modInstallingProjectId !== null || modRemovingProjectId !== null;
+  const modControlsDisabled = modOperationActive || modRemovalTarget !== null;
+  const versionGroups = useMemo(() => {
+    const groups = [
+      { type: "release", label: "正式リリース" },
+      { type: "snapshot", label: "スナップショット" },
+      { type: "old_beta", label: "旧Beta" },
+      { type: "old_alpha", label: "旧Alpha" },
+    ];
+    const query = versionQuery.trim().toLowerCase();
+
+    return groups.map((group) => ({
+      ...group,
+      versions: (versionCatalog?.versions ?? []).filter(
+        (version) =>
+          version.versionType === group.type &&
+          (!query || version.id.toLowerCase().includes(query) || version.id === selectedVersionId),
+      ),
+    }));
+  }, [selectedVersionId, versionCatalog, versionQuery]);
+  const progressPercent = progress
+    ? progress.total === 0
+      ? 0
+      : Math.min(100, Math.max(0, Math.round((progress.completed / progress.total) * 100)))
+    : 0;
+  const currentModInstallProgress =
+    modInstallProgress?.instanceId === selected?.id ? modInstallProgress : null;
+  const modInstallPercent = currentModInstallProgress
+    ? currentModInstallProgress.total === 0
+      ? 0
+      : Math.min(
+          100,
+          Math.max(
+            0,
+            Math.round(
+              (currentModInstallProgress.completed / currentModInstallProgress.total) * 100,
+            ),
+          ),
+        )
+    : 0;
+  const modalOpen = showCreator || showAuth || showMods || showSettings;
+
+  const openCreator = () => {
+    creatorPreviousFocusRef.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setCreatorError(null);
+    setProgress(null);
+    setShowCreator(true);
+  };
+
+  const closeCreator = () => {
+    if (busy === null) setShowCreator(false);
+  };
+
+  const openSettings = () => {
+    if (!selected) return;
+    settingsPreviousFocusRef.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setSettingsName(selected.name);
+    setConfirmDelete(false);
+    setError(null);
+    setShowSettings(true);
+  };
+
+  const closeSettings = () => {
+    if (busy === null) {
+      setConfirmDelete(false);
+      setShowSettings(false);
+    }
+  };
+
+  const openAuth = () => {
+    authPreviousFocusRef.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setAuthError(null);
+    setShowAuth(true);
+  };
+
+  const closeAuth = () => {
+    if (authBusy === null) setShowAuth(false);
+  };
+
+  const refreshInstalledMods = async (instanceId: string) => {
+    const requestId = installedModsRequestRef.current + 1;
+    installedModsRequestRef.current = requestId;
+    setInstalledModsLoading(true);
+    try {
+      const mods = await invoke<InstalledMod[]>("list_instance_mods", { instanceId });
+      if (installedModsRequestRef.current === requestId) setInstalledMods(mods);
+    } catch (cause) {
+      if (installedModsRequestRef.current === requestId) throw cause;
+    } finally {
+      if (installedModsRequestRef.current === requestId) setInstalledModsLoading(false);
+    }
+  };
+
+  const runModSearch = async (instanceId: string, query: string, offset: number) => {
+    const requestId = modSearchRequestRef.current + 1;
+    modSearchRequestRef.current = requestId;
+    setModSearchLoading(true);
+    setModError(null);
+    try {
+      const result = await invoke<ModSearchResponse>("search_modrinth_mods", {
+        instanceId,
+        query,
+        offset,
+      });
+      if (modSearchRequestRef.current === requestId) setModSearch(result);
+    } catch (cause) {
+      if (modSearchRequestRef.current === requestId) {
+        setModSearch(null);
+        setModError(String(cause));
+      }
+    } finally {
+      if (modSearchRequestRef.current === requestId) setModSearchLoading(false);
+    }
+  };
+
+  const openMods = () => {
+    if (!selected || selected.modLoader.type !== "fabric" || isRunning) return;
+    modsPreviousFocusRef.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setModQuery("");
+    setModSearch(null);
+    setInstalledMods([]);
+    setModInstallProgress(null);
+    setModRemovingProjectId(null);
+    setModRemovalTarget(null);
+    setModError(null);
+    setModSuccess(null);
+    setShowMods(true);
+    void refreshInstalledMods(selected.id).catch((cause) => setModError(String(cause)));
+    void runModSearch(selected.id, "", 0);
+  };
+
+  const closeMods = () => {
+    if (modOperationActive) return;
+    modSearchRequestRef.current += 1;
+    installedModsRequestRef.current += 1;
+    setInstalledModsLoading(false);
+    setModRemovalTarget(null);
+    setShowMods(false);
+  };
+
+  const installModrinthMod = async (projectId: string) => {
+    if (!selected || modOperationActive) return;
+    setModRemovalTarget(null);
+    setModInstallingProjectId(projectId);
+    setModInstallProgress({
+      instanceId: selected.id,
+      completed: 0,
+      total: 1,
+      message: "必須依存関係を確認しています…",
+    });
+    setModError(null);
+    setModSuccess(null);
+    try {
+      const result = await invoke<ModInstallResult>("install_modrinth_mod", {
+        instanceId: selected.id,
+        projectId,
+      });
+      const direct = result.installed.find((item) => item.projectId === projectId);
+      const dependencies = result.installed.filter((item) => !item.direct).length;
+      setModSuccess(
+        direct
+          ? `${direct.title} ${direct.versionNumber}を導入しました${dependencies > 0 ? `（必須依存${dependencies}件を含む）` : ""}。`
+          : `Modを導入しました（${result.installed.length}ファイル）。`,
+      );
+      try {
+        await refreshInstalledMods(selected.id);
+      } catch (cause) {
+        setModError(`導入は完了しましたが、一覧を更新できませんでした: ${String(cause)}`);
+      }
+    } catch (cause) {
+      setModError(String(cause));
+    } finally {
+      setModInstallingProjectId(null);
+      setModInstallProgress(null);
+    }
+  };
+
+  const removeModrinthMod = async (target: InstalledMod) => {
+    if (!selected || !target.direct || modOperationActive) return;
+    setModRemovingProjectId(target.projectId);
+    setModError(null);
+    setModSuccess(null);
+    try {
+      const result = await invoke<ModRemovalResult>("remove_modrinth_mod", {
+        instanceId: selected.id,
+        projectId: target.projectId,
+      });
+      const orphanedDependencies = result.removed.filter(
+        (item) => item.projectId !== result.requested.projectId,
+      ).length;
+      const cleanupNote = result.cleanupPending
+        ? " ゲームのmodsフォルダからは外しましたが、一時退避ファイルの後片付けが残っています。"
+        : "";
+      setModSuccess(
+        result.retainedAsDependency
+          ? `${result.requested.title}の直接追加を解除しました。別のModに必要なため、JARは必須依存として残しています。${cleanupNote}`
+          : `${result.requested.title}を削除しました${
+              orphanedDependencies > 0
+                ? `（不要になった必須依存${orphanedDependencies}件も削除）`
+                : ""
+            }。${cleanupNote}`,
+      );
+      setModRemovalTarget(null);
+      try {
+        await refreshInstalledMods(selected.id);
+      } catch (cause) {
+        setModError(`削除は完了しましたが、一覧を更新できませんでした: ${String(cause)}`);
+      }
+    } catch (cause) {
+      setModError(String(cause));
+    } finally {
+      setModRemovingProjectId(null);
+    }
+  };
+
+  const refreshInstances = async () => {
+    setInstancesLoading(true);
+    try {
+      const found = await invoke<MinecraftInstance[]>("list_minecraft_instances");
+      setInstances(found);
+      setSelectedId((current) => {
+        if (found.some((instance) => instance.id === current)) return current;
+        return found[0]?.id ?? "";
+      });
+    } finally {
+      setInstancesLoading(false);
+    }
+  };
+
+  const refreshVersions = async () => {
+    setCreatorError(null);
+    setVersionsError(null);
+    setVersionsLoading(true);
+    try {
+      const catalog = await invoke<MinecraftVersionCatalog>("list_minecraft_versions");
+      setVersionCatalog(catalog);
+      setSelectedVersionId((current) =>
+        catalog.versions.some((version) => version.id === current)
+          ? current
+          : catalog.latest.release,
+      );
+    } catch (cause) {
+      setVersionsError(String(cause));
+      throw cause;
+    } finally {
+      setVersionsLoading(false);
+    }
+  };
+
+  const refreshMinecraftProfile = async () => {
+    const generation = authRequestGenerationRef.current;
+    setMinecraftProfileLoading(true);
+    try {
+      const profile = await invoke<MinecraftAccountProfile>("refresh_minecraft_account");
+      if (authRequestGenerationRef.current !== generation) return;
+      setMinecraftProfile(profile);
+      setAuthError(null);
+    } catch (cause) {
+      if (authRequestGenerationRef.current !== generation) return;
+      setMinecraftProfile(null);
+      setAuthError(String(cause));
+    } finally {
+      if (authRequestGenerationRef.current === generation) setMinecraftProfileLoading(false);
+    }
+  };
+
+  const refreshAuthStatus = async () => {
+    const generation = authRequestGenerationRef.current;
+    const status = await invoke<MicrosoftAuthStatus>("microsoft_auth_status");
+    if (authRequestGenerationRef.current !== generation) return;
+    setAuthStatus(status);
+    if (status.authorized) void refreshMinecraftProfile();
+  };
+
+  useEffect(() => {
+    if (!hasTauriRuntime()) {
+      setInstancesLoading(false);
+      return;
+    }
+
+    void refreshInstances().catch((cause) => setError(String(cause)));
+    void refreshVersions().catch((cause) => setError(String(cause)));
+    void refreshAuthStatus().catch((cause) => setAuthError(String(cause)));
+    const unlistenProgress = listen<InstallProgress>("minecraft-install-progress", (event) => {
+      setProgress(event.payload);
+    });
+    const unlistenLogs = listen<MinecraftLogEvent>("minecraft-log", (event) => {
+      setLogs((current) => [
+        ...current.slice(-999),
+        { ...event.payload, id: Date.now() + Math.random() },
+      ]);
+    });
+    const unlistenLaunchProgress = listen<MinecraftLaunchProgress>(
+      "minecraft-launch-progress",
+      (event) => setLaunchProgress(event.payload),
+    );
+    const unlistenModProgress = listen<ModInstallProgress>("modrinth-install-progress", (event) =>
+      setModInstallProgress(event.payload),
+    );
+    const unlistenStatus = listen<MinecraftStatusEvent>("minecraft-status", (event) => {
+      setRunningIds((current) => {
+        const next = new Set(current);
+        if (event.payload.status === "running") next.add(event.payload.instanceId);
+        else next.delete(event.payload.instanceId);
+        return next;
+      });
+
+      if (event.payload.status === "stopped") {
+        const suffix =
+          event.payload.exitCode === null ? "" : ` (終了コード ${event.payload.exitCode})`;
+        setLogs((current) => [
+          ...current.slice(-999),
+          {
+            id: Date.now() + Math.random(),
+            instanceId: event.payload.instanceId,
+            stream: "launcher",
+            line: `Minecraftが終了しました${suffix}`,
+          },
+        ]);
+      }
+    });
+
+    return () => {
+      void unlistenProgress.then((unlisten) => unlisten());
+      void unlistenLogs.then((unlisten) => unlisten());
+      void unlistenLaunchProgress.then((unlisten) => unlisten());
+      void unlistenModProgress.then((unlisten) => unlisten());
+      void unlistenStatus.then((unlisten) => unlisten());
+    };
+  }, []);
+
+  useEffect(() => {
+    setDiagnosis(null);
+  }, [selectedId]);
+
+  useEffect(() => {
+    if (!showCreator) return;
+
+    creatorSearchRef.current?.focus();
+    return () => creatorPreviousFocusRef.current?.focus();
+  }, [showCreator]);
+
+  useEffect(() => {
+    if (!showCreator || modLoaderType !== "fabric" || !selectedVersionId || !hasTauriRuntime()) {
+      setFabricLoaders([]);
+      setSelectedFabricLoader("");
+      setFabricLoadersLoading(false);
+      setFabricLoadersError(null);
+      return;
+    }
+
+    let cancelled = false;
+    setFabricLoadersLoading(true);
+    setFabricLoadersError(null);
+    void invoke<FabricLoaderVersion[]>("list_fabric_loader_versions", {
+      minecraftVersion: selectedVersionId,
+    })
+      .then((loaders) => {
+        if (cancelled) return;
+        setFabricLoaders(loaders);
+        setSelectedFabricLoader((current) =>
+          loaders.some((loader) => loader.version === current)
+            ? current
+            : (loaders.find((loader) => loader.stable)?.version ?? loaders[0]?.version ?? ""),
+        );
+      })
+      .catch((cause) => {
+        if (cancelled) return;
+        setFabricLoaders([]);
+        setSelectedFabricLoader("");
+        setFabricLoadersError(String(cause));
+      })
+      .finally(() => {
+        if (!cancelled) setFabricLoadersLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [fabricReloadKey, modLoaderType, selectedVersionId, showCreator]);
+
+  useEffect(() => {
+    if (!showCreator) return;
+
+    const handleCreatorKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && busy === null) {
+        event.preventDefault();
+        setShowCreator(false);
+        return;
+      }
+      keepFocusInsideDialog(event, creatorDialogRef.current);
+    };
+
+    document.addEventListener("keydown", handleCreatorKeyDown);
+    return () => document.removeEventListener("keydown", handleCreatorKeyDown);
+  }, [busy, showCreator]);
+
+  useEffect(() => {
+    if (!showSettings) return;
+
+    settingsNameRef.current?.focus();
+    settingsNameRef.current?.select();
+    return () => settingsPreviousFocusRef.current?.focus();
+  }, [showSettings]);
+
+  useEffect(() => {
+    if (!showSettings) return;
+
+    const handleSettingsKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && busy === null) {
+        event.preventDefault();
+        setShowSettings(false);
+        return;
+      }
+      keepFocusInsideDialog(event, settingsDialogRef.current);
+    };
+
+    document.addEventListener("keydown", handleSettingsKeyDown);
+    return () => document.removeEventListener("keydown", handleSettingsKeyDown);
+  }, [busy, showSettings]);
+
+  useEffect(() => {
+    if (!showAuth) return;
+
+    authPrimaryRef.current?.focus();
+    if (document.activeElement !== authPrimaryRef.current) authDialogRef.current?.focus();
+    return () => authPreviousFocusRef.current?.focus();
+  }, [showAuth]);
+
+  useEffect(() => {
+    if (!showAuth) return;
+
+    const handleAuthKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && authBusy === null) {
+        event.preventDefault();
+        setShowAuth(false);
+        return;
+      }
+      keepFocusInsideDialog(event, authDialogRef.current);
+    };
+
+    document.addEventListener("keydown", handleAuthKeyDown);
+    return () => document.removeEventListener("keydown", handleAuthKeyDown);
+  }, [authBusy, showAuth]);
+
+  useEffect(() => {
+    if (!showMods) return;
+
+    modSearchInputRef.current?.focus();
+    return () => modsPreviousFocusRef.current?.focus();
+  }, [showMods]);
+
+  useEffect(() => {
+    if (modRemovalTarget) modRemoveConfirmRef.current?.focus();
+  }, [modRemovalTarget]);
+
+  useEffect(() => {
+    if (!showMods) return;
+
+    const handleModsKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !modOperationActive) {
+        event.preventDefault();
+        if (modRemovalTarget) {
+          setModRemovalTarget(null);
+          return;
+        }
+        modSearchRequestRef.current += 1;
+        setShowMods(false);
+        return;
+      }
+      keepFocusInsideDialog(event, modsDialogRef.current);
+    };
+
+    document.addEventListener("keydown", handleModsKeyDown);
+    return () => document.removeEventListener("keydown", handleModsKeyDown);
+  }, [modOperationActive, modRemovalTarget, showMods]);
+
+  useEffect(() => {
+    if (!authChallenge || authStatus.authorized) return;
+
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const poll = async () => {
+      try {
+        const result = await invoke<MicrosoftSignInPoll>("poll_microsoft_sign_in", {
+          sessionId: authChallenge.sessionId,
+        });
+        if (cancelled) return;
+        if (result.status === "authorized") {
+          authRequestGenerationRef.current += 1;
+          setMinecraftProfileLoading(false);
+          setMinecraftProfile(null);
+          setAuthStatus((current) => ({ ...current, authorized: true }));
+          setAuthChallenge(null);
+          setAuthError(null);
+          void refreshMinecraftProfile();
+          return;
+        }
+        timer = setTimeout(poll, (result.retryAfter ?? authChallenge.interval) * 1000);
+      } catch (cause) {
+        if (!cancelled) {
+          setAuthError(String(cause));
+          setAuthChallenge(null);
+        }
+      }
+    };
+
+    timer = setTimeout(poll, authChallenge.interval * 1000);
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [authChallenge, authStatus.authorized]);
+
+  const install = async () => {
+    setCreatorError(null);
+    setProgress({ stage: "metadata", completed: 0, total: 1, message: "準備中" });
+    setBusy("install");
+
+    try {
+      const installed = await invoke<MinecraftInstance>("install_sandbox_instance", {
+        instanceId,
+        name: instanceName,
+        versionId: selectedVersionId,
+        demo: gameMode === "demo",
+        modLoader:
+          modLoaderType === "fabric"
+            ? { type: "fabric", version: selectedFabricLoader }
+            : { type: "vanilla" },
+      });
+      await refreshInstances();
+      setSelectedId(installed.id);
+      setShowCreator(false);
+    } catch (cause) {
+      setCreatorError(String(cause));
+    } finally {
+      setProgress(null);
+      setBusy(null);
+    }
+  };
+
+  const launch = async () => {
+    if (!selected) return;
+    setError(null);
+    setBusy("launch");
+    setLaunchProgress({
+      instanceId: selected.id,
+      stage: "queued",
+      message: "起動処理を開始しています…",
+    });
+    setLogs((current) => current.filter((line) => line.instanceId !== selected.id));
+
+    try {
+      const pid = await invoke<number>("launch_minecraft_instance", {
+        instanceId: selected.id,
+      });
+      setLogs((current) => [
+        ...current,
+        {
+          id: Date.now(),
+          instanceId: selected.id,
+          stream: "launcher",
+          line: `Minecraftを起動しました (PID ${pid})`,
+        },
+      ]);
+    } catch (cause) {
+      setError(String(cause));
+    } finally {
+      setLaunchProgress(null);
+      setBusy(null);
+    }
+  };
+
+  const stop = async () => {
+    if (!selected) return;
+    setError(null);
+    setBusy("stop");
+
+    try {
+      await invoke("stop_minecraft_instance", { instanceId: selected.id });
+    } catch (cause) {
+      setError(String(cause));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const diagnoseSelected = async () => {
+    if (!selected) return;
+    setError(null);
+    setBusy("diagnose");
+    try {
+      const result = await invoke<InstanceDiagnosis>("diagnose_minecraft_instance", {
+        instanceId: selected.id,
+      });
+      setDiagnosis(result);
+    } catch (cause) {
+      setDiagnosis(null);
+      setError(String(cause));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const repairSelected = async () => {
+    if (!selected) return;
+    setError(null);
+    setProgress({ stage: "metadata", completed: 0, total: 1, message: "修復準備中" });
+    setBusy("repair");
+    try {
+      const result = await invoke<InstanceDiagnosis>("repair_minecraft_instance", {
+        instanceId: selected.id,
+      });
+      setDiagnosis(result);
+      await refreshInstances();
+    } catch (cause) {
+      setError(String(cause));
+    } finally {
+      setProgress(null);
+      setBusy(null);
+    }
+  };
+
+  const renameSelected = async () => {
+    if (!selected) return;
+    setError(null);
+    setBusy("rename");
+
+    try {
+      const renamed = await invoke<MinecraftInstance>("rename_minecraft_instance", {
+        instanceId: selected.id,
+        name: settingsName,
+      });
+      setInstances((current) =>
+        current
+          .map((instance) => (instance.id === renamed.id ? renamed : instance))
+          .sort((left, right) => left.name.localeCompare(right.name, "ja")),
+      );
+      setShowSettings(false);
+    } catch (cause) {
+      setError(String(cause));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const deleteSelected = async () => {
+    if (!selected) return;
+    const deletedId = selected.id;
+    setError(null);
+    setBusy("delete");
+
+    try {
+      await invoke("delete_minecraft_instance", { instanceId: deletedId });
+      setShowSettings(false);
+      setConfirmDelete(false);
+      const remaining = instances.filter((instance) => instance.id !== deletedId);
+      setInstances(remaining);
+      setSelectedId((selectedId) =>
+        selectedId === deletedId ? (remaining[0]?.id ?? "") : selectedId,
+      );
+      setLogs((current) => current.filter((line) => line.instanceId !== deletedId));
+      setRunningIds((current) => {
+        const next = new Set(current);
+        next.delete(deletedId);
+        return next;
+      });
+    } catch (cause) {
+      setError(String(cause));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const beginMicrosoftSignIn = async () => {
+    setAuthBusy("begin");
+    setAuthError(null);
+    try {
+      const challenge = await invoke<MicrosoftSignInChallenge>("begin_microsoft_sign_in");
+      setAuthChallenge(challenge);
+      await openMicrosoftVerification(challenge.verificationUri);
+    } catch (cause) {
+      setAuthError(String(cause));
+    } finally {
+      setAuthBusy(null);
+    }
+  };
+
+  const openMicrosoftVerification = async (verificationUri: string) => {
+    try {
+      await openUrl(verificationUri);
+    } catch (cause) {
+      setAuthError(`ブラウザーを開けませんでした。下のURLを手動で開いてください: ${cause}`);
+    }
+  };
+
+  const signOutMicrosoft = async () => {
+    authRequestGenerationRef.current += 1;
+    setMinecraftProfileLoading(false);
+    setAuthBusy("signout");
+    setAuthError(null);
+    try {
+      await invoke("sign_out_microsoft");
+      setAuthChallenge(null);
+      setMinecraftProfile(null);
+      setAuthStatus((current) => ({ ...current, authorized: false }));
+    } catch (cause) {
+      setAuthError(String(cause));
+    } finally {
+      setAuthBusy(null);
+    }
+  };
+
+  return (
+    <main className="app-shell">
+      <header aria-hidden={modalOpen} className="topbar" inert={modalOpen}>
+        <div className="brand">
+          <div className="brand-mark" aria-hidden="true">
+            <span />
+          </div>
+          <div>
+            <h1>MonaLauncher</h1>
+            <p>Secure Minecraft launcher</p>
+          </div>
+        </div>
+        <div className="toolbar" aria-label="ランチャー操作">
+          <button className="toolbar-button accent" onClick={openCreator} type="button">
+            <span aria-hidden="true">＋</span>インスタンスを追加
+          </button>
+          <button
+            className="toolbar-button"
+            disabled={instancesLoading || busy !== null}
+            onClick={() => void refreshInstances().catch((cause) => setError(String(cause)))}
+            type="button"
+          >
+            <span aria-hidden="true">↻</span>
+            {instancesLoading ? "更新中…" : "更新"}
+          </button>
+        </div>
+        <button aria-haspopup="dialog" className="account-chip" onClick={openAuth} type="button">
+          <span className="account-avatar" aria-hidden="true">
+            M
+          </span>
+          <span>
+            <strong>
+              {minecraftProfile?.name ??
+                (authStatus.authorized ? "Microsoft認証済み" : "オフライン")}
+            </strong>
+            <small>
+              {minecraftProfile
+                ? "Minecraft: Java Edition"
+                : minecraftProfileLoading
+                  ? "プロフィール確認中…"
+                  : authStatus.authorized
+                    ? "Minecraftを確認してください"
+                    : authStatus.configured
+                      ? "サインインできます"
+                      : "認証設定が必要です"}
+            </small>
+          </span>
+          <span className="chevron" aria-hidden="true">
+            ›
+          </span>
+        </button>
+      </header>
+
+      <section className="workspace">
+        <nav aria-hidden={modalOpen} className="rail" aria-label="メインメニュー" inert={modalOpen}>
+          <button
+            aria-current="page"
+            aria-label="ライブラリ"
+            className="rail-button active"
+            type="button"
+          >
+            <span aria-hidden="true" className="rail-icon">
+              ▦
+            </span>
+            <span className="rail-label">ライブラリ</span>
+          </button>
+          <button
+            aria-label="ニュース（準備中）"
+            className="rail-button"
+            disabled
+            title="ニュース機能は準備中です"
+            type="button"
+          >
+            <span aria-hidden="true" className="rail-icon">
+              ◫
+            </span>
+            <span className="rail-label">ニュース</span>
+          </button>
+          <div className="rail-spacer" />
+          <div
+            className={`security-pill${selected && !selected.sandboxed ? " warning" : ""}`}
+            title={
+              selected
+                ? selected.sandboxed
+                  ? "このインスタンスはネットワーク権限なしのAppContainerで隔離されます"
+                  : "安全でない旧形式のため起動は無効です。再作成してください"
+                : "作成したインスタンスはAppContainerで隔離されます"
+            }
+          >
+            <span className="shield">◆</span>
+            <span>
+              <strong>
+                {selected ? (selected.sandboxed ? "保護中" : "要再作成") : "隔離起動"}
+              </strong>
+              <small>{selected && !selected.sandboxed ? "起動無効" : "AppContainer"}</small>
+            </span>
+          </div>
+          <button
+            aria-label="設定（準備中）"
+            className="rail-button"
+            disabled
+            title="設定機能は準備中です"
+            type="button"
+          >
+            <span aria-hidden="true" className="rail-icon">
+              ⚙
+            </span>
+            <span className="rail-label">設定</span>
+          </button>
+        </nav>
+
+        <section
+          aria-busy={instancesLoading}
+          aria-hidden={modalOpen}
+          className="library"
+          inert={modalOpen}
+        >
+          <div className="library-heading">
+            <div>
+              <p className="eyebrow">YOUR LIBRARY</p>
+              <h2>インスタンス</h2>
+              <p>{instances.length}個のMinecraft環境</p>
+            </div>
+            <div className="view-controls" aria-label="表示切り替え">
+              <button
+                aria-label="グリッド表示"
+                aria-pressed={viewMode === "grid"}
+                className={viewMode === "grid" ? "active" : ""}
+                onClick={() => setViewMode("grid")}
+                type="button"
+              >
+                ▦
+              </button>
+              <button
+                aria-label="リスト表示"
+                aria-pressed={viewMode === "list"}
+                className={viewMode === "list" ? "active" : ""}
+                onClick={() => setViewMode("list")}
+                type="button"
+              >
+                ☷
+              </button>
+            </div>
+          </div>
+
+          <div
+            className={`instance-grid ${viewMode === "list" ? "list-view" : ""}`}
+            aria-label="Minecraftインスタンス"
+          >
+            {instancesLoading && (
+              <output aria-live="polite" className="empty-library library-loading">
+                <span aria-hidden="true" className="loading-spinner" />
+                <strong>インスタンスを読み込んでいます</strong>
+              </output>
+            )}
+            {!instancesLoading && instances.length === 0 && (
+              <button className="empty-library" onClick={openCreator} type="button">
+                <span className="empty-cube">＋</span>
+                <strong>最初のインスタンスを作成</strong>
+                <small>公式の全バージョンからMinecraftを追加できます</small>
+              </button>
+            )}
+            {!instancesLoading &&
+              instances.map((instance) => (
+                <button
+                  className={"instance-tile " + (selectedId === instance.id ? "selected" : "")}
+                  key={instance.id}
+                  onClick={() => setSelectedId(instance.id)}
+                  aria-pressed={selectedId === instance.id}
+                  type="button"
+                >
+                  <span className="instance-art">
+                    <span className="grass-cube">{instance.name.slice(0, 1).toUpperCase()}</span>
+                    {runningIds.has(instance.id) && <span className="playing-badge">PLAYING</span>}
+                  </span>
+                  <span className="tile-copy">
+                    <strong>{instance.name}</strong>
+                    <small>{instanceVersionLabel(instance)}</small>
+                  </span>
+                </button>
+              ))}
+          </div>
+
+          {progress && progress.stage !== "complete" && (
+            <div className="progress-card" aria-live="polite">
+              <div className="progress-icon">↓</div>
+              <div className="progress-body">
+                <div className="progress-copy">
+                  <strong>{stageLabels[progress.stage] ?? progress.stage}</strong>
+                  <span>{progress.message}</span>
+                  <b>{progressPercent}%</b>
+                </div>
+                <progress
+                  aria-label={`${stageLabels[progress.stage] ?? progress.stage}の進捗`}
+                  className="progress-track"
+                  max={100}
+                  value={progressPercent}
+                />
+              </div>
+            </div>
+          )}
+
+          {error && (
+            <div className="error-card" role="alert">
+              <span>!</span>
+              <div>
+                <strong>処理を完了できませんでした</strong>
+                <small>{error}</small>
+              </div>
+            </div>
+          )}
+        </section>
+
+        <aside aria-hidden={modalOpen} className="details-panel" inert={modalOpen}>
+          <div className="details-hero">
+            <div className="detail-icon">{selected?.name.slice(0, 1).toUpperCase() ?? "?"}</div>
+            <div>
+              <span className={"state-label " + (isRunning ? "online" : "")}>
+                {selected && <span className={"status-dot " + (isRunning ? "running" : "")} />}
+                {selected ? (isRunning ? "実行中" : "停止中") : "インスタンス未選択"}
+              </span>
+              <h2>{selected?.name ?? "未選択"}</h2>
+              <p>{selected ? instanceVersionLabel(selected) : "インスタンスを選択してください"}</p>
+            </div>
+          </div>
+
+          <div className="launch-actions">
+            {isRunning ? (
+              <button
+                className="danger-button"
+                disabled={busy !== null}
+                onClick={stop}
+                type="button"
+              >
+                {busy === "stop" ? "停止中…" : "■ 停止"}
+              </button>
+            ) : (
+              <button
+                className="primary-button"
+                disabled={!selected || !selected.sandboxed || busy !== null}
+                onClick={launch}
+                type="button"
+              >
+                <span aria-hidden="true">▶</span>
+                {selected && !selected.sandboxed
+                  ? "再作成が必要"
+                  : busy === "launch"
+                    ? "起動中…"
+                    : "起動"}
+              </button>
+            )}
+            <button
+              aria-label="インスタンス設定"
+              className="icon-button"
+              disabled={!selected || busy !== null}
+              onClick={openSettings}
+              type="button"
+            >
+              ⚙
+            </button>
+            <button
+              aria-label="Modを管理"
+              className="icon-button"
+              disabled={
+                !selected || selected.modLoader.type !== "fabric" || isRunning || busy !== null
+              }
+              onClick={openMods}
+              title={
+                selected?.modLoader.type === "fabric"
+                  ? isRunning
+                    ? "Minecraftを停止してからModを管理してください"
+                    : "ModrinthからModを追加"
+                  : "Fabricインスタンスで利用できます"
+              }
+              type="button"
+            >
+              ◈
+            </button>
+            <button
+              aria-label="インスタンスを診断"
+              className="icon-button"
+              disabled={!selected || busy !== null}
+              onClick={() => void diagnoseSelected()}
+              title="管理対象ファイルと隔離設定を検証"
+              type="button"
+            >
+              ♢
+            </button>
+          </div>
+
+          {busy === "launch" && launchProgress?.instanceId === selected?.id && (
+            <div className="launch-loading" aria-live="polite">
+              <span className="loading-spinner" aria-hidden="true" />
+              <div>
+                <strong>起動準備中</strong>
+                <small>{launchProgress?.message ?? "起動処理を開始しています…"}</small>
+              </div>
+            </div>
+          )}
+
+          <dl className="instance-facts">
+            <div>
+              <dt>実行方式</dt>
+              <dd>
+                {selected?.sandboxed ? "AppContainer" : selected ? "旧形式（起動無効）" : "—"}
+              </dd>
+            </div>
+            <div>
+              <dt>ゲームモード</dt>
+              <dd>{selected?.demo ? "デモ" : selected ? "通常" : "—"}</dd>
+            </div>
+            <div>
+              <dt>Modローダー</dt>
+              <dd>
+                {selected?.modLoader.type === "fabric"
+                  ? `Fabric ${selected.modLoader.version}`
+                  : selected
+                    ? "Vanilla"
+                    : "—"}
+              </dd>
+            </div>
+            <div>
+              <dt>インスタンスID</dt>
+              <dd>{selected?.id ?? "—"}</dd>
+            </div>
+          </dl>
+
+          {(busy === "diagnose" || diagnosis) && (
+            <section className="diagnostic-card" aria-live="polite">
+              <div className="diagnostic-heading">
+                <div>
+                  <span
+                    className={`diagnostic-indicator ${
+                      diagnosis?.status === "healthy" ? "healthy" : "attention"
+                    }`}
+                  />
+                  <strong>
+                    {busy === "diagnose"
+                      ? "診断しています…"
+                      : diagnosis?.status === "healthy"
+                        ? "問題は見つかりませんでした"
+                        : "修復できる問題があります"}
+                  </strong>
+                </div>
+                {diagnosis && (
+                  <small>{diagnosis.checkedFiles.toLocaleString("ja-JP")}ファイル検証</small>
+                )}
+              </div>
+              {busy === "diagnose" ? (
+                <div className="diagnostic-loading">
+                  <span className="loading-spinner" aria-hidden="true" />
+                  SHA-1と保存先を確認中
+                </div>
+              ) : (
+                diagnosis && (
+                  <>
+                    <ul className="diagnostic-list">
+                      {diagnosis.checks.map((check) => (
+                        <li key={check.id}>
+                          <span className={`diagnostic-result ${check.status}`}>
+                            {check.status === "ok" ? "✓" : "!"}
+                          </span>
+                          <div>
+                            <strong>{check.label}</strong>
+                            <small>{check.detail}</small>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                    {diagnosis.repairableCount > 0 && (
+                      <button
+                        className="secondary-button diagnostic-repair"
+                        disabled={isRunning || busy !== null}
+                        onClick={() => void repairSelected()}
+                        title={isRunning ? "Minecraftを停止してから修復してください" : undefined}
+                        type="button"
+                      >
+                        {busy === "repair" ? "修復中…" : "管理対象ファイルを修復"}
+                      </button>
+                    )}
+                  </>
+                )
+              )}
+            </section>
+          )}
+
+          <div className="console">
+            <div className="console-heading">
+              <div>
+                <span className="status-dot" />
+                <strong>ライブコンソール</strong>
+              </div>
+              <button
+                className="text-button"
+                disabled={!selected || visibleLogs.length === 0}
+                onClick={() =>
+                  selected &&
+                  setLogs((current) => current.filter((line) => line.instanceId !== selected.id))
+                }
+                type="button"
+              >
+                クリア
+              </button>
+            </div>
+            <div className="log-output" aria-label="Minecraftログ" aria-live="off" role="log">
+              {visibleLogs.length === 0 ? (
+                <span className="log-placeholder">ゲームを起動するとログが表示されます。</span>
+              ) : (
+                visibleLogs.map((entry) => (
+                  <div className={"log-line " + entry.stream} key={entry.id}>
+                    <span>{entry.stream}</span>
+                    <code>{entry.line}</code>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+
+          <div className={`isolation-note${selected && !selected.sandboxed ? " warning" : ""}`}>
+            <span>◆</span>
+            <p>
+              <strong>
+                {selected
+                  ? selected.sandboxed
+                    ? "サンドボックス保護"
+                    : "安全のため起動無効"
+                  : "AppContainer対応"}
+              </strong>
+              <small>
+                {selected
+                  ? selected.sandboxed
+                    ? "専用SID・限定ファイル権限・ネットワーク権限なしで実行されます"
+                    : "通常権限では起動しません。新しい隔離インスタンスを作成してください"
+                  : "専用SID・限定ファイル権限・ネットワーク権限なしで隔離します"}
+              </small>
+            </p>
+          </div>
+        </aside>
+
+        {showCreator && (
+          <div className="modal-backdrop">
+            <dialog
+              aria-describedby="creator-description"
+              aria-labelledby="creator-title"
+              aria-modal="true"
+              className="creator-modal"
+              open
+              ref={creatorDialogRef}
+            >
+              <form
+                className="creator-form"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void install();
+                }}
+              >
+                <div className="modal-heading">
+                  <div>
+                    <p className="eyebrow">NEW INSTANCE</p>
+                    <h2 id="creator-title">インスタンスを追加</h2>
+                  </div>
+                  <button
+                    onClick={closeCreator}
+                    disabled={busy !== null}
+                    type="button"
+                    aria-label="閉じる"
+                  >
+                    ×
+                  </button>
+                </div>
+                <p className="modal-copy" id="creator-description">
+                  独立したMinecraft環境をAppContainer内に作成します。
+                </p>
+                <label>
+                  バージョン検索
+                  <input
+                    ref={creatorSearchRef}
+                    value={versionQuery}
+                    onChange={(event) => setVersionQuery(event.target.value)}
+                    placeholder="例: 1.21、24w、beta"
+                    disabled={versionsLoading}
+                  />
+                </label>
+                <label>
+                  バージョン
+                  <select
+                    value={selectedVersionId}
+                    onChange={(event) => setSelectedVersionId(event.target.value)}
+                    disabled={versionsLoading || !versionCatalog}
+                    required
+                  >
+                    {!versionCatalog && <option value="">バージョン一覧を取得中…</option>}
+                    {versionGroups.map(
+                      (group) =>
+                        group.versions.length > 0 && (
+                          <optgroup
+                            label={`${group.label} (${group.versions.length})`}
+                            key={group.type}
+                          >
+                            {group.versions.map((version) => (
+                              <option value={version.id} key={version.id}>
+                                {version.id}
+                                {version.id === versionCatalog?.latest.release
+                                  ? " — 最新リリース"
+                                  : version.id === versionCatalog?.latest.snapshot
+                                    ? " — 最新スナップショット"
+                                    : ` — ${version.releaseTime.slice(0, 10)}`}
+                              </option>
+                            ))}
+                          </optgroup>
+                        ),
+                    )}
+                  </select>
+                </label>
+                <div className="version-summary" aria-live="polite">
+                  <span aria-hidden="true">↓</span>
+                  <span>
+                    {versionsLoading
+                      ? "公式バージョン一覧を取得しています…"
+                      : versionCatalog
+                        ? `${versionCatalog.versions.length}件から選択できます`
+                        : "バージョン一覧を取得できませんでした"}
+                    {!versionsLoading && !versionCatalog && versionsError && (
+                      <small>{versionsError}</small>
+                    )}
+                  </span>
+                  {!versionsLoading && !versionCatalog && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void refreshVersions().catch((cause) => setCreatorError(String(cause)))
+                      }
+                    >
+                      再試行
+                    </button>
+                  )}
+                </div>
+                <label>
+                  Modローダー
+                  <select
+                    value={modLoaderType}
+                    onChange={(event) =>
+                      setModLoaderType(event.target.value as "vanilla" | "fabric")
+                    }
+                    disabled={busy !== null}
+                  >
+                    <option value="vanilla">Vanilla</option>
+                    <option value="fabric">Fabric</option>
+                  </select>
+                </label>
+                {modLoaderType === "fabric" && (
+                  <>
+                    <label>
+                      Fabric Loader
+                      <select
+                        value={selectedFabricLoader}
+                        onChange={(event) => setSelectedFabricLoader(event.target.value)}
+                        disabled={
+                          fabricLoadersLoading || fabricLoaders.length === 0 || busy !== null
+                        }
+                        required
+                      >
+                        {fabricLoadersLoading && <option value="">対応バージョンを取得中…</option>}
+                        {!fabricLoadersLoading && fabricLoaders.length === 0 && (
+                          <option value="">対応するLoaderがありません</option>
+                        )}
+                        {fabricLoaders.map((loader) => (
+                          <option value={loader.version} key={loader.version}>
+                            {loader.version}
+                            {loader.stable ? " — stable" : ""}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <div
+                      className={`mode-note ${fabricLoadersError ? "mode-note-error" : ""}`}
+                      aria-live="polite"
+                    >
+                      <span aria-hidden="true">{fabricLoadersError ? "!" : "F"}</span>
+                      <div>
+                        {fabricLoadersError ? (
+                          <>
+                            <strong>Fabric Loader一覧を取得できませんでした。</strong>
+                            <button
+                              className="inline-retry"
+                              onClick={() => setFabricReloadKey((current) => current + 1)}
+                              type="button"
+                            >
+                              再試行
+                            </button>
+                          </>
+                        ) : fabricLoadersLoading ? (
+                          "このMinecraftバージョンとの互換性を確認しています…"
+                        ) : fabricLoaders.length === 0 ? (
+                          "このMinecraftバージョンに対応するFabric Loaderはありません。"
+                        ) : (
+                          "Fabric Loaderのみを導入します。Fabric APIやmodは自動追加しません。"
+                        )}
+                      </div>
+                    </div>
+                  </>
+                )}
+                <label>
+                  プレイモード
+                  <select
+                    value={gameMode}
+                    onChange={(event) => setGameMode(event.target.value as "offline" | "demo")}
+                  >
+                    <option value="offline">
+                      {minecraftProfile ? "通常版（Microsoftアカウント）" : "通常版（オフライン）"}
+                    </option>
+                    <option value="demo">公式デモ版</option>
+                  </select>
+                </label>
+                <div className="mode-note">
+                  <span aria-hidden="true">i</span>
+                  {gameMode === "offline"
+                    ? minecraftProfile
+                      ? `${minecraftProfile.name}のMinecraftプロフィールで起動します。ゲームのネットワーク権限は無効です。`
+                      : "ワールド作成とシングルプレイ向けです。ゲームのネットワーク権限は無効です。"
+                    : "時間制限付きの公式デモワールドを、ネットワーク権限なしで起動します。"}
+                </div>
+                <label>
+                  表示名
+                  <input
+                    autoComplete="off"
+                    maxLength={80}
+                    value={instanceName}
+                    onChange={(event) => setInstanceName(event.target.value)}
+                    required
+                  />
+                </label>
+                <label>
+                  ID
+                  <input
+                    aria-describedby="instance-id-help"
+                    autoCapitalize="none"
+                    autoComplete="off"
+                    maxLength={41}
+                    value={instanceId}
+                    onChange={(event) => setInstanceId(event.target.value)}
+                    pattern="[A-Za-z0-9_-]+"
+                    spellCheck={false}
+                    title="英数字、_、- が使えます"
+                    required
+                  />
+                  <small className="field-hint" id="instance-id-help">
+                    41文字以内の英数字・_・-。作成後は変更できません。
+                  </small>
+                </label>
+                {creatorError && (
+                  <div className="modal-inline-error" role="alert">
+                    {creatorError}
+                  </div>
+                )}
+                <div className="modal-actions">
+                  <button
+                    className="secondary-button"
+                    onClick={closeCreator}
+                    disabled={busy !== null}
+                    type="button"
+                  >
+                    キャンセル
+                  </button>
+                  <button
+                    className="primary-button"
+                    disabled={
+                      busy !== null ||
+                      !selectedVersionId ||
+                      (modLoaderType === "fabric" &&
+                        (fabricLoadersLoading ||
+                          fabricLoadersError !== null ||
+                          !selectedFabricLoader))
+                    }
+                    type="submit"
+                  >
+                    {busy === "install" ? "インストール中…" : "作成する"}
+                  </button>
+                </div>
+              </form>
+            </dialog>
+          </div>
+        )}
+
+        {showAuth && (
+          <div className="modal-backdrop">
+            <dialog
+              aria-describedby="auth-description"
+              aria-labelledby="auth-title"
+              aria-modal="true"
+              className="creator-modal auth-modal"
+              open
+              ref={authDialogRef}
+              tabIndex={-1}
+            >
+              <div className="creator-form">
+                <div className="modal-heading">
+                  <div>
+                    <p className="eyebrow">MICROSOFT ACCOUNT</p>
+                    <h2 id="auth-title">Microsoftアカウント</h2>
+                  </div>
+                  <button
+                    aria-label="閉じる"
+                    disabled={authBusy !== null}
+                    onClick={closeAuth}
+                    type="button"
+                  >
+                    ×
+                  </button>
+                </div>
+                <p className="modal-copy" id="auth-description">
+                  認証はMicrosoftのブラウザー画面で行います。パスワードをMonaLauncherへ入力することはありません。
+                </p>
+
+                {!authStatus.configured && (
+                  <div className="auth-state-card auth-state-warning">
+                    <strong>開発用クライアントIDが未設定です</strong>
+                    <p>
+                      MONALAUNCHER_MICROSOFT_CLIENT_IDを設定してMonaLauncherを再ビルドしてください。
+                    </p>
+                  </div>
+                )}
+
+                {authStatus.authorized && (
+                  <div className="auth-state-card auth-state-success">
+                    <strong>
+                      {minecraftProfile
+                        ? `${minecraftProfile.name} として接続しました`
+                        : minecraftProfileLoading
+                          ? "Minecraftプロフィールを確認しています"
+                          : "Microsoft認証情報を安全に保存しました"}
+                    </strong>
+                    <p>
+                      {minecraftProfile
+                        ? `UUID: ${minecraftProfile.uuid}`
+                        : "更新トークンはWindows資格情報マネージャーにあります。"}
+                    </p>
+                  </div>
+                )}
+
+                {authChallenge && !authStatus.authorized && (
+                  <div className="device-code-panel">
+                    <span>Microsoftの画面へ入力するコード</span>
+                    <strong>{authChallenge.userCode}</strong>
+                    <code>{authChallenge.verificationUri}</code>
+                    <small>認証が完了するまで、この画面で自動的に確認します。</small>
+                  </div>
+                )}
+
+                {authError && (
+                  <div className="modal-inline-error" role="alert">
+                    {authError}
+                  </div>
+                )}
+
+                <div className="auth-security-note">
+                  <span aria-hidden="true">◆</span>
+                  <p>
+                    <strong>トークンはReactへ渡しません</strong>
+                    <small>
+                      OAuthのdevice_code・更新トークン・アクセストークンはRust側だけで処理し、ゲームやModへ渡しません。
+                    </small>
+                  </p>
+                </div>
+
+                <div className="modal-actions auth-actions">
+                  <button
+                    className="secondary-button"
+                    disabled={authBusy !== null}
+                    onClick={closeAuth}
+                    type="button"
+                  >
+                    閉じる
+                  </button>
+                  {authStatus.authorized ? (
+                    <>
+                      {!minecraftProfile && (
+                        <button
+                          className="primary-button"
+                          disabled={authBusy !== null || minecraftProfileLoading}
+                          onClick={() => void refreshMinecraftProfile()}
+                          type="button"
+                        >
+                          {minecraftProfileLoading ? "確認中…" : "Minecraftを確認"}
+                        </button>
+                      )}
+                      <button
+                        className="signout-button"
+                        disabled={authBusy !== null || minecraftProfileLoading}
+                        onClick={() => void signOutMicrosoft()}
+                        ref={authPrimaryRef}
+                        type="button"
+                      >
+                        {authBusy === "signout" ? "削除中…" : "サインアウト"}
+                      </button>
+                    </>
+                  ) : authChallenge ? (
+                    <button
+                      className="primary-button"
+                      disabled={authBusy !== null}
+                      onClick={() => void openMicrosoftVerification(authChallenge.verificationUri)}
+                      ref={authPrimaryRef}
+                      type="button"
+                    >
+                      Microsoftを開く
+                    </button>
+                  ) : (
+                    <button
+                      className="primary-button"
+                      disabled={!authStatus.configured || authBusy !== null}
+                      onClick={() => void beginMicrosoftSignIn()}
+                      ref={authPrimaryRef}
+                      type="button"
+                    >
+                      {authBusy === "begin" ? "コードを取得中…" : "サインインを開始"}
+                    </button>
+                  )}
+                </div>
+              </div>
+            </dialog>
+          </div>
+        )}
+
+        {showMods && selected && selected.modLoader.type === "fabric" && (
+          <div className="modal-backdrop">
+            <dialog
+              aria-describedby="mods-description"
+              aria-labelledby="mods-title"
+              aria-busy={modOperationActive}
+              aria-modal="true"
+              className="creator-modal mods-modal"
+              open
+              ref={modsDialogRef}
+              tabIndex={-1}
+            >
+              <div className="creator-form mods-form">
+                <div className="modal-heading">
+                  <div>
+                    <p className="eyebrow">MODRINTH LIBRARY</p>
+                    <h2 id="mods-title">Modを管理</h2>
+                  </div>
+                  <button
+                    aria-label="閉じる"
+                    disabled={modOperationActive}
+                    onClick={closeMods}
+                    type="button"
+                  >
+                    ×
+                  </button>
+                </div>
+
+                <div className="mods-context" id="mods-description">
+                  <div>
+                    <strong>{selected.name}</strong>
+                    <span>
+                      Minecraft {selected.versionId} · Fabric {selected.modLoader.version}
+                    </span>
+                  </div>
+                  <small>
+                    この組み合わせに対応するModだけを検索します。必須依存も自動で導入します。
+                  </small>
+                </div>
+
+                <section aria-labelledby="installed-mods-title" className="mods-section">
+                  <div className="mods-section-heading">
+                    <h3 id="installed-mods-title">導入済み</h3>
+                    <span>{installedModsLoading ? "確認中…" : `${installedMods.length}件`}</span>
+                  </div>
+                  {installedModsLoading ? (
+                    <div aria-live="polite" className="mods-loading">
+                      <span aria-hidden="true" className="loading-spinner" />
+                      導入済みModを確認しています…
+                    </div>
+                  ) : installedMods.length === 0 ? (
+                    <p className="mods-empty">まだModは導入されていません。</p>
+                  ) : (
+                    <ul className="installed-mod-list">
+                      {installedMods.map((item) => {
+                        const confirmingRemoval = modRemovalTarget?.projectId === item.projectId;
+                        const removing = modRemovingProjectId === item.projectId;
+                        return (
+                          <li
+                            className={`installed-mod-item${confirmingRemoval ? " confirming-removal" : ""}`}
+                            key={item.projectId}
+                          >
+                            <div className="installed-mod-copy">
+                              <strong>{item.title}</strong>
+                              <small>{item.versionNumber}</small>
+                            </div>
+                            <div className="installed-mod-actions">
+                              <span
+                                className={
+                                  item.direct ? "mod-badge direct" : "mod-badge dependency"
+                                }
+                              >
+                                {item.direct ? "追加済み" : "必須依存"}
+                              </span>
+                              {item.direct && !confirmingRemoval && (
+                                <button
+                                  aria-label={`${item.title}を削除`}
+                                  className="mod-remove-trigger"
+                                  disabled={modControlsDisabled}
+                                  onClick={() => {
+                                    setModError(null);
+                                    setModSuccess(null);
+                                    setModRemovalTarget(item);
+                                  }}
+                                  title={`${item.title}を削除`}
+                                  type="button"
+                                >
+                                  削除
+                                </button>
+                              )}
+                            </div>
+                            {confirmingRemoval && (
+                              <div aria-live="polite" className="mod-remove-confirmation">
+                                <p>
+                                  <strong>「{item.title}」を削除しますか？</strong>
+                                  <small>
+                                    このModと、ほかから使われていない必須依存だけを削除します。
+                                  </small>
+                                </p>
+                                <div>
+                                  <button
+                                    className="secondary-button"
+                                    disabled={modOperationActive}
+                                    onClick={() => setModRemovalTarget(null)}
+                                    type="button"
+                                  >
+                                    戻る
+                                  </button>
+                                  <button
+                                    className="mod-remove-confirm-button"
+                                    disabled={modOperationActive}
+                                    onClick={() => void removeModrinthMod(item)}
+                                    ref={modRemoveConfirmRef}
+                                    type="button"
+                                  >
+                                    {removing ? "削除中…" : "削除する"}
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                </section>
+
+                <section
+                  aria-labelledby="mod-search-title"
+                  className="mods-section mod-search-section"
+                >
+                  <div className="mods-section-heading">
+                    <h3 id="mod-search-title">Modrinthから探す</h3>
+                    {modSearch && !modSearchLoading && <span>{modSearch.totalHits}件</span>}
+                  </div>
+                  <form
+                    className="mod-search-form"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      void runModSearch(selected.id, modQuery, 0);
+                    }}
+                  >
+                    <label htmlFor="mod-search-input">
+                      名前・キーワード
+                      <input
+                        autoComplete="off"
+                        disabled={modControlsDisabled}
+                        id="mod-search-input"
+                        maxLength={100}
+                        onChange={(event) => setModQuery(event.target.value)}
+                        placeholder="例: Sodium, Mod Menu"
+                        ref={modSearchInputRef}
+                        type="search"
+                        value={modQuery}
+                      />
+                    </label>
+                    <button
+                      className="primary-button mod-search-button"
+                      disabled={modSearchLoading || modControlsDisabled}
+                      type="submit"
+                    >
+                      {modSearchLoading ? "検索中…" : "検索"}
+                    </button>
+                  </form>
+
+                  {currentModInstallProgress && (
+                    <div aria-live="polite" className="mod-install-progress">
+                      <div>
+                        <span aria-hidden="true" className="loading-spinner" />
+                        <p>
+                          <strong>Modを導入しています</strong>
+                          <small>{currentModInstallProgress.message}</small>
+                        </p>
+                        <span>{modInstallPercent}%</span>
+                      </div>
+                      <progress
+                        aria-label="Mod導入の進捗"
+                        max={Math.max(1, currentModInstallProgress.total)}
+                        value={currentModInstallProgress.completed}
+                      />
+                    </div>
+                  )}
+
+                  {modError && (
+                    <div className="mod-feedback error" role="alert">
+                      {modError}
+                    </div>
+                  )}
+                  {modSuccess && (
+                    <div aria-live="polite" className="mod-feedback success">
+                      {modSuccess}
+                    </div>
+                  )}
+
+                  {modSearchLoading && !modSearch ? (
+                    <div aria-live="polite" className="mods-loading">
+                      <span aria-hidden="true" className="loading-spinner" />
+                      Modrinthを検索しています…
+                    </div>
+                  ) : modSearch?.hits.length === 0 ? (
+                    <p className="mods-empty">
+                      このMinecraft/Fabric版に対応するModが見つかりませんでした。
+                    </p>
+                  ) : (
+                    modSearch && (
+                      <ul aria-label="Modrinth検索結果" className="mod-result-list">
+                        {modSearch.hits.map((hit) => {
+                          const installed = installedProjectIds.has(hit.projectId);
+                          const installing = modInstallingProjectId === hit.projectId;
+                          return (
+                            <li className="mod-result-card" key={hit.projectId}>
+                              <div className="mod-result-copy">
+                                <div>
+                                  <strong>{hit.title}</strong>
+                                  <span>by {hit.author}</span>
+                                </div>
+                                <p>{hit.description || "説明はありません。"}</p>
+                                <small>
+                                  {compactNumber.format(hit.downloads)} ダウンロード ·{" "}
+                                  {compactNumber.format(hit.follows)} フォロー
+                                </small>
+                              </div>
+                              <button
+                                aria-label={`${hit.title}を${installed ? "更新" : "導入"}`}
+                                className={
+                                  installed
+                                    ? "secondary-button mod-result-action"
+                                    : "primary-button mod-result-action"
+                                }
+                                disabled={modControlsDisabled}
+                                onClick={() => void installModrinthMod(hit.projectId)}
+                                type="button"
+                              >
+                                {installing ? "導入中…" : installed ? "更新を確認" : "導入"}
+                              </button>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    )
+                  )}
+
+                  {modSearch && modSearch.totalHits > 0 && (
+                    <div className="mod-pagination">
+                      <button
+                        className="secondary-button"
+                        disabled={modSearch.offset === 0 || modSearchLoading || modControlsDisabled}
+                        onClick={() =>
+                          void runModSearch(
+                            selected.id,
+                            modQuery,
+                            Math.max(0, modSearch.offset - modSearch.limit),
+                          )
+                        }
+                        type="button"
+                      >
+                        前へ
+                      </button>
+                      <span>
+                        {modSearch.offset + 1}–
+                        {Math.min(modSearch.offset + modSearch.hits.length, modSearch.totalHits)} /{" "}
+                        {modSearch.totalHits}件
+                      </span>
+                      <button
+                        className="secondary-button"
+                        disabled={
+                          modSearch.offset + modSearch.hits.length >= modSearch.totalHits ||
+                          modSearchLoading ||
+                          modControlsDisabled
+                        }
+                        onClick={() =>
+                          void runModSearch(
+                            selected.id,
+                            modQuery,
+                            modSearch.offset + modSearch.limit,
+                          )
+                        }
+                        type="button"
+                      >
+                        次へ
+                      </button>
+                    </div>
+                  )}
+                </section>
+
+                <div className="mod-security-note">
+                  <span aria-hidden="true">◆</span>
+                  <p>
+                    <strong>JARは導入時も削除時も内容を検証します</strong>
+                    <small>
+                      SHA-512とサイズが台帳に一致しないファイルは、自動で配置・削除しません。
+                    </small>
+                  </p>
+                </div>
+
+                <div className="modal-actions">
+                  <button
+                    className="secondary-button"
+                    disabled={modOperationActive}
+                    onClick={closeMods}
+                    type="button"
+                  >
+                    閉じる
+                  </button>
+                </div>
+              </div>
+            </dialog>
+          </div>
+        )}
+
+        {showSettings && selected && (
+          <div className="modal-backdrop">
+            <dialog
+              aria-describedby="settings-description"
+              aria-labelledby="settings-title"
+              aria-modal="true"
+              className="creator-modal settings-modal"
+              open
+              ref={settingsDialogRef}
+            >
+              <form
+                className="creator-form"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void renameSelected();
+                }}
+              >
+                <div className="modal-heading">
+                  <div>
+                    <p className="eyebrow">INSTANCE SETTINGS</p>
+                    <h2 id="settings-title">インスタンス設定</h2>
+                  </div>
+                  <button
+                    aria-label="閉じる"
+                    disabled={busy !== null}
+                    onClick={closeSettings}
+                    type="button"
+                  >
+                    ×
+                  </button>
+                </div>
+                <p className="modal-copy" id="settings-description">
+                  表示名を変更できます。インスタンスIDとゲームデータは変わりません。
+                </p>
+                <dl className="settings-summary">
+                  <div>
+                    <dt>バージョン</dt>
+                    <dd>Minecraft {selected.versionId}</dd>
+                  </div>
+                  <div>
+                    <dt>Modローダー</dt>
+                    <dd>
+                      {selected.modLoader.type === "fabric"
+                        ? `Fabric ${selected.modLoader.version}`
+                        : "Vanilla"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>インスタンスID</dt>
+                    <dd>{selected.id}</dd>
+                  </div>
+                </dl>
+                <label>
+                  表示名
+                  <input
+                    maxLength={80}
+                    onChange={(event) => setSettingsName(event.target.value)}
+                    ref={settingsNameRef}
+                    required
+                    value={settingsName}
+                  />
+                </label>
+                {error && (
+                  <div className="modal-inline-error" role="alert">
+                    {error}
+                  </div>
+                )}
+                <section className="danger-zone" aria-labelledby="danger-zone-title">
+                  <div>
+                    <strong id="danger-zone-title">インスタンスを削除</strong>
+                    <small>
+                      ゲーム設定、ログ、スクリーンショット、ワールドをすべて削除します。
+                    </small>
+                  </div>
+                  {!confirmDelete && (
+                    <button
+                      className="delete-instance-button"
+                      disabled={busy !== null || isRunning}
+                      onClick={() => setConfirmDelete(true)}
+                      type="button"
+                    >
+                      削除…
+                    </button>
+                  )}
+                </section>
+                {isRunning && (
+                  <p className="delete-running-note">削除する前にMinecraftを停止してください。</p>
+                )}
+                {confirmDelete && (
+                  <div className="delete-confirmation" role="alert">
+                    <strong>「{selected.name}」を完全に削除しますか？</strong>
+                    <p>この操作は取り消せません。</p>
+                    <div>
+                      <button
+                        className="secondary-button"
+                        disabled={busy !== null}
+                        onClick={() => setConfirmDelete(false)}
+                        type="button"
+                      >
+                        戻る
+                      </button>
+                      <button
+                        className="confirm-delete-button"
+                        disabled={busy !== null}
+                        onClick={() => void deleteSelected()}
+                        type="button"
+                      >
+                        {busy === "delete" ? "削除中…" : "完全に削除"}
+                      </button>
+                    </div>
+                  </div>
+                )}
+                <div className="modal-actions">
+                  <button
+                    className="secondary-button"
+                    disabled={busy !== null}
+                    onClick={closeSettings}
+                    type="button"
+                  >
+                    キャンセル
+                  </button>
+                  <button
+                    className="primary-button"
+                    disabled={busy !== null || settingsName.trim().length === 0}
+                    type="submit"
+                  >
+                    {busy === "rename" ? "保存中…" : "変更を保存"}
+                  </button>
+                </div>
+              </form>
+            </dialog>
+          </div>
+        )}
+      </section>
+    </main>
+  );
+}

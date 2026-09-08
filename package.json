@@ -13,7 +13,8 @@
     "build": "pnpm typecheck && vite build",
     "check": "pnpm format:check && pnpm lint && pnpm build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "prepare": "husky"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
@@ -27,8 +28,11 @@
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^4.6.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^17.4.1",
     "oxfmt": "^0.62.0",
     "oxlint": "^1.77.0",
+    "prettier": "^3.9.6",
     "typescript": "~5.8.3",
     "vite": "^7.0.4"
   },

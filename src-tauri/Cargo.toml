@@ -1,8 +1,9 @@
 [package]
 name = "monalauncher"
 version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
+default-run = "monalauncher"
+description = "A secure Minecraft launcher that runs the game in Windows AppContainer"
+authors = ["aomona"]
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -22,9 +23,39 @@ tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+rayon = "1"
+reqwest = { version = "0.12", default-features = false, features = [
+  "blocking",
+  "json",
+  "rustls-tls",
+] }
+sha1 = "0.10"
+sha2 = "0.10"
+zip = { version = "5", default-features = false, features = ["deflate"] }
+base64 = "0.22"
+getrandom = "0.3"
+tokio = { version = "1", features = ["sync"] }
 
 [lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
 
 [lints.clippy]
 undocumented_unsafe_blocks = "deny"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62.2", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Gdi",
+  "Win32_Media_Speech",
+  "Win32_Security",
+  "Win32_Security_Authorization",
+  "Win32_Security_Credentials",
+  "Win32_Security_Isolation",
+  "Win32_Storage_FileSystem",
+  "Win32_System_Pipes",
+  "Win32_System_Com",
+  "Win32_System_JobObjects",
+  "Win32_System_Threading",
+  "Win32_UI_Accessibility",
+  "Win32_UI_WindowsAndMessaging",
+] }
