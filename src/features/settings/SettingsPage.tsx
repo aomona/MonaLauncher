@@ -1,5 +1,6 @@
 import type { Launcher } from "../../app/useLauncher";
-import { Empty, Tabs } from "../../components/ui";
+import { Empty } from "../../components/Empty";
+import { Tabs } from "../../components/Tabs";
 
 import { AccountSettings } from "../auth/AccountSettings";
 import { AppearanceSettings } from "./AppearanceSettings";

@@ -1,6 +1,6 @@
 import { RefreshCw } from "lucide-react";
 import type { Launcher } from "../../../app/useLauncher";
-import { Button } from "../../../components/ui";
+import { Button } from "../../../components/Button";
 
 type InstanceDiagnosticsModel = Pick<
   Launcher,

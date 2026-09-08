@@ -1,5 +1,6 @@
 import type { Launcher } from "../../../app/useLauncher";
-import { Button, CopyButton } from "../../../components/ui";
+import { Button } from "../../../components/Button";
+import { CopyButton } from "../../../components/CopyButton";
 
 import type { InstanceEditor } from "./useInstanceEditor";
 type InstanceSettingsPanelModel = Pick<

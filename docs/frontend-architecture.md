@@ -1,24 +1,24 @@
 # フロントエンドの責務と配置
 
-Reactの分割は、行数や見た目の小片ではなく、状態・操作・意味上の責務で決める。既存の機能部品と `src/components/ui.tsx` を確認してから、新しい部品を追加する。
+Reactの分割は、行数や見た目の小片ではなく、状態・操作・意味上の責務で決める。既存の機能部品と `src/components/` を確認してから、新しい部品を追加する。
 
 ## レイヤー
 
-| 配置                             | 責務                                                                   |
-| -------------------------------- | ---------------------------------------------------------------------- |
-| `src/App.tsx`                    | controller、ページ、Dialogの組み立て。検索・認証・保存の実装は持たない |
-| `src/app/`                       | Shell、Sidebar、ページ移動、アプリ全体で共有するインスタンス操作の調停 |
-| `src/features/home/`             | Homeページと起動中・最近使ったインスタンスの表示                       |
-| `src/features/instances/`        | 一覧、フィルター、起動履歴、Instance Dialogのナビゲーション記憶        |
-| `src/features/instances/create/` | 作成フォーム、バージョン選択、Minecraft/Fabricカタログ取得             |
-| `src/features/instances/detail/` | 詳細Dialog、各タブ、診断、名前編集と未保存ガード、破壊操作の確認       |
-| `src/features/instances/log/`    | ログの検索・表示・Follow・Copy/Export、資格情報のマスキング            |
-| `src/features/auth/`             | アカウント表示、認証Dialog、Microsoft認証・polling・サインアウト       |
-| `src/features/mods/`             | 導入済みMod、検索・導入・削除、非同期要求と進捗の管理                  |
-| `src/features/settings/`         | 設定ページ、外観の保存・適用                                           |
-| `src/components/ui.tsx`          | 機能を問わず再利用するButton、Dialog、Tabs、Feedback、Copy、Progress   |
-| `src/domain/launcher.ts`         | IPCで共有するデータ型。Reactの状態や画面には依存しない                 |
-| `src/lib/tauri.ts`               | 実行環境の判定                                                         |
+| 配置                             | 責務                                                                                  |
+| -------------------------------- | ------------------------------------------------------------------------------------- |
+| `src/App.tsx`                    | controller、ページ、Dialogの組み立て。検索・認証・保存の実装は持たない                |
+| `src/app/`                       | Shell、Sidebar、ページ移動、アプリ全体で共有するインスタンス操作の調停                |
+| `src/features/home/`             | Homeページと起動中・最近使ったインスタンスの表示                                      |
+| `src/features/instances/`        | 一覧、フィルター、起動履歴、Instance Dialogのナビゲーション記憶                       |
+| `src/features/instances/create/` | 作成フォーム、バージョン選択、Minecraft/Fabricカタログ取得                            |
+| `src/features/instances/detail/` | 詳細Dialog、各タブ、診断、名前編集と未保存ガード、破壊操作の確認                      |
+| `src/features/instances/log/`    | ログの検索・表示・Follow・Copy/Export、資格情報のマスキング                           |
+| `src/features/auth/`             | アカウント表示、認証Dialog、Microsoft認証・polling・サインアウト                      |
+| `src/features/mods/`             | 導入済みMod、検索・導入・削除、非同期要求と進捗の管理                                 |
+| `src/features/settings/`         | 設定ページ、外観の保存・適用                                                          |
+| `src/components/`                | 機能を問わず再利用するButton、Dialog、Tabs、Empty、ErrorMessage、CopyButton、Progress |
+| `src/domain/launcher.ts`         | IPCで共有するデータ型。Reactの状態や画面には依存しない                                |
+| `src/lib/tauri.ts`               | 実行環境の判定                                                                        |
 
 `useLauncher` は既存の公開controllerを維持しつつ、`useAuthentication`、`useModManagement`、`useVersionCatalog` を合成する。IPC呼び出しとイベント購読を表示コンポーネントへ戻さない。末端の部品は `Pick<Launcher, ...>` または直接のデータpropsで、必要な状態と操作を明示する。例えば `LogPanel` はログ行だけを受け取り、認証・削除・起動APIには依存しない。
 

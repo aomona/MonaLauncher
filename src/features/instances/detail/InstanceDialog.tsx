@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import type { Launcher } from "../../../app/useLauncher";
-import { Dialog, Empty, ErrorMessage, Tabs } from "../../../components/ui";
+import { Dialog } from "../../../components/Dialog";
+import { Empty } from "../../../components/Empty";
+import { ErrorMessage } from "../../../components/ErrorMessage";
+import { Tabs } from "../../../components/Tabs";
 
 import { ModCatalog } from "../../mods/ModCatalog";
 import { ModRemovalDialog } from "../../mods/ModRemovalDialog";

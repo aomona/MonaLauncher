@@ -1,7 +1,10 @@
 import { VersionSelector } from "./VersionSelector";
 import { useRef, useState } from "react";
 import type { Launcher } from "../../../app/useLauncher";
-import { Button, Dialog, ErrorMessage, Progress } from "../../../components/ui";
+import { Button } from "../../../components/Button";
+import { Dialog } from "../../../components/Dialog";
+import { ErrorMessage } from "../../../components/ErrorMessage";
+import { Progress } from "../../../components/Progress";
 import type { MinecraftInstance } from "../../../domain/launcher";
 
 type CreateDialogModel = Pick<

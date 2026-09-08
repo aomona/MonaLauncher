@@ -1,7 +1,7 @@
 import { Plus } from "lucide-react";
 import { useEffect } from "react";
 import type { Launcher } from "../../app/useLauncher";
-import { Button } from "../../components/ui";
+import { Button } from "../../components/Button";
 
 import { InstalledMods } from "./InstalledMods";
 export function ModsPanel({ launcher: l }: { launcher: Launcher }) {

@@ -1,6 +1,6 @@
 import { Box, MoreHorizontal, Play } from "lucide-react";
 import type { Launcher } from "../../app/useLauncher";
-import { Button } from "../../components/ui";
+import { Button } from "../../components/Button";
 import type { MinecraftInstance } from "../../domain/launcher";
 
 import { instanceVersionLabel } from "./instance-label";

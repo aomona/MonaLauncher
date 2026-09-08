@@ -1,6 +1,9 @@
 import { ExternalLink } from "lucide-react";
 import type { Launcher } from "../../app/useLauncher";
-import { Button, CopyButton, Dialog, ErrorMessage } from "../../components/ui";
+import { Button } from "../../components/Button";
+import { CopyButton } from "../../components/CopyButton";
+import { Dialog } from "../../components/Dialog";
+import { ErrorMessage } from "../../components/ErrorMessage";
 
 type AuthDialogModel = Pick<
   Launcher,

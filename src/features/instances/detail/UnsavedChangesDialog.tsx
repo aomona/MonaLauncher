@@ -1,5 +1,7 @@
 import type { Launcher } from "../../../app/useLauncher";
-import { Button, Dialog, ErrorMessage } from "../../../components/ui";
+import { Button } from "../../../components/Button";
+import { Dialog } from "../../../components/Dialog";
+import { ErrorMessage } from "../../../components/ErrorMessage";
 
 import type { InstanceEditor } from "./useInstanceEditor";
 export function UnsavedChangesDialog({

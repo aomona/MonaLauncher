@@ -1,4 +1,4 @@
-import { Button } from "../../components/ui";
+import { Button } from "../../components/Button";
 import { HomeInstances, type HomeInstancesProps } from "./HomeInstances";
 export function HomePage(props: HomeInstancesProps & { onSignIn: () => void }) {
   const { launcher, navigate, onSignIn } = props;

@@ -1,5 +1,6 @@
 import type { Launcher } from "../../app/useLauncher";
-import { Button, ErrorMessage } from "../../components/ui";
+import { Button } from "../../components/Button";
+import { ErrorMessage } from "../../components/ErrorMessage";
 
 import { hasTauriRuntime } from "../../lib/tauri";
 

@@ -1,5 +1,7 @@
 import type { Launcher } from "../../app/useLauncher";
-import { Button, Empty, ErrorMessage } from "../../components/ui";
+import { Button } from "../../components/Button";
+import { Empty } from "../../components/Empty";
+import { ErrorMessage } from "../../components/ErrorMessage";
 
 type InstalledModsModel = Pick<
   Launcher,

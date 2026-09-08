@@ -1,6 +1,10 @@
 import { Search } from "lucide-react";
 import type { Launcher } from "../../app/useLauncher";
-import { Button, Dialog, Empty, ErrorMessage, Progress } from "../../components/ui";
+import { Button } from "../../components/Button";
+import { Dialog } from "../../components/Dialog";
+import { Empty } from "../../components/Empty";
+import { ErrorMessage } from "../../components/ErrorMessage";
+import { Progress } from "../../components/Progress";
 
 type ModCatalogModel = Pick<
   Launcher,

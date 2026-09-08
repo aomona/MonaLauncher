@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ErrorMessage } from "../../components/ui";
+import { ErrorMessage } from "../../components/ErrorMessage";
 import { readTheme } from "./appearance";
 export function AppearanceSettings() {
   const [theme, setTheme] = useState(readTheme);

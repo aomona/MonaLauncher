@@ -1,7 +1,8 @@
 import { Download } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { LogLine } from "../../../domain/launcher";
-import { Button, CopyButton } from "../../../components/ui";
+import { Button } from "../../../components/Button";
+import { CopyButton } from "../../../components/CopyButton";
 
 export function LogPanel({ entries }: { entries: LogLine[] }) {
   const [query, setQuery] = useState("");

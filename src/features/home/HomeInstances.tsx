@@ -1,7 +1,8 @@
 import type { ReactNode } from "react";
 import type { Page } from "../../app/navigation";
 import type { Launcher } from "../../app/useLauncher";
-import { Button, Empty } from "../../components/ui";
+import { Button } from "../../components/Button";
+import { Empty } from "../../components/Empty";
 import type { MinecraftInstance } from "../../domain/launcher";
 
 import { InstanceList, type OpenInstance } from "../instances/InstanceList";

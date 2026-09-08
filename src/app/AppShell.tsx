@@ -1,6 +1,7 @@
 import { Menu } from "lucide-react";
 import { useState, type ReactNode } from "react";
-import { Button, Dialog } from "../components/ui";
+import { Button } from "../components/Button";
+import { Dialog } from "../components/Dialog";
 import { Sidebar, type SidebarProps } from "./Sidebar";
 
 export function AppShell({ children, ...navigation }: SidebarProps & { children: ReactNode }) {

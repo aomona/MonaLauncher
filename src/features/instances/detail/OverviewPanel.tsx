@@ -1,5 +1,5 @@
 import type { Launcher } from "../../../app/useLauncher";
-import { CopyButton } from "../../../components/ui";
+import { CopyButton } from "../../../components/CopyButton";
 
 import { InstanceDiagnostics } from "./InstanceDiagnostics";
 export function OverviewPanel({

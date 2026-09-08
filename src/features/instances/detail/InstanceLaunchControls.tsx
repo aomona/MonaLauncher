@@ -1,6 +1,7 @@
 import { Play } from "lucide-react";
 import type { Launcher } from "../../../app/useLauncher";
-import { Button, Progress } from "../../../components/ui";
+import { Button } from "../../../components/Button";
+import { Progress } from "../../../components/Progress";
 
 type InstanceLaunchControlsModel = Pick<
   Launcher,

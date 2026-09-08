@@ -1,7 +1,8 @@
 import { Search, SlidersHorizontal } from "lucide-react";
 import type { ReactNode } from "react";
 import type { Launcher } from "../../app/useLauncher";
-import { Button, Empty } from "../../components/ui";
+import { Button } from "../../components/Button";
+import { Empty } from "../../components/Empty";
 
 import { InstanceList, type OpenInstance } from "./InstanceList";
 import { filterInstances, type InstanceFilters } from "./useInstanceFilters";

@@ -1,6 +1,8 @@
 import { useState } from "react";
 import type { Launcher } from "../../../app/useLauncher";
-import { Button, Dialog, ErrorMessage } from "../../../components/ui";
+import { Button } from "../../../components/Button";
+import { Dialog } from "../../../components/Dialog";
+import { ErrorMessage } from "../../../components/ErrorMessage";
 
 export type InstanceAction = "stop" | "delete" | "repair";
 export function InstanceActionConfirmation({

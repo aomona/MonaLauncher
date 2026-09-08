@@ -1,5 +1,5 @@
 import { Box, Download, Home, Images, Newspaper, Settings } from "lucide-react";
-import { Button } from "../components/ui";
+import { Button } from "../components/Button";
 import type { MinecraftInstance } from "../domain/launcher";
 import type { OpenInstance } from "../features/instances/InstanceList";
 import type { Launcher } from "./useLauncher";
