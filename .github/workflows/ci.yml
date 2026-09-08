@@ -39,3 +39,11 @@ jobs:
 
       - name: Run project checks
         run: mise run check
+
+      - name: Verify AppContainer isolation
+        working-directory: src-tauri
+        run: cargo run --locked --bin sandbox_probe -- --appcontainer
+
+      - name: Verify sandbox ACL boundaries
+        working-directory: src-tauri
+        run: cargo run --locked --bin sandbox_probe -- --acl
