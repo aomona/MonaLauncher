@@ -50,21 +50,28 @@
   .field-hint {
     @apply text-small font-normal text-text-secondary;
   }
+  .dialog-backdrop {
+    position: fixed;
+    inset: 0;
+    background: var(--mona-backdrop);
+  }
+  .dialog-viewport {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
   .dialog {
-    @apply rounded-dialog border border-border-subtle bg-background-floating text-text-body shadow-modal;
+    @apply font-sans text-body rounded-dialog border border-border-subtle bg-background-floating text-text-body shadow-modal;
     padding: 0;
     margin: auto;
     width: min(var(--mona-layout-normal-dialog-width), calc(100vw - 4rem));
     max-width: none;
     max-height: calc(100dvh - 4rem);
     overflow: hidden;
-  }
-  .dialog[open] {
     display: flex;
     flex-direction: column;
-  }
-  .dialog::backdrop {
-    background: var(--mona-backdrop);
   }
   .dialog-large {
     width: min(var(--mona-layout-instance-modal-max-width), calc(100vw - 4rem));
@@ -153,14 +160,12 @@
     background: var(--mona-progress-track);
     border: none;
   }
-  .progress::-webkit-progress-bar {
-    background: var(--mona-progress-track);
-  }
-  .progress::-webkit-progress-value {
+  .progress-indicator {
+    height: 100%;
     background: var(--mona-progress-fill);
   }
-  .progress::-moz-progress-bar {
-    background: var(--mona-progress-fill);
+  .progress-indicator[data-indeterminate] {
+    visibility: hidden;
   }
   .sidebar {
     @apply flex h-dvh shrink-0 flex-col border-r border-border-subtle bg-background-sidebar p-3;

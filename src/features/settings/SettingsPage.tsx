@@ -20,12 +20,7 @@ export function SettingsPage({
         tabs={["General", "Minecraft", "Java", "Advanced"]}
         active={settingsTab}
         onChange={setSettingsTab}
-      />
-      <section
-        role="tabpanel"
-        id="settings-panel"
-        aria-labelledby={`settings-tab-${["General", "Minecraft", "Java", "Advanced"].indexOf(settingsTab)}`}
-        className="pt-6"
+        panelProps={{ className: "pt-6" }}
       >
         {settingsTab === "General" ? (
           <>
@@ -49,7 +44,7 @@ export function SettingsPage({
             </p>
           </Empty>
         )}
-      </section>
+      </Tabs>
     </>
   );
 }

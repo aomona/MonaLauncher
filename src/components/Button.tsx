@@ -1,11 +1,12 @@
-import { type ButtonHTMLAttributes } from "react";
+import { Button as BaseButton } from "@base-ui/react/button";
+import { type ComponentProps } from "react";
 
 export function Button({
   tone = "secondary",
   className = "",
   ...props
-}: ButtonHTMLAttributes<HTMLButtonElement> & {
+}: ComponentProps<"button"> & {
   tone?: "primary" | "secondary" | "ghost" | "danger" | "danger-outline";
 }) {
-  return <button type="button" className={`button button-${tone} ${className}`} {...props} />;
+  return <BaseButton type="button" className={`button button-${tone} ${className}`} {...props} />;
 }

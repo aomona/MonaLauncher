@@ -1,3 +1,4 @@
+import type { RefObject } from "react";
 import type { Launcher } from "../../../app/useLauncher";
 import { Button } from "../../../components/Button";
 import { Dialog } from "../../../components/Dialog";
@@ -7,14 +8,17 @@ import type { InstanceEditor } from "./useInstanceEditor";
 export function UnsavedChangesDialog({
   launcher: l,
   editor,
+  returnFocus,
 }: {
   launcher: Launcher;
   editor: InstanceEditor;
+  returnFocus: RefObject<HTMLDivElement | null>;
 }) {
   return (
     <Dialog
       title="未保存の変更があります"
       onClose={editor.cancelNavigation}
+      finalFocus={returnFocus}
       footer={
         <>
           <Button data-initial-focus onClick={editor.cancelNavigation}>

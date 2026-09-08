@@ -10,6 +10,7 @@ MonaLauncher は、Windows の AppContainer 内で Minecraft を実行する開�
 
 # デザイン実装
 
+- 共通の対話UIは `@base-ui/react` の対応する部品を使用し、`src/components/` でデザイントークンに合わせて実装してください。既存の共通部品を優先して再利用してください。
 - UI・CSS・コンポーネントを変更する前に [design/README.md](design/README.md) を読み、実装方法と検証手順に従ってください。
 - 挙動・画面構成は [デザイン定義 v1.1](design/MonaLauncher_Design_Definition_v1.1.md) の該当章、数値は [デザイントークン v1.1](design/MonaLauncher_Design_Tokens_v1.1.json) を参照してください。既存画面の配色・装飾・寸法を新デザインの根拠にしないでください。
 - Tailwind CSS v4 の設定は `src/styles/theme.generated.css` です。生成物を手編集せず、トークンまたは `scripts/generate-design-theme.mjs` を変更して `pnpm design:generate` を実行してください。

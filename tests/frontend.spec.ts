@@ -261,8 +261,12 @@ test("large text, OS contrast and reduced motion retain controls", async ({ page
   await page.emulateMedia({ reducedMotion: "reduce", forcedColors: "active" });
   await page.getByRole("button", { name: "Survival", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Survival", exact: true });
-  await expect(dialog.getByRole("button", { name: "Play", exact: true })).toBeInViewport();
-  await expect(dialog.getByRole("button", { name: "閉じる", exact: true })).toBeInViewport();
+  await expect(dialog.getByRole("button", { name: "Play", exact: true })).toBeInViewport({
+    ratio: 1,
+  });
+  await expect(dialog.getByRole("button", { name: "閉じる", exact: true })).toBeInViewport({
+    ratio: 1,
+  });
   await expect(dialog.getByRole("button", { name: "Play", exact: true })).toHaveCSS(
     "transition-duration",
     "0s",
@@ -307,7 +311,9 @@ test("200 instances scroll locally and search across the list", async ({ page })
   await page.locator("main").evaluate((element) => {
     element.scrollTop = element.scrollHeight;
   });
-  await expect(page.getByRole("button", { name: "Settings", exact: true })).toBeInViewport();
+  await expect(page.getByRole("button", { name: "Settings", exact: true })).toBeInViewport({
+    ratio: 1,
+  });
   await page.getByRole("textbox", { name: "インスタンスを検索" }).fill("Instance 199");
   await expect(page.locator(".instance-row")).toHaveCount(1);
   await expect(page.getByRole("button", { name: "Instance 199", exact: true })).toBeVisible();
@@ -395,4 +401,116 @@ test("version selector preserves legacy versions when the creation form reopens"
   await expect(page.getByRole("combobox", { name: "Minecraft version", exact: true })).toHaveValue(
     "a1.2.6",
   );
+});
+
+test("dialog traps and restores focus, and backdrop dismissal protects drafts", async ({
+  page,
+}, testInfo) => {
+  await mockDesktop(page);
+  await openSurvival(page);
+  const dialog = page.getByRole("dialog", { name: "Survival", exact: true });
+  await expect(dialog.getByRole("heading", { name: "Survival", exact: true })).toBeFocused();
+  for (let i = 0; i < 20; i++) {
+    await page.keyboard.press(i < 10 ? "Tab" : "Shift+Tab");
+    await expect
+      .poll(() => dialog.evaluate((element) => element.contains(document.activeElement)))
+      .toBe(true);
+  }
+  await page.getByRole("tab", { name: "Settings", exact: true }).click();
+  await page.getByLabel("表示名", { exact: false }).fill("Protected draft");
+  const heading = await dialog
+    .getByRole("heading", { name: "Survival", exact: true })
+    .boundingBox();
+  await page.mouse.move(heading!.x + 5, heading!.y + 5);
+  await page.mouse.down();
+  await page.mouse.move(4, 4);
+  await page.mouse.up();
+  await expect(page.getByRole("dialog", { name: "未保存の変更があります" })).toHaveCount(0);
+  await expect(dialog).toBeVisible();
+  await page.mouse.click(4, 4);
+  const guard = page.getByRole("dialog", { name: "未保存の変更があります" });
+  await expect(guard).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("nested-dialog.png") });
+  await page.mouse.click(4, 4);
+  await expect(guard).toHaveCount(0);
+  await expect(page.getByLabel("表示名", { exact: false })).toHaveValue("Protected draft");
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "破棄して移動" }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Survival", exact: true })).toBeFocused();
+});
+
+test("all tabs activate from the keyboard and label their panel", async ({ page }, testInfo) => {
+  await mockDesktop(page);
+  await openSurvival(page);
+  const dialog = page.getByRole("dialog", { name: "Survival", exact: true });
+  const tabs = dialog.getByRole("tab");
+  await tabs.first().focus();
+  for (let i = 0; i < 10; i++) {
+    await expect(tabs.nth(i)).toHaveAttribute("aria-selected", "true");
+    await expect(dialog.getByRole("tabpanel")).toHaveAccessibleName(
+      (await tabs.nth(i).textContent())!,
+    );
+    await expect(tabs.nth(i)).toHaveAttribute(
+      "aria-controls",
+      (await dialog.getByRole("tabpanel").getAttribute("id"))!,
+    );
+    await page.keyboard.press("ArrowRight");
+  }
+  await expect(tabs.first()).toBeFocused();
+  await page.setViewportSize({ width: 320, height: 640 });
+  await page.keyboard.press("End");
+  await expect(tabs.last()).toBeInViewport({ ratio: 0.99 });
+  await page.screenshot({ path: testInfo.outputPath("narrow-dialog.png") });
+  await page.keyboard.press("Home");
+  await expect(tabs.first()).toBeInViewport({ ratio: 0.99 });
+});
+
+test("progress reports measured values and omits unknown percentages", async ({
+  page,
+}, testInfo) => {
+  await mockDesktop(page);
+  await openSurvival(page);
+  const dialog = page.getByRole("dialog", { name: "Survival", exact: true });
+  for (const total of [100, 0]) {
+    await page.evaluate((total) => {
+      (
+        window as unknown as { __test: { emit: (event: string, payload: unknown) => void } }
+      ).__test.emit("minecraft-install-progress", {
+        completed: 37,
+        total,
+        message: "Downloading libraries",
+      });
+    }, total);
+    const progress = dialog.getByRole("progressbar", { name: "Downloading libraries" });
+    await expect(progress).toBeVisible();
+    if (total) {
+      await expect(progress).toHaveAttribute("aria-valuenow", "37");
+      await expect(dialog.getByText("37%", { exact: true })).toBeVisible();
+      await page.screenshot({ path: testInfo.outputPath("progress-dialog.png") });
+    } else {
+      await expect(progress).not.toHaveAttribute("aria-valuenow");
+      await expect(dialog.getByText("37%", { exact: true })).toHaveCount(0);
+    }
+  }
+});
+
+test("canceling a guarded tab change keeps the draft and active panel", async ({ page }) => {
+  await mockDesktop(page);
+  await openSurvival(page);
+  await page.getByRole("tab", { name: "Settings", exact: true }).click();
+  await page.getByLabel("表示名", { exact: false }).fill("Keep editing");
+  await page.getByRole("tab", { name: "Overview", exact: true }).click();
+  const guard = page.getByRole("dialog", { name: "未保存の変更があります" });
+  await expect(guard).toBeVisible();
+  await guard.getByRole("button", { name: "編集を続ける" }).click();
+  await expect(guard).toHaveCount(0);
+  await expect(page.getByRole("tab", { name: "Settings", exact: true })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(page.getByLabel("表示名", { exact: false })).toHaveValue("Keep editing");
+  await page.getByRole("tab", { name: "Overview", exact: true }).click();
+  await page.getByRole("button", { name: "破棄して移動" }).click();
+  await expect(page.getByRole("tabpanel")).toHaveAccessibleName("Overview");
 });

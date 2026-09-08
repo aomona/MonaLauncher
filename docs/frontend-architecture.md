@@ -41,3 +41,11 @@ Reactの分割は、行数や見た目の小片ではなく、状態・操作・
 5. 実装後に、複数の責務が蓄積した部品を見直す。共通化のためだけに用途別の保存・削除ルールを一つの汎用Dialogへ押し込まない。
 
 検証は `pnpm check` と `pnpm test:ui`。構造変更でも、Focus、未保存編集、非同期処理の継続、テーマ保存を維持する。デザインの値と操作条件は [design/README.md](../design/README.md) を参照する。
+
+## 共通UIとBase UI
+
+`src/components/` のButton、Dialog、Tabs、Progressは `@base-ui/react` の各primitiveを使用する。CopyButtonは共通Buttonを合成する。EmptyとErrorMessageは表示専用の意味を持つHTMLを維持する。見た目はデザイントークンと `src/App.css` で定義し、Base UIにはフォーカス管理、キーボード操作、ARIAと状態の関連付けを任せる。
+
+Dialogは呼び出し元の条件付き表示を維持するcontrolled component。閉じる要求は `onClose` を通し、未保存ガードと処理中の閉じ方はfeature側で決める。確認・Mod管理などの子Dialogは親DialogのReactツリー内に置き、Base UIがレイヤーの親子関係を認識できるようにする。初期Focusは `data-initial-focus`、未指定ならタイトル。未保存ガードを閉じた際は編集中のPanelへFocusを戻し、拒否したTab移動がFocus復帰で再発しないようにする。Portalの配色・文字・寸法は共通CSSで指定する。
+
+TabsはTablistとPanelをまとめ、表示内容はchildren、Panelのref・Scroll記憶・見た目は `panelProps` で受け取る。選択状態と未保存ガードは引き続きfeatureが所有する。Progressは未確定値を `null` としてBase UIに渡し、数値がない場合は%や塗りつぶし量を表示しない。

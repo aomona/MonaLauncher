@@ -20,6 +20,7 @@
     "test:ui": "playwright test"
   },
   "dependencies": {
+    "@base-ui/react": "^1.8.0",
     "@fontsource-variable/geist": "^5.3.0",
     "@fontsource-variable/geist-mono": "^5.3.0",
     "@fontsource-variable/noto-sans-jp": "^5.3.0",

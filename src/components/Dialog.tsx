@@ -1,7 +1,6 @@
-/* Native dialog backdrop clicks complement onCancel (Escape); the dialog itself is not a button. */
-/* eslint-disable jsx-a11y/no-noninteractive-element-interactions, jsx-a11y/click-events-have-key-events */
+import { Dialog as BaseDialog } from "@base-ui/react/dialog";
 import { X } from "lucide-react";
-import { useEffect, useId, useRef, type ReactNode } from "react";
+import { useRef, type ReactNode } from "react";
 import { Button } from "./Button";
 
 export function Dialog({
@@ -9,6 +8,7 @@ export function Dialog({
   children,
   footer,
   onClose,
+  finalFocus,
   large = false,
   className = "",
 }: {
@@ -16,65 +16,51 @@ export function Dialog({
   children: ReactNode;
   footer?: ReactNode;
   onClose: () => void;
+  finalFocus?: BaseDialog.Popup.Props["finalFocus"];
   large?: boolean;
   className?: string;
 }) {
-  const ref = useRef<HTMLDialogElement>(null);
-  const startedOutside = useRef(false);
-  const titleId = useId();
-  useEffect(() => {
-    const element = ref.current;
-    const previous = document.activeElement;
-    element?.showModal();
-    (
-      element?.querySelector<HTMLElement>("[data-initial-focus]") ??
-      element?.querySelector<HTMLElement>("h2")
-    )?.focus();
-    return () => {
-      element?.close();
-      if (previous instanceof HTMLElement && previous.isConnected) previous.focus();
-    };
-  }, []);
-  const outside = (x: number, y: number) => {
-    const box = ref.current?.getBoundingClientRect();
-    return box ? x < box.left || x > box.right || y < box.top || y > box.bottom : false;
-  };
+  const ref = useRef<HTMLDivElement>(null);
   return (
-    <dialog
-      ref={ref}
-      aria-labelledby={titleId}
-      className={`dialog ${large ? "dialog-large" : ""} ${className}`}
-      onCancel={(event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        onClose();
-      }}
-      onPointerDown={(event) => {
-        startedOutside.current =
-          event.target === event.currentTarget && outside(event.clientX, event.clientY);
-      }}
-      onClick={(event) => {
-        if (
-          startedOutside.current &&
-          event.target === event.currentTarget &&
-          outside(event.clientX, event.clientY)
-        ) {
-          event.stopPropagation();
-          onClose();
-        }
-        startedOutside.current = false;
+    <BaseDialog.Root
+      open
+      onOpenChange={(open) => {
+        if (!open) onClose();
       }}
     >
-      <header className="dialog-header">
-        <h2 id={titleId} tabIndex={-1} className={large ? "text-page-title" : "text-section-title"}>
-          {title}
-        </h2>
-        <Button tone="ghost" className="icon-button shrink-0" aria-label="閉じる" onClick={onClose}>
-          <X size={18} />
-        </Button>
-      </header>
-      {children}
-      {footer && <footer className="dialog-footer">{footer}</footer>}
-    </dialog>
+      <BaseDialog.Portal>
+        <BaseDialog.Backdrop className="dialog-backdrop" />
+        <BaseDialog.Viewport className="dialog-viewport">
+          <BaseDialog.Popup
+            ref={ref}
+            finalFocus={finalFocus}
+            className={`dialog ${large ? "dialog-large" : ""} ${className}`}
+            initialFocus={() =>
+              ref.current?.querySelector<HTMLElement>("[data-initial-focus]") ??
+              ref.current?.querySelector<HTMLElement>("h2") ??
+              true
+            }
+          >
+            <header className="dialog-header">
+              <BaseDialog.Title
+                tabIndex={-1}
+                className={large ? "text-page-title" : "text-section-title"}
+              >
+                {title}
+              </BaseDialog.Title>
+              <BaseDialog.Close
+                render={
+                  <Button tone="ghost" className="icon-button shrink-0" aria-label="閉じる" />
+                }
+              >
+                <X size={18} aria-hidden="true" />
+              </BaseDialog.Close>
+            </header>
+            {children}
+            {footer && <footer className="dialog-footer">{footer}</footer>}
+          </BaseDialog.Popup>
+        </BaseDialog.Viewport>
+      </BaseDialog.Portal>
+    </BaseDialog.Root>
   );
 }
