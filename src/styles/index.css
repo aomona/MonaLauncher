@@ -1,11 +1,19 @@
-@layer theme, base, legacy, components, utilities;
+@layer theme, base, components, utilities;
 
 @import "tailwindcss" source("../");
 @import "@fontsource-variable/geist";
 @import "@fontsource-variable/geist-mono";
 @import "@fontsource-variable/noto-sans-jp";
 @import "./theme.generated.css";
-@import "../App.css" layer(legacy);
+@import "../App.css";
+
+@font-face {
+  font-family: "Noto Sans Mono CJK JP";
+  src: url("/fonts/NotoSansMonoCJKjp-Regular.otf") format("opentype");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
 
 @layer base {
   html {
@@ -13,6 +21,13 @@
     color: var(--mona-text-body);
     background: var(--mona-background-app);
     font-synthesis: none;
+  }
+
+  html,
+  body,
+  #root {
+    min-width: 0;
+    min-height: 100%;
   }
 
   body {

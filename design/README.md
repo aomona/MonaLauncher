@@ -10,16 +10,18 @@ UIを実装・変更するエージェントは、このガイドを最初に読
 
 原本2ファイルは受領した内容をそのまま保管し、formatterの対象外にしている。原本中の製品要件は設計資料であり、今回すべての画面や機能を実装したという意味ではない。作業範囲・実行権限はユーザーの依頼に従う。
 
-今回整備したものはTailwind v4、Vite連携、トークン生成、同梱UIフォント、実装用スタイル入口である。既存の `src/App.tsx` と `src/App.css` の画面は旧デザインであり、移行済みではない。Theme設定画面・永続化、Drawer、各Modal、操作モデルは今後の画面実装で適用する。
+フロントエンドは新デザインへ移行済み。Home、Instances、Settingsの外観・アカウント管理、狭幅Drawer、大型Instance Modal、作成・認証・Mod管理のDialogを実装している。Themeと、このUIで観測した起動履歴はローカルに保存する。既存バックエンドの作成・起動・停止・改名・削除・診断・修復・認証・Mod操作は `src/hooks/useLauncher.ts` に分離して接続している。
+
+News、Gallery、Resource Packs、Shader Packs、Worlds、Serversは取得APIがないため、未取得・未対応として表示する。Group管理、Created日時によるSort、バージョン変更、Open Folder、Java等のグローバル設定も未対応。架空の記事・画像・件数や、実行できない操作は追加しない。これはデザイン仕様全機能の完成宣言ではない。
 
 ## ファイルと更新手順
 
-| ファイル                            | 役割                                                                           |
-| ----------------------------------- | ------------------------------------------------------------------------------ |
-| `src/styles/index.css`              | アプリから読み込む入口。Tailwind、フォント、生成テーマ、旧CSS、共通補助utility |
-| `src/styles/theme.generated.css`    | Tailwind v4のCSSベース設定。`tailwind.config.js` は使用しない                  |
-| `scripts/generate-design-theme.mjs` | JSONからCSS変数・`@theme`・動きのutilityを生成                                 |
-| `scripts/design-theme.test.mjs`     | 実際のTailwindコンパイラでutility生成を確認                                    |
+| ファイル                            | 役割                                                                                       |
+| ----------------------------------- | ------------------------------------------------------------------------------------------ |
+| `src/styles/index.css`              | アプリから読み込む入口。Tailwind、フォント、生成テーマ、共通コンポーネントCSS、補助utility |
+| `src/styles/theme.generated.css`    | Tailwind v4のCSSベース設定。`tailwind.config.js` は使用しない                              |
+| `scripts/generate-design-theme.mjs` | JSONからCSS変数・`@theme`・動きのutilityを生成                                             |
+| `scripts/design-theme.test.mjs`     | 実際のTailwindコンパイラでutility生成を確認                                                |
 
 1. 必要な変更が仕様変更なのか、既存仕様への実装合わせなのかを区別する。
 2. 仕様変更が依頼された場合、本文・JSON・このガイドを整合させる。
@@ -61,7 +63,7 @@ UIを実装・変更するエージェントは、このガイドを最初に読
 
 `<html>` の `data-theme` が未指定または `system` ならOSに追従する。`light` / `dark` はOSより優先される。設定画面で保存された選択をこの属性に反映し、初期値はSystemとする。属性変更にはReactの再mountは不要。通常の色を `dark:` で二重指定せず、同じ意味のutilityを両Themeで使う。
 
-Geist Variable、Noto Sans JP Variable、Geist Mono VariableをFontsourceからインストールし、Viteがフォントファイルを同梱する。配布ライセンスは `public/fonts/licenses/` に保持し、ビルド成果物にもコピーされる。起動時にGoogle Fonts等へ接続しない。CSS内のFamily名はパッケージの登録名に合わせている。日本語Monoの `Noto Sans Mono CJK JP` はフォールバック指定のみで、フォント本体はまだ同梱していない。Log画面の完成時には配布ライセンスを確認して同梱し、Windowsで日本語の描画を検証する。
+Geist Variable、Noto Sans JP Variable、Geist Mono VariableをFontsourceからインストールし、Viteがフォントファイルを同梱する。配布ライセンスは `public/fonts/licenses/` に保持し、ビルド成果物にもコピーされる。起動時にGoogle Fonts等へ接続しない。CSS内のFamily名はパッケージの登録名に合わせている。日本語Monoの `Noto Sans Mono CJK JP` Regularも `public/fonts/` に同梱し、OFLライセンスを保持している。[公式配布元](https://github.com/notofonts/noto-cjk/blob/main/Sans/Mono/NotoSansMonoCJKjp-Regular.otf)のフォントを使用する。フォント本体は約16MBで、起動時の外部配信には依存しない。Windowsでの実際の字形・行高は引き続き実機で確認する。
 
 技術値・Version・ID・Logは `font-mono`。日時や見出しはSans。数値列や経過時間は `tabular-nums`。通常UIのLabelは必要箇所だけ `select-none` にし、名前・説明・記事・Path・Address・Log・エラー詳細は選択可能に保つ。
 
@@ -79,7 +81,7 @@ Geist Variable、Noto Sans JP Variable、Geist Mono VariableをFontsourceから�
 </main>
 ```
 
-`design-surface` は新しい画面/Portalのフォント・通常色の起点。旧 `App.css` は `legacy` layerに隔離し、utilityが優先される。旧セレクタのbackground-image、固定寸法、opacity等は別プロパティとして残るため、新規コンポーネントに旧クラスを流用しない。画面移行時には不要になった旧CSSを削除し、rootの旧min-widthやoverflowも含めて移行する。今回の設定だけで旧画面の表示が仕様に揃うわけではない。
+`design-surface` は画面/Portalのフォント・通常色の起点。`src/App.css` はトークンを使った共通コンポーネント定義で、`components` layerに配置する。旧CSSは削除済み。新しい表示はsemantic utilityと共通部品を組み合わせ、色や寸法を独自に再定義しない。
 
 Inputは `bg-control-background border border-border-control rounded-control text-body placeholder:text-control-placeholder design-focus` と最小高さを使う。通常のSeparatorは `border-border-subtle`。通常ボタン・PanelにShadowを付けない。Dangerの最終確認は `bg-danger-button-background text-danger-button-foreground`、Force Quitは `text-danger-foreground border-danger-foreground`、一般Delete導線はNeutralを使い分ける。
 
@@ -117,3 +119,13 @@ Focusは `design-focus` で2px Outline＋2px Offset。親overflowで切らない
 `pnpm check` は設定・コンパイルの確認。実画面のアクセシビリティや操作適合を保証しない。UI移行時はLight/Dark、1024×640・1440×900、200%拡大・実効幅320px、長い日本語・Path、空/未取得/Error、キーボード、Reduced motion、High contrastを原本18章に従って確認する。
 
 Tailwindの設定方式は [公式Themeドキュメント](https://tailwindcss.com/docs/theme)、Vite連携は [公式導入手順](https://tailwindcss.com/docs/installation/using-vite) を参照。
+
+## フロントエンドの検証（2026-09-09）
+
+- `pnpm check`: トークン同期、utility生成、書式、lint、型、production build。
+- `pnpm test:ui`: Playwright / Chromium。テスト専用のTauri IPCモックで、実際のReact画面を操作する。モックを本番アプリへ組み込まない。
+- 画面: 1440×900、1024×640、実効幅320px、文字200%、Light/Dark保存、OS High contrast、Reduced motion、狭幅Drawer、10個のTabのキーボード到達、200件の一覧と検索。
+- 操作: Draftの保存失敗と維持、Escで1レイヤーだけ閉じる、作成後Overview、Mod検索への到達、名前一致による削除、強制終了失敗のRunning保持、終了通知までStopping維持、ログの資格情報マスキング。
+- 未検証: Windows/AppContainerでの実ゲーム起動、実Microsoft認証、実Modダウンロード、スクリーンリーダー。IPCモックの成功をこれらの実機検証の代わりにしない。
+
+初回のブラウザーテスト前に `pnpm exec playwright install chromium` を実行する。実データを持たない通常ブラウザーではプレビュー説明とEmpty stateを表示し、ゲーム操作を有効化しない。

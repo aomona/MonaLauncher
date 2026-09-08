@@ -16,7 +16,8 @@
     "tauri": "tauri",
     "prepare": "husky",
     "design:generate": "node scripts/generate-design-theme.mjs",
-    "design:check": "node scripts/generate-design-theme.mjs --check && node --test scripts/design-theme.test.mjs"
+    "design:check": "node scripts/generate-design-theme.mjs --check && node --test scripts/design-theme.test.mjs",
+    "test:ui": "playwright test"
   },
   "dependencies": {
     "@fontsource-variable/geist": "^5.3.0",
@@ -24,10 +25,12 @@
     "@fontsource-variable/noto-sans-jp": "^5.3.0",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-opener": "^2",
+    "lucide-react": "^1.42.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@tailwindcss/vite": "^4.3.3",
     "@tauri-apps/cli": "^2",
     "@types/node": "^26.1.2",
