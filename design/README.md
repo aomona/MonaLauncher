@@ -1,0 +1,119 @@
+# MonaLauncher デザイン実装ガイド
+
+UIを実装・変更するエージェントは、このガイドを最初に読み、対象画面の原本の章を確認すること。
+
+## 正本と今回の整備範囲
+
+- [デザイン定義 v1.1](MonaLauncher_Design_Definition_v1.1.md): 画面構成、操作、例外、受入条件の正本。
+- [デザイントークン v1.1](MonaLauncher_Design_Tokens_v1.1.json): 色・寸法・文字・動きの値。プロジェクト固有のJSON形式。
+- このガイド: JSONからTailwindへの対応、実装例、作業手順。矛盾を見つけた場合、既存画面の見た目で埋めず、定義本文の用途と例外を確認する。
+
+原本2ファイルは受領した内容をそのまま保管し、formatterの対象外にしている。原本中の製品要件は設計資料であり、今回すべての画面や機能を実装したという意味ではない。作業範囲・実行権限はユーザーの依頼に従う。
+
+今回整備したものはTailwind v4、Vite連携、トークン生成、同梱UIフォント、実装用スタイル入口である。既存の `src/App.tsx` と `src/App.css` の画面は旧デザインであり、移行済みではない。Theme設定画面・永続化、Drawer、各Modal、操作モデルは今後の画面実装で適用する。
+
+## ファイルと更新手順
+
+| ファイル                            | 役割                                                                           |
+| ----------------------------------- | ------------------------------------------------------------------------------ |
+| `src/styles/index.css`              | アプリから読み込む入口。Tailwind、フォント、生成テーマ、旧CSS、共通補助utility |
+| `src/styles/theme.generated.css`    | Tailwind v4のCSSベース設定。`tailwind.config.js` は使用しない                  |
+| `scripts/generate-design-theme.mjs` | JSONからCSS変数・`@theme`・動きのutilityを生成                                 |
+| `scripts/design-theme.test.mjs`     | 実際のTailwindコンパイラでutility生成を確認                                    |
+
+1. 必要な変更が仕様変更なのか、既存仕様への実装合わせなのかを区別する。
+2. 仕様変更が依頼された場合、本文・JSON・このガイドを整合させる。
+3. `pnpm design:generate` でCSSを再生成する。生成ファイルは直接編集しない。
+4. `pnpm check` で生成物の同期、utility生成、書式、lint、型、production buildを確認する。
+5. 画面を変更した場合は原本18章の該当項目を実画面で確認する。
+
+## Tailwindの対応表
+
+既存デザインとTailwind標準パレットを引き継がず、テーマをリセットして仕様値を定義している。色名・キーはドットとcamelCaseをkebab-caseへ変換する。
+
+| JSON / 用途                            | Tailwind / CSS                                              |
+| -------------------------------------- | ----------------------------------------------------------- |
+| `background.app`                       | `bg-background-app`                                         |
+| `text.heading` / `text.body`           | `text-text-heading` / `text-text-body`                      |
+| `border.control` / `border.subtle`     | `border-border-control` / `border-border-subtle`            |
+| `row.selectedHover`                    | `hover:bg-row-selected-hover`                               |
+| `dangerButton.foreground`              | `text-danger-button-foreground`                             |
+| `shadow.floating` / `.modal` / `.drag` | `shadow-floating` / `shadow-modal` / `shadow-drag`          |
+| `typography.pageTitle`                 | `text-page-title`（サイズ・行高・weightを含む）             |
+| `radius.control` / `.dialog`           | `rounded-control` / `rounded-dialog`                        |
+| `spacing` 4〜64                        | `1, 2, 3, 4, 5, 6, 8, 10, 12, 16`。例: `p-8` = 32px         |
+| `layout.contentMaxWidth.Home`          | `max-w-home`。News、Settingsも同様                          |
+| `layout.sidebarWidth`                  | `w-(--mona-layout-sidebar-width)`                           |
+| `controls.minHeight`                   | `min-h-(--mona-controls-min-height)`                        |
+| `controls.buttonPaddingInline`         | `px-(--mona-controls-button-padding-inline)`                |
+| `motion.hover` / `.modal`              | `duration-hover ease-hover` / `duration-modal ease-modal`   |
+| `motion.groupCollapse`                 | `duration-group-collapse`                                   |
+| `layout.narrowMode.viewportWidthBelow` | `shell:` = 900px以上。基本スタイルを900px未満用にする       |
+| Gallery利用可能幅                      | `@container` と `@gallery-2:` 〜 `@gallery-5:`              |
+| `log`                                  | `design-log`、`text-log-warning`、`text-log-error`          |
+| `imageCaption`                         | `bg-image-caption-background text-image-caption-foreground` |
+
+色・影は全Light/Dark値を `--mona-*` に保持し、`@theme inline` から参照する。レイアウト・Controlの数値は階層を保った `--mona-layout-*` / `--mona-controls-*`、Motionは `--mona-motion-*` で参照できる。例: `--mona-layout-instance-modal-footer-min-height`。原本の参照クライアント最小寸法はテスト条件であり、rootのmin-widthに使わない。Instances/Galleryの最大幅nullは上限なし。列数は単位なし、viewport閾値はpx、寸法・文字は16px基準のrem、行高は相対値、時間はmsへ変換する。
+
+`originalSemanticReferences` は色相の由来であり実装用パレットではない。本文の説明、Reduced motion方針、OSの選択色などをCSSの値として機械変換しない。JSONの全記述がutilityになるわけではない。
+
+## Themeとフォント
+
+`<html>` の `data-theme` が未指定または `system` ならOSに追従する。`light` / `dark` はOSより優先される。設定画面で保存された選択をこの属性に反映し、初期値はSystemとする。属性変更にはReactの再mountは不要。通常の色を `dark:` で二重指定せず、同じ意味のutilityを両Themeで使う。
+
+Geist Variable、Noto Sans JP Variable、Geist Mono VariableをFontsourceからインストールし、Viteがフォントファイルを同梱する。配布ライセンスは `public/fonts/licenses/` に保持し、ビルド成果物にもコピーされる。起動時にGoogle Fonts等へ接続しない。CSS内のFamily名はパッケージの登録名に合わせている。日本語Monoの `Noto Sans Mono CJK JP` はフォールバック指定のみで、フォント本体はまだ同梱していない。Log画面の完成時には配布ライセンスを確認して同梱し、Windowsで日本語の描画を検証する。
+
+技術値・Version・ID・Logは `font-mono`。日時や見出しはSans。数値列や経過時間は `tabular-nums`。通常UIのLabelは必要箇所だけ `select-none` にし、名前・説明・記事・Path・Address・Log・エラー詳細は選択可能に保つ。
+
+## 基本の実装例
+
+```tsx
+<main className="design-surface min-w-0 p-4 shell:p-8">
+  <h1 className="text-page-title text-text-heading">Instances</h1>
+  <button
+    type="button"
+    className="design-focus mt-6 inline-flex min-h-(--mona-controls-min-height) items-center justify-center gap-2 rounded-control bg-primary-background px-(--mona-controls-button-padding-inline) text-button text-primary-foreground transition-colors duration-hover ease-hover hover:bg-primary-hover active:bg-primary-pressed disabled:bg-disabled-background disabled:text-disabled-foreground"
+  >
+    Play
+  </button>
+</main>
+```
+
+`design-surface` は新しい画面/Portalのフォント・通常色の起点。旧 `App.css` は `legacy` layerに隔離し、utilityが優先される。旧セレクタのbackground-image、固定寸法、opacity等は別プロパティとして残るため、新規コンポーネントに旧クラスを流用しない。画面移行時には不要になった旧CSSを削除し、rootの旧min-widthやoverflowも含めて移行する。今回の設定だけで旧画面の表示が仕様に揃うわけではない。
+
+Inputは `bg-control-background border border-border-control rounded-control text-body placeholder:text-control-placeholder design-focus` と最小高さを使う。通常のSeparatorは `border-border-subtle`。通常ボタン・PanelにShadowを付けない。Dangerの最終確認は `bg-danger-button-background text-danger-button-foreground`、Force Quitは `text-danger-foreground border-danger-foreground`、一般Delete導線はNeutralを使い分ける。
+
+寸法は高さ固定よりmin-heightを優先し、文字拡大と折返しを許可する。IconはLucide、currentColor、stroke 2。Icon-only buttonにはAccessible nameと36pxの操作領域、Compact Table内でも32pxを確保する。
+
+Galleryは親に `@container`、子に次のクラスを付ける。Window幅基準の `shell:` を列数に使わない。
+
+```text
+grid grid-cols-1 gap-4 @gallery-2:grid-cols-2 @gallery-3:grid-cols-3 @gallery-4:grid-cols-4 @gallery-5:grid-cols-5
+```
+
+列の閾値は456 / 692 / 928 / 1164px相当。画像は `aspect-gallery object-cover rounded-image`、Lightboxは元の比率でcontainする。Captionは黒72%の面で文字全体を覆い、HoverとFocusの両方で表示する。
+
+## 画面と挙動のチェックポイント
+
+| 対象           | 実装で守ること / 原本                                                                                 |
+| -------------- | ----------------------------------------------------------------------------------------------------- |
+| Shell          | Sidebar240px、Main左揃え32px、900px未満はDrawerと16px。標準OSタイトルバー。4章                        |
+| Home           | Now Playing → Recent Instances → Screenshots → News。Heroや統計Cardを追加しない。6章                  |
+| Instances      | Row64px以上、Icon40px、Action常設、Separator。Group内Sort、Group間移動にはMenu代替を用意。7章         |
+| Instance Modal | 周囲32px/狭幅16px、最大幅1200px、Header/Tabs/Footer固定、本文だけScroll。全10Tabへキーボード到達。8章 |
+| Modal / 編集   | Escは1イベント1レイヤー、Focusを閉じ込めて戻す。未保存Draftの保存/破棄ガード。9〜10章                 |
+| 処理           | Modal FooterとSidebarは同じ実状態を参照。閉じても処理取消にしない。架空の%や成功を表示しない。8・13章 |
+| Settings       | Select/Switchは保存結果を反映、入力はDraftとApply。失敗時Draftを残す。10章                            |
+| Log            | 常時Dark、選択・過去行閲覧を維持、秘密値を除外。`design-log` 内の `design-focus` は白Outline。11章    |
+| 削除           | 対象と影響を示す確認。Instanceは名前一致、実行中削除不可。Force QuitはCancel初期Focus。8・16章        |
+| Motion         | Hover150ms、Menu180ms、Modal220ms/8px。SpinnerもReduced motionで止め、進捗文字は残す。17章            |
+
+背景Gradient・Glass・Hero・全面Card・Command Paletteは作らない。Skeleton専用Shimmerだけは例外で、4秒で静止するロジックを実装する。Reduced motionのCSSはanimation/transition/smooth scrollを停止する。JS/WAAPIで動かす場合も設定を読み、最終状態を即表示する。静止したレイアウト用transformを一律削除してDialogの位置を壊さない。
+
+Focusは `design-focus` で2px Outline＋2px Offset。親overflowで切らない。High contrastではシステム色を尊重し、スクロールバーを隠さない。文字色のコントラストと状態ラベルの意味を保ち、BusyやReadonlyにDisabled色を使わない。
+
+## 検証の到達範囲
+
+`pnpm check` は設定・コンパイルの確認。実画面のアクセシビリティや操作適合を保証しない。UI移行時はLight/Dark、1024×640・1440×900、200%拡大・実効幅320px、長い日本語・Path、空/未取得/Error、キーボード、Reduced motion、High contrastを原本18章に従って確認する。
+
+Tailwindの設定方式は [公式Themeドキュメント](https://tailwindcss.com/docs/theme)、Vite連携は [公式導入手順](https://tailwindcss.com/docs/installation/using-vite) を参照。

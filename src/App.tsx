@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import "./App.css";
 
 type MinecraftInstance = {
   id: string;

@@ -1,0 +1,66 @@
+@layer theme, base, legacy, components, utilities;
+
+@import "tailwindcss" source("../");
+@import "@fontsource-variable/geist";
+@import "@fontsource-variable/geist-mono";
+@import "@fontsource-variable/noto-sans-jp";
+@import "./theme.generated.css";
+@import "../App.css" layer(legacy);
+
+@layer base {
+  html {
+    font-family: var(--font-sans);
+    color: var(--mona-text-body);
+    background: var(--mona-background-app);
+    font-synthesis: none;
+  }
+
+  body {
+    margin: 0;
+    font-size: var(--text-body);
+    line-height: var(--text-body--line-height);
+  }
+}
+
+/* Explicit opt-in for each migrated surface, including portals. */
+@utility design-surface {
+  font-family: var(--font-sans);
+  font-size: var(--text-body);
+  line-height: var(--text-body--line-height);
+  color: var(--mona-text-body);
+  background-color: var(--mona-background-app);
+}
+
+@utility design-focus {
+  &:focus-visible {
+    outline: var(--mona-controls-focus-outline-width) solid var(--mona-focus-ring);
+    outline-offset: var(--mona-controls-focus-outline-offset);
+  }
+}
+
+@utility design-log {
+  --mona-focus-ring: var(--color-log-focus);
+  color-scheme: dark;
+  font-family: var(--font-mono);
+  font-size: var(--text-log);
+  line-height: var(--text-log--line-height);
+  font-variant-ligatures: none;
+  color: var(--color-log-foreground);
+  background-color: var(--color-log-background);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+@media (forced-colors: active) {
+  .design-focus:focus-visible {
+    outline-color: Highlight;
+  }
+}

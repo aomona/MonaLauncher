@@ -14,6 +14,10 @@ run = "pnpm tauri build"
 description = "Check frontend formatting"
 run = "pnpm format:check"
 
+[tasks.design-check]
+description = "Verify design token synchronization and Tailwind utilities"
+run = "pnpm design:check"
+
 [tasks.frontend-lint]
 description = "Lint frontend"
 run = "pnpm lint"
@@ -37,6 +41,7 @@ run = "cargo test --manifest-path src-tauri/Cargo.toml --all-targets --all-featu
 [tasks.check]
 description = "Run all project checks"
 depends = [
+  "design-check",
   "frontend-format",
   "frontend-lint",
   "frontend-build",

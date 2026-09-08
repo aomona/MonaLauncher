@@ -1,0 +1,343 @@
+{
+  "metadata": {
+    "name": "MonaLauncher Design Tokens",
+    "version": "1.1",
+    "date": "2026-09-09",
+    "format": "Project-specific JSON; not a claim of DTCG schema conformance.",
+    "units": "Geometry and font sizes are reference CSS px at 100%; duration is ms. Scale typography and content-sized controls together.",
+    "authority": "Behavior, exceptions and permitted combinations are defined in MonaLauncher_Design_Definition_v1.1.md.",
+    "status": "Design specification, not an implemented or accessibility-certified application."
+  },
+  "color": {
+    "light": {
+      "background.app": "#FFFFFF",
+      "background.sidebar": "#FAFAFA",
+      "background.floating": "#FFFFFF",
+      "background.subtle": "#F5F5F5",
+      "text.heading": "#000000",
+      "text.body": "#171717",
+      "text.secondary": "#666666",
+      "text.navigation": "#525252",
+      "border.subtle": "#E5E5E5",
+      "border.control": "#8A8A8A",
+      "border.controlHover": "#737373",
+      "control.background": "#FFFFFF",
+      "control.placeholder": "#666666",
+      "navigation.hover": "#F5F5F5",
+      "navigation.selected": "#F0F0F0",
+      "row.hover": "#FAFAFA",
+      "row.selected": "#F5F5F5",
+      "row.selectedHover": "#F0F0F0",
+      "primary.background": "#000000",
+      "primary.foreground": "#FFFFFF",
+      "primary.hover": "#1A1A1A",
+      "primary.pressed": "#333333",
+      "secondary.background": "#FFFFFF",
+      "secondary.foreground": "#171717",
+      "secondary.hover": "#FAFAFA",
+      "secondary.pressed": "#F5F5F5",
+      "disabled.background": "#E5E5E5",
+      "disabled.foreground": "#B3B3B3",
+      "disabled.border": "#E5E5E5",
+      "focus.ring": "#000000",
+      "tooltip.background": "#000000",
+      "tooltip.foreground": "#FFFFFF",
+      "success.foreground": "#166534",
+      "success.background": "#F0FDF4",
+      "success.mark": "#15803D",
+      "danger.foreground": "#C32932",
+      "danger.background": "#FFF1F2",
+      "danger.mark": "#E5484D",
+      "warning.foreground": "#92400E",
+      "warning.background": "#FFFBEB",
+      "warning.mark": "#B45309",
+      "info.foreground": "#1D4ED8",
+      "info.background": "#EFF6FF",
+      "info.mark": "#2563EB",
+      "dangerButton.background": "#C32932",
+      "dangerButton.foreground": "#FFFFFF",
+      "dangerButton.hover": "#A82028",
+      "dangerButton.pressed": "#901D25",
+      "progress.track": "#E5E5E5",
+      "progress.fill": "#171717",
+      "backdrop": "rgba(0, 0, 0, 0.25)",
+      "shadow.floating": "0 2px 8px rgba(0, 0, 0, 0.08)",
+      "shadow.modal": "0 16px 48px rgba(0, 0, 0, 0.18), 0 4px 12px rgba(0, 0, 0, 0.08)",
+      "shadow.drag": "0 4px 12px rgba(0, 0, 0, 0.12)"
+    },
+    "dark": {
+      "background.app": "#000000",
+      "background.sidebar": "#0A0A0A",
+      "background.floating": "#111111",
+      "background.subtle": "#171717",
+      "text.heading": "#EDEDED",
+      "text.body": "#EDEDED",
+      "text.secondary": "#A1A1A1",
+      "text.navigation": "#A1A1A1",
+      "border.subtle": "#262626",
+      "border.control": "#737373",
+      "border.controlHover": "#A1A1A1",
+      "control.background": "#000000",
+      "control.placeholder": "#A1A1A1",
+      "navigation.hover": "#111111",
+      "navigation.selected": "#171717",
+      "row.hover": "#111111",
+      "row.selected": "#171717",
+      "row.selectedHover": "#202020",
+      "primary.background": "#FFFFFF",
+      "primary.foreground": "#000000",
+      "primary.hover": "#E5E5E5",
+      "primary.pressed": "#D4D4D4",
+      "secondary.background": "#000000",
+      "secondary.foreground": "#EDEDED",
+      "secondary.hover": "#111111",
+      "secondary.pressed": "#171717",
+      "disabled.background": "#262626",
+      "disabled.foreground": "#737373",
+      "disabled.border": "#262626",
+      "focus.ring": "#FFFFFF",
+      "tooltip.background": "#FFFFFF",
+      "tooltip.foreground": "#000000",
+      "success.foreground": "#4ADE80",
+      "success.background": "#0C2012",
+      "success.mark": "#4ADE80",
+      "danger.foreground": "#F87171",
+      "danger.background": "#2B1114",
+      "danger.mark": "#F87171",
+      "warning.foreground": "#FBBF24",
+      "warning.background": "#251A08",
+      "warning.mark": "#FBBF24",
+      "info.foreground": "#60A5FA",
+      "info.background": "#0B1930",
+      "info.mark": "#60A5FA",
+      "dangerButton.background": "#F87171",
+      "dangerButton.foreground": "#000000",
+      "dangerButton.hover": "#FCA5A5",
+      "dangerButton.pressed": "#EF4444",
+      "progress.track": "#262626",
+      "progress.fill": "#EDEDED",
+      "backdrop": "rgba(0, 0, 0, 0.50)",
+      "shadow.floating": "0 2px 8px rgba(0, 0, 0, 0.24)",
+      "shadow.modal": "0 16px 48px rgba(0, 0, 0, 0.45), 0 4px 12px rgba(0, 0, 0, 0.24)",
+      "shadow.drag": "0 4px 12px rgba(0, 0, 0, 0.32)"
+    }
+  },
+  "originalSemanticReferences": {
+    "success": "#16A34A",
+    "danger": "#E5484D",
+    "warning": "#D97706",
+    "info": "#2563EB"
+  },
+  "spacing": [
+    4,
+    8,
+    12,
+    16,
+    20,
+    24,
+    32,
+    40,
+    48,
+    64
+  ],
+  "layout": {
+    "referenceMinimumClient": {
+      "width": 1024,
+      "height": 640
+    },
+    "sidebarWidth": 240,
+    "sidebarInset": 12,
+    "navigationItemGap": 4,
+    "navigationIconGap": 8,
+    "sidebarGroupGap": 24,
+    "pagePadding": 32,
+    "titleToContentGap": 24,
+    "sectionGap": 32,
+    "toolbarToListGap": 16,
+    "contentMaxWidth": {
+      "Home": 1200,
+      "Instances": null,
+      "News": 1000,
+      "Gallery": null,
+      "Settings": 960
+    },
+    "instanceRowMinHeight": 64,
+    "instanceIconSize": 40,
+    "compactRowMinHeight": 44,
+    "galleryGap": 16,
+    "galleryMinItemWidth": 220,
+    "galleryMaxColumns": 5,
+    "galleryAspectRatio": "16 / 9",
+    "galleryContainerMinWidthByColumns": {
+      "1": 0,
+      "2": 456,
+      "3": 692,
+      "4": 928,
+      "5": 1164
+    },
+    "newsThumbnail": {
+      "width": 160,
+      "height": 90
+    },
+    "normalDialog": {
+      "width": 480,
+      "padding": 24,
+      "viewportInset": 32
+    },
+    "instanceModal": {
+      "maxWidth": 1200,
+      "viewportInset": 32,
+      "headerMinHeight": 64,
+      "tabsHeight": 40,
+      "contentPadding": 24,
+      "footerMinHeight": 72
+    },
+    "articleModal": {
+      "maxWidth": 880,
+      "textMeasure": "65ch",
+      "bodyFontSize": 16,
+      "bodyLineHeight": 28
+    },
+    "downloadPopover": {
+      "width": 320,
+      "maxHeight": 360
+    },
+    "emptyStateOffset": 64,
+    "narrowMode": {
+      "viewportWidthBelow": 900,
+      "pagePadding": 16,
+      "dialogInset": 16,
+      "sidebar": "drawer"
+    }
+  },
+  "typography": {
+    "uiFamily": [
+      "Geist",
+      "Noto Sans JP",
+      "system-ui",
+      "sans-serif"
+    ],
+    "monoFamily": [
+      "Geist Mono",
+      "Noto Sans Mono CJK JP",
+      "ui-monospace",
+      "monospace"
+    ],
+    "pageTitle": {
+      "size": 24,
+      "lineHeight": 32,
+      "weight": 600
+    },
+    "sectionTitle": {
+      "size": 18,
+      "lineHeight": 26,
+      "weight": 600
+    },
+    "body": {
+      "size": 14,
+      "lineHeight": 21,
+      "weight": 400
+    },
+    "small": {
+      "size": 13,
+      "lineHeight": 18,
+      "weight": 400
+    },
+    "caption": {
+      "size": 12,
+      "lineHeight": 16,
+      "weight": 400
+    },
+    "button": {
+      "size": 14,
+      "lineHeight": 20,
+      "weight": 500
+    },
+    "navigation": {
+      "size": 14,
+      "lineHeight": 20,
+      "weight": 500
+    },
+    "groupHeading": {
+      "size": 14,
+      "lineHeight": 20,
+      "weight": 500
+    },
+    "log": {
+      "size": 13,
+      "lineHeight": 20,
+      "weight": 400
+    },
+    "articleBody": {
+      "size": 16,
+      "lineHeight": 28,
+      "weight": 400
+    }
+  },
+  "radius": {
+    "control": 10,
+    "image": 10,
+    "menu": 12,
+    "dialog": 14,
+    "checkbox": 6
+  },
+  "controls": {
+    "minHeight": 36,
+    "buttonPaddingInline": 14,
+    "iconLabelGap": 8,
+    "iconButtonSize": 36,
+    "compactHitTarget": 32,
+    "tooltipRadius": 6,
+    "tooltipPaddingInline": 8,
+    "tooltipPaddingBlock": 4,
+    "navigationIcon": 18,
+    "buttonIcon": 16,
+    "menuIcon": 16,
+    "iconStrokeWidth": 2,
+    "checkboxVisualSize": 16,
+    "checkboxHitTarget": 32,
+    "switchWidth": 36,
+    "switchHeight": 20,
+    "switchThumb": 16,
+    "switchHitHeight": 32,
+    "menuPadding": 4,
+    "menuItemMinHeight": 32,
+    "tabMinHeight": 40,
+    "tabUnderlineWidth": 2,
+    "focusOutlineWidth": 2,
+    "focusOutlineOffset": 2,
+    "borderWidth": 1,
+    "progressHeight": 2
+  },
+  "motion": {
+    "hover": 150,
+    "menu": 180,
+    "modal": 220,
+    "groupCollapse": 180,
+    "tooltipDelay": 500,
+    "hoverEasing": "cubic-bezier(0.2, 0, 0, 1)",
+    "modalEasing": "cubic-bezier(0.16, 1, 0.3, 1)",
+    "modalTranslateY": 8,
+    "iconMaxTranslation": 2,
+    "skeletonPeriod": 1400,
+    "skeletonMotionStopAfter": 4000,
+    "reducedMotion": "No transitions, transforms, smooth scrolling, animated spinners or skeleton animation. Preserve textual progress."
+  },
+  "log": {
+    "background": "#0A0A0A",
+    "foreground": "#EDEDED",
+    "debug": "#A1A1A1",
+    "warning": "#FBBF24",
+    "error": "#F87171",
+    "focus": "#FFFFFF",
+    "selection": "OS / browser default",
+    "fontLigatures": false
+  },
+  "imageCaption": {
+    "background": "rgba(0, 0, 0, 0.72)",
+    "foreground": "#FFFFFF",
+    "paddingInline": 8,
+    "paddingBlock": 4,
+    "radius": 6
+  }
+}
