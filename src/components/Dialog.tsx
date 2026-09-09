@@ -1,6 +1,7 @@
 import { Dialog as BaseDialog } from "@base-ui/react/dialog";
 import { X } from "lucide-react";
-import { useRef, type ReactNode } from "react";
+import type { ReactNode } from "react";
+import { useRef } from "react";
 import { Button } from "./Button";
 
 export function Dialog({

@@ -1,6 +1,7 @@
 import { Tabs as BaseTabs } from "@base-ui/react/tabs";
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import { useEffect, useRef, useState, type ComponentProps, type ReactNode } from "react";
+import type { ComponentProps, ReactNode } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "./Button";
 
 export function Tabs({

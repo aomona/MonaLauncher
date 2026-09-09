@@ -1,5 +1,5 @@
 import { Button as BaseButton } from "@base-ui/react/button";
-import { type ComponentProps } from "react";
+import type { ComponentProps } from "react";
 
 export function Button({
   tone = "secondary",
