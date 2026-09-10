@@ -466,6 +466,74 @@ test("all tabs activate from the keyboard and label their panel", async ({ page 
   await expect(tabs.first()).toBeInViewport({ ratio: 0.99 });
 });
 
+test("tabs track content growth and keep selection visible after resizing without focus", async ({
+  page,
+}) => {
+  await mockDesktop(page);
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  const next = page.getByRole("button", { name: "次のタブを表示" });
+  await expect(next).toHaveCount(0);
+  // Simulate wider translated labels without resizing the tab list itself.
+  const java = page.getByRole("tab", { name: "Java", exact: true });
+  await java.evaluate((el) => {
+    el.style.minWidth = "1000px";
+  });
+  await expect(next).toBeVisible();
+  await java.evaluate((el) => {
+    el.style.minWidth = "";
+  });
+  await expect(next).toHaveCount(0);
+  const last = page.getByRole("tab", { name: "Advanced", exact: true });
+  await last.click();
+  await page.getByRole("tabpanel").focus();
+  await page.setViewportSize({ width: 320, height: 640 });
+  await expect
+    .poll(() =>
+      last.evaluate((tab) => {
+        const list = tab.closest<HTMLElement>('[role="tablist"]')!;
+        const listRect = list.getBoundingClientRect();
+        const tabRect = tab.getBoundingClientRect();
+        const left = listRect.left + list.clientLeft;
+        return tabRect.left >= left - 1 && tabRect.right <= left + list.clientWidth + 1;
+      }),
+    )
+    .toBe(true);
+  await expect(page.getByRole("tabpanel")).toBeFocused();
+});
+
+test("scroll buttons can reveal both ends without changing the selected tab", async ({ page }) => {
+  await mockDesktop(page);
+  await openSurvival(page);
+  await page.setViewportSize({ width: 320, height: 640 });
+  const next = page.getByRole("button", { name: "次のタブを表示" });
+  await expect(next).toBeVisible();
+  const settleScroll = () =>
+    page.evaluate(
+      () =>
+        new Promise<void>((resolve) => {
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+        }),
+    );
+  for (let i = 0; i < 15 && (await next.count()); i++) {
+    await next.click();
+    await settleScroll();
+  }
+  await expect(next).toHaveCount(0);
+  await expect(page.getByRole("tab", { name: "Settings", exact: true })).toBeInViewport({
+    ratio: 0.99,
+  });
+  const previous = page.getByRole("button", { name: "前のタブを表示" });
+  for (let i = 0; i < 15 && (await previous.count()); i++) {
+    await previous.click();
+    await settleScroll();
+  }
+  await expect(previous).toHaveCount(0);
+  await expect(page.getByRole("tab", { name: "Overview", exact: true })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+});
+
 test("progress reports measured values and omits unknown percentages", async ({
   page,
 }, testInfo) => {
