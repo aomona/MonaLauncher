@@ -478,7 +478,7 @@ pub async fn launch_minecraft_instance(
     if !instance.sandboxed {
         return Err("安全でない通常起動は無効です。インスタンスを再作成してください".to_owned());
     }
-    let identity = if !instance.demo && has_microsoft_authorization()? {
+    let identity = if !instance.demo && has_microsoft_authorization().await? {
         emit_launch_progress(
             &app,
             &instance_id,

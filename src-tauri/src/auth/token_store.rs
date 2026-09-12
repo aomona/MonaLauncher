@@ -5,6 +5,7 @@ const REFRESH_TOKEN_TARGET: &str = "MonaLauncher/MicrosoftRefreshToken";
 
 #[derive(Debug)]
 pub enum TokenStoreError {
+    Worker(String),
     #[cfg(not(any(windows, target_os = "macos")))]
     UnsupportedPlatform,
     #[cfg(windows)]
@@ -19,6 +20,10 @@ pub enum TokenStoreError {
 impl fmt::Display for TokenStoreError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Worker(error) => write!(
+                formatter,
+                "認証情報のバックグラウンド処理に失敗しました: {error}"
+            ),
             #[cfg(not(any(windows, target_os = "macos")))]
             Self::UnsupportedPlatform => {
                 write!(formatter, "安全なトークン保存はこのOSに対応していません")
@@ -60,16 +65,27 @@ impl From<windows::core::Error> for TokenStoreError {
     }
 }
 
-pub fn save_refresh_token(token: &str) -> Result<(), TokenStoreError> {
-    save_secret(REFRESH_TOKEN_TARGET, token)
+// Credential APIs can wait for OS consent for an unbounded time. Keep every production
+// access on the blocking pool, including calls made from already-async Tauri commands.
+pub async fn save_refresh_token(token: &str) -> Result<(), TokenStoreError> {
+    let token = token.to_owned();
+    run_store_operation(move || save_secret(REFRESH_TOKEN_TARGET, &token)).await
 }
 
-pub fn load_refresh_token() -> Result<Option<String>, TokenStoreError> {
-    load_secret(REFRESH_TOKEN_TARGET)
+pub async fn load_refresh_token() -> Result<Option<String>, TokenStoreError> {
+    run_store_operation(|| load_secret(REFRESH_TOKEN_TARGET)).await
 }
 
-pub fn delete_refresh_token() -> Result<(), TokenStoreError> {
-    delete_secret(REFRESH_TOKEN_TARGET)
+pub async fn delete_refresh_token() -> Result<(), TokenStoreError> {
+    run_store_operation(|| delete_secret(REFRESH_TOKEN_TARGET)).await
+}
+
+async fn run_store_operation<T: Send + 'static>(
+    operation: impl FnOnce() -> Result<T, TokenStoreError> + Send + 'static,
+) -> Result<T, TokenStoreError> {
+    tauri::async_runtime::spawn_blocking(operation)
+        .await
+        .map_err(|error| TokenStoreError::Worker(error.to_string()))?
 }
 
 #[cfg(windows)]
@@ -227,6 +243,50 @@ fn delete_secret(_target: &str) -> Result<(), TokenStoreError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn waiting_for_credential_consent_yields_the_calling_thread() {
+        use std::future::Future;
+        use std::sync::mpsc;
+        use std::task::{Context, Poll, Waker};
+        use std::time::Duration;
+
+        let caller = std::thread::current().id();
+        let (entered, worker) = mpsc::channel();
+        let (release, consent) = mpsc::channel();
+        let mut operation = std::pin::pin!(run_store_operation(move || {
+            entered.send(std::thread::current().id()).unwrap();
+            // Simulates a blocked OS prompt without accessing the real keychain. The timeout
+            // also bounds the test if a regression runs this closure on the calling thread.
+            consent
+                .recv_timeout(Duration::from_secs(5))
+                .map_err(|error| TokenStoreError::Worker(error.to_string()))?;
+            Ok(42)
+        }));
+        let mut context = Context::from_waker(Waker::noop());
+        assert!(matches!(
+            operation.as_mut().poll(&mut context),
+            Poll::Pending
+        ));
+        assert_ne!(worker.recv_timeout(Duration::from_secs(5)).unwrap(), caller);
+
+        // Unrelated work can still run while the credential operation is blocked.
+        let mut unrelated = std::pin::pin!(async { "responsive" });
+        assert_eq!(
+            unrelated.as_mut().poll(&mut context),
+            Poll::Ready("responsive")
+        );
+        release.send(()).unwrap();
+        assert_eq!(tauri::async_runtime::block_on(operation).unwrap(), 42);
+    }
+
+    #[test]
+    fn credential_worker_preserves_storage_errors() {
+        let result = tauri::async_runtime::block_on(run_store_operation(|| {
+            String::from_utf8(vec![0xff]).map_err(TokenStoreError::InvalidUtf8)
+        }));
+        assert!(matches!(result, Err(TokenStoreError::InvalidUtf8(_))));
+    }
 
     #[test]
     fn credential_target_is_app_specific() {

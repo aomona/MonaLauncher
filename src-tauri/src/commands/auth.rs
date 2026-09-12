@@ -62,10 +62,11 @@ pub struct MinecraftAccountProfile {
 }
 
 #[tauri::command]
-pub fn microsoft_auth_status() -> Result<MicrosoftAuthStatus, String> {
+pub async fn microsoft_auth_status() -> Result<MicrosoftAuthStatus, String> {
     Ok(MicrosoftAuthStatus {
         configured: MicrosoftOAuthClient::configured(),
         authorized: load_refresh_token()
+            .await
             .map_err(|error| error.to_string())?
             .is_some(),
     })
@@ -138,7 +139,9 @@ pub async fn poll_microsoft_sign_in(
     let client = MicrosoftOAuthClient::from_configuration().map_err(|error| error.to_string())?;
     match client.poll_device_authorization(&pending.device_code).await {
         Ok(TokenPoll::Authorized(token)) => {
-            save_refresh_token(&token.refresh_token).map_err(|error| error.to_string())?;
+            save_refresh_token(&token.refresh_token)
+                .await
+                .map_err(|error| error.to_string())?;
             clear_cached_minecraft_session(&state)?;
             Ok(MicrosoftSignInPoll {
                 status: "authorized",
@@ -193,7 +196,9 @@ pub async fn sign_out_microsoft(state: State<'_, MicrosoftAuthState>) -> Result<
         .lock()
         .map_err(|_| "Microsoft認証状態を利用できません".to_owned())? = None;
     clear_cached_minecraft_session(&state)?;
-    delete_refresh_token().map_err(|error| error.to_string())
+    delete_refresh_token()
+        .await
+        .map_err(|error| error.to_string())
 }
 
 pub(crate) async fn acquire_minecraft_session(
@@ -206,6 +211,7 @@ pub(crate) async fn acquire_minecraft_session(
     }
 
     let refresh_token = load_refresh_token()
+        .await
         .map_err(|error| error.to_string())?
         .ok_or_else(|| "Microsoftアカウントへサインインしてください".to_owned())?;
     let microsoft =
@@ -214,7 +220,9 @@ pub(crate) async fn acquire_minecraft_session(
         .refresh_access_token(&refresh_token)
         .await
         .map_err(|error| error.to_string())?;
-    save_refresh_token(&access.refresh_token).map_err(|error| error.to_string())?;
+    save_refresh_token(&access.refresh_token)
+        .await
+        .map_err(|error| error.to_string())?;
 
     let minecraft = MinecraftServicesClient::new().map_err(|error| error.to_string())?;
     let session = minecraft
@@ -258,8 +266,9 @@ fn clear_cached_minecraft_session(state: &MicrosoftAuthState) -> Result<(), Stri
     Ok(())
 }
 
-pub(crate) fn has_microsoft_authorization() -> Result<bool, String> {
+pub(crate) async fn has_microsoft_authorization() -> Result<bool, String> {
     Ok(load_refresh_token()
+        .await
         .map_err(|error| error.to_string())?
         .is_some())
 }
