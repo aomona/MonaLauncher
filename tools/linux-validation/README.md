@@ -51,9 +51,11 @@ The Linux JRE's legal-document symlinks are materialized as regular copies withi
 
 X11 and PulseAudio are compatibility service grants. They permit more than drawing one window and playing sound: other X11 clients and recording/server operations may be reachable. No host D-Bus, full home/runtime directory, input devices, or ALSA devices are mounted. Direct network syscalls are denied, but this does not sanitize every operation offered by an exposed desktop service. See [the shared policy](../../docs/sandbox-policy.md).
 
-UTM uses software rendering (`llvmpipe`); do not treat it as GPU-driver coverage. Native Wayland, Linux Microsoft credential storage/sign-in, arbitrary Minecraft/Mod versions, Windows runtime behavior, and production package installation are separate work.
+The initial UTM validation used software rendering (`llvmpipe`); do not treat that run as GPU-driver coverage. Native Wayland, Linux Microsoft credential storage/sign-in, arbitrary Minecraft/Mod versions, Windows runtime behavior, and production package installation are separate work.
 
 The subsequent [UTM 4.7.5 GPU comparison](utm-4.7.5-gpu-2026-09-12.md) detected accelerated Apple M4 Pro rendering, but both ANGLE backends exposed only OpenGL 2.1 to this guest. Minecraft 26.2 requires 3.3 and did not launch through that GPU path; an unrestricted core-context probe failed too.
+
+[UTM 5.0.5 Beta with Apple Core OpenGL](utm-5.0.5-gpu-2026-09-12.md) subsequently exposed OpenGL 4.1 and passed the GPU context/readback and sandboxed Minecraft smoke tests. In that VM, launch the native UI with `WEBKIT_DISABLE_DMABUF_RENDERER=1` to avoid missing text. Do not set `LIBGL_ALWAYS_SOFTWARE=1` for this GPU test. This covers the virtual M4 Pro graphics path, not physical Linux GPU drivers.
 
 ## Upstream references
 
