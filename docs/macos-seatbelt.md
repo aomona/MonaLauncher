@@ -18,7 +18,7 @@ UI操作なしで同じインストーラ・起動関数を検証する場合:
 cargo run --manifest-path src-tauri/Cargo.toml --locked --bin minecraft_smoke --   "$HOME/Library/Application Support/me.aomona.monalauncher/minecraft" 90
 ```
 
-このコマンドは専用デモを必要な場合だけインストールし、ウィンドウを起動する。既存インスタンスの設定は上書きしない。指定秒数（10〜600秒）後に自分が起動したプロセスを終了する。終了コード0は観測期間の生存と停止処理の成功を意味し、ゲームプレイの成功を意味しない。UIから同じインスタンスを実行中には使わないこと。
+このコマンドは専用デモを必要な場合だけインストールし、ウィンドウを起動する。既存インスタンスの設定は上書きしない。指定秒数（10〜600秒）後に自分が起動したプロセスを終了する。終了コード0には、観測期間の生存、終了直前の実ウィンドウ表示、`Sound engine started`ログ、停止処理のすべてが必要。ゲームプレイや実際に音が聞こえることまでは保証しない。表示の読み取りにSwiftとmacOSの画面収録権限を使う。検証中にゲームを最小化したり別Spaceへ移すと表示チェックに失敗する場合がある。UIから同じインスタンスを実行中には使わないこと。
 
 ## 許可する範囲
 
@@ -27,6 +27,7 @@ cargo run --manifest-path src-tauri/Cargo.toml --locked --bin minecraft_smoke --
 - `HOME`とJavaの`user.home`はgameへ向け、Java/JNA/LWJGL/Nettyの展開先を専用tmpへ統一。
 - 親の環境変数を消去し、PATH・HOME・TMPDIR・LANGだけを設定。標準入力は閉じる。
 - WindowServer・フォント・GPU関連の列挙したMachサービスとIOKitクラスを許可。実ゲームで必要になった`com.apple.MTLCompilerService`をXPC名で追加。
+- WindowManagerへの接続と、CoreAudioのHAL・AudioComponentRegistrar・AudioIO共有メモリを許可。マイクの許可は追加しない。
 - IP通信・ホストUnixソケットの許可は追加しない。game以外の個人ファイルや他インスタンスの内容は公開しない。ファイルのメタデータ読み取りは広く許可する。
 - 通常の停止要求では専用プロセスグループを終了し、一時領域を削除する。
 
@@ -38,9 +39,12 @@ Machサービスを経由するアクセスは、直接のファイル/ソケッ
 
 1. 最初の実行は、MinecraftのJVM引数がJNAの展開先を読み取り専用nativesへ向けていたため失敗。専用tmpへの上書きで解消。
 2. 次の実行はMetalコンパイラ接続が拒否され、GPUドライバのコンパイル処理でSIGABRT。対象XPCサービスだけを追加して解消。
-3. 最終プロファイルで90秒間生存し、ランチャーと共通の停止処理が成功。再実行ではOSのウィンドウ情報でMinecraftのウィンドウを確認し、そのウィンドウだけを撮影してデモのタイトル画面を目視確認した。マウス・キーボードによるゲーム操作は行っていない。
+3. 最初のプロファイルで90秒間生存・停止と、ウィンドウの画像バッファ内のタイトル画面を確認した。しかし後から「Dockにはあるがウィンドウが見えない」と報告された。画像バッファの確認だけでは、実画面に表示されている証拠にならなかった。
+4. `com.apple.windowmanager.server`の拒否を解消すると、OSの`kCGWindowIsOnscreen`がtrueになった。`window_proxies`だけでは表示されず、最終的に`window_proxies`と`dock.server`の追加許可は除去できた。
+5. 音声は`audiohald`だけでは初期化できず、`AudioComponentRegistrar`の追加でOpenALの既定出力デバイス初期化と`Sound engine started`を確認した。
+6. 改善した検証コマンドで、実表示・音声初期化・停止をまとめて確認。OS上で表示中であるウィンドウだけを撮影してタイトル画面を再確認した。ゲームのアクティブ化、クリック、キー入力は行っていない。
 
-音声初期化は拒否され、Minecraftはサウンドを無効化して起動した。音声出力、マイク、ナレーター、ゲーム内入力、ワールド生成、保存、MOD、製品版、別のmacOS/Intel Macは未検証。外部サービスの名前解決失敗ログも残る。ネットワークを許可して解消する変更はしていない。
+初期版では音声初期化が拒否されたが、修正後は既定出力デバイスで音声エンジンの開始を確認した。実際の音の聴取、マイク、ナレーター、ゲーム内入力、ワールド生成、保存、MOD、製品版、別のmacOS/Intel Macは未検証。外部サービスの名前解決失敗ログも残る。ネットワークを許可して解消する変更はしていない。
 
 確認コマンド:
 
@@ -56,4 +60,5 @@ Machサービスを経由するアクセスは、直接のファイル/ソケッ
 
 - [Adoptium API cookbook](https://github.com/adoptium/api.adoptium.net/blob/main/docs/cookbook.adoc): OS/CPU別ランタイム取得。
 - [ChromiumのGPU用Seatbeltプロファイル](https://chromium.googlesource.com/chromium/src/+/main/sandbox/policy/mac/gpu.sb): MetalコンパイラのXPCサービス指定。今回の追加はローカルの拒否ログとクラッシュスタックでも裏付けた。
+- [Chromiumの音声用Seatbeltプロファイル](https://raw.githubusercontent.com/chromium/chromium/main/sandbox/policy/mac/audio.sb): HAL・AudioComponentRegistrar・AudioIO共有メモリの指定を参照。マイクや画面収録の許可は採用していない。
 - [先行した独立検証](../tools/sandbox-lab/README.md): 今回はそこでのJava/LWJGL確認をランチャーへ組み込んだ。

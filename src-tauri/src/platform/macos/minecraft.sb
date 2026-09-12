@@ -1,5 +1,5 @@
 ; Experimental Minecraft compatibility profile, not a production policy.
-; Paths are canonicalized by the trusted harness and passed as parameters.
+; Paths are canonicalized by the trusted launcher and passed as parameters.
 (version 1)
 (deny default)
 (allow process-fork)
@@ -26,8 +26,7 @@
 
 (allow file-read* file-write* (subpath (param "TEMP")))
 
-; Added only for the explicit LWJGL probe. Headless tests run again under this
-; expanded profile; their results remain separate in the report.
+; Desktop services required by the Minecraft window and OpenGL renderer.
 (allow mach-lookup
     (global-name "com.apple.windowserver.active")
     (global-name "com.apple.CARenderServer")
@@ -49,3 +48,14 @@
 ; Minecraft's shader compilation needs this XPC service (confirmed by crash + denial logs).
 ; No blanket Mach lookup or user cache access is granted.
 (allow mach-lookup (xpc-service-name "com.apple.MTLCompilerService"))
+
+; OpenAL playback uses CoreAudio's HAL and its AudioIO shared-memory buffers.
+; Microphone access remains denied by default.
+(allow mach-lookup (global-name "com.apple.audio.audiohald"))
+(allow ipc-posix-shm-read* ipc-posix-shm-write-data
+    (ipc-posix-name-regex #"^AudioIO"))
+
+; Desktop window ordering and audio component discovery.
+(allow mach-lookup
+    (global-name "com.apple.windowmanager.server")
+    (global-name "com.apple.audio.AudioComponentRegistrar"))
