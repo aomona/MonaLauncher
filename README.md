@@ -51,3 +51,13 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib --locked auth:: -- --inclu
 ```
 
 この確認はMicrosoftからの認証コード取得とログイン待ち応答、キーチェーンの専用テスト項目の保存・更新・読込・削除を検証します。認証コードやトークンを出力・ファイル保存せず、既存のサインイン情報には触れません。2026-09-12に上記の既定IDとmacOSで成功を確認しました。ユーザーによるサインイン完了とMinecraft Servicesの利用可否は、このテストの確認範囲に含まれません。
+
+## ニュースとRSS
+
+`news/*.md` にYAML Front Matter付きMarkdownを追加して`main`へpushすると、GitHub ActionsでRSSと記事HTMLを生成・公開できます。初回のPages設定、記事形式、URLの変更方法は[ニュース配信の手順](docs/news-feed.md)を参照してください。
+
+```sh
+pnpm generate:feed
+```
+
+公開予定のRSS URL: `https://aomona.github.io/MonaLauncher/rss.xml`

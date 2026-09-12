@@ -28,3 +28,8 @@ dist-ssr
 /playwright-report/
 
 /tools/linux-validation/reports/
+
+# Generated RSS and article pages
+/public/rss.xml
+/public/news/
+/.feed-site/
