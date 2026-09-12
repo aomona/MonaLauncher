@@ -27,7 +27,7 @@
         "font-src": "'self'",
         "form-action": "'none'",
         "frame-ancestors": "'none'",
-        "img-src": "'self' data:",
+        "img-src": "'self' data: https://launchercontent.mojang.com",
         "object-src": "'none'",
         "script-src": "'self'",
         "style-src": "'self'"
@@ -39,7 +39,7 @@
         "font-src": "'self'",
         "form-action": "'none'",
         "frame-ancestors": "'none'",
-        "img-src": "'self' data:",
+        "img-src": "'self' data: https://launchercontent.mojang.com",
         "object-src": "'none'",
         "script-src": "'self'",
         "style-src": "'self' 'unsafe-inline'"

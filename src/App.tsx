@@ -7,6 +7,8 @@ import { Empty } from "./components/Empty";
 import { ErrorMessage } from "./components/ErrorMessage";
 import { AuthDialog } from "./features/auth/AuthDialog";
 import { HomePage } from "./features/home/HomePage";
+import { NewsPage } from "./features/news/NewsPage";
+import { useNews } from "./features/news/useNews";
 import { CreateDialog } from "./features/instances/create/CreateDialog";
 import { InstanceDialog } from "./features/instances/detail/InstanceDialog";
 import { InstanceBrowser } from "./features/instances/InstanceBrowser";
@@ -18,6 +20,7 @@ import { hasTauriRuntime } from "./lib/tauri";
 
 export default function App() {
   const launcher = useLauncher();
+  const news = useNews();
   const { page, navigate, settingsTab, setSettingsTab, openAccountSettings } = useNavigation();
   const history = usePlayHistory(launcher.instances, launcher.runningIds);
   const filters = useInstanceFilters();
@@ -67,6 +70,7 @@ export default function App() {
           {!dialog.instanceOpen && <ErrorMessage>{launcher.error}</ErrorMessage>}
           {page === "Home" && (
             <HomePage
+              news={news}
               onSignIn={openAccountSettings}
               launcher={launcher}
               {...history}
@@ -91,11 +95,7 @@ export default function App() {
               setSettingsTab={setSettingsTab}
             />
           )}
-          {page === "News" && (
-            <Empty title="ニュースは未取得です">
-              <p>現在のバージョンにはニュース配信を取得する機能がありません。</p>
-            </Empty>
-          )}
+          {page === "News" && <NewsPage news={news} />}
           {page === "Gallery" && (
             <Empty title="スクリーンショットは未取得です">
               <p>

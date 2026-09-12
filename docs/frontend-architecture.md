@@ -51,3 +51,7 @@ Dialogは呼び出し元の条件付き表示を維持するcontrolled component
 TabsはTablistとPanelをまとめ、表示内容はchildren、Panelのref・Scroll記憶・見た目は `panelProps` で受け取る。選択状態と未保存ガードは引き続きfeatureが所有する。Progressは未確定値を `null` としてBase UIに渡し、数値がない場合は%や塗りつぶし量を表示しない。
 
 Permissionsの保存済み値はIPCの `MinecraftInstance.permissions` に保持し、更新は `useLauncher` が調停する。`usePermissionSupport` はバックエンドの対応状況を取得する。`PermissionsPanel` は操作中・再試行の表示を所有し、確定値を直接変更しない。保存操作は `InstanceDialog` から `useInstanceSaveToast` を通し、保存中の通知を結果へ更新する。Toast viewportは画面右下へfixed配置する。DOM上はモーダルのFocus境界内に保持し、通常・成功・失敗・警告の通知を共通部品で描画する。タブやDialogを閉じても開始済みの保存結果はcontrollerのインスタンス一覧へ反映される。共通SwitchはBase UIを使い、値の保存・権限の意味はfeature側に残す。
+
+Newsは `src/features/news/` に置く。`useNews` はAppの寿命で取得結果・キャッシュ表示・通信状態を保持し、HomeとNews一覧で共有する。取得と保存はRustのnewsコマンド、記事一覧はNewsContent、原文を開く処理はuseNewsArticleが担当する。外部記事はHTMLとして埋め込まず、配信の要約をテキストとして表示する。
+
+Mojang v2ニュースとJavaパッチノートはRust側で並行取得し、形式を正規化して公開日時順に統合する。キャッシュは配信元別に分け、一方の更新失敗時も他方を表示する。パッチノートには外部記事URLがないため、バージョンから公式記事のURLを生成する。旧版で共有された記事の例外は `commands/news/links.rs` に記録する。すべての過去記事URLの到達確認はしていない。
