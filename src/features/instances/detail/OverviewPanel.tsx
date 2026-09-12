@@ -35,7 +35,7 @@ export function OverviewPanel({
         </div>
         <div>
           <dt>実行方式</dt>
-          <dd>{instance.sandboxed ? "AppContainer · ネットワーク権限なし" : "旧形式"}</dd>
+          <dd>{instance.sandboxed ? "OSサンドボックス · ネットワーク権限なし" : "旧形式"}</dd>
         </div>
         <div>
           <dt>ゲームモード</dt>

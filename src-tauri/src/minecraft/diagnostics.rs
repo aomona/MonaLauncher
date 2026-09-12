@@ -90,7 +90,12 @@ pub fn diagnose_instance(
         label: "サンドボックス".to_owned(),
         status: if instance.sandboxed { "ok" } else { "error" }.to_owned(),
         detail: if instance.sandboxed {
-            "AppContainer起動が有効です".to_owned()
+            if cfg!(target_os = "macos") {
+                "Seatbelt起動が有効です（実験対応）"
+            } else {
+                "AppContainer起動が有効です"
+            }
+            .to_owned()
         } else {
             "安全でない旧形式のインスタンスです".to_owned()
         },
@@ -138,7 +143,7 @@ pub fn diagnose_instance(
         }
         for download in [
             library.downloads.artifact.as_ref(),
-            library.windows_native(),
+            library.platform_native(),
         ]
         .into_iter()
         .flatten()

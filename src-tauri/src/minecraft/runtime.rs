@@ -74,7 +74,7 @@ impl fmt::Display for RuntimeInstallError {
             }
             Self::JavaMissing(path) => write!(
                 formatter,
-                "downloaded Java runtime has no bin/java.exe under {}",
+                "downloaded Java runtime has no Java executable under {}",
                 path.display()
             ),
             Self::HashMismatch { expected, actual } => write!(
@@ -228,11 +228,29 @@ fn fetch_runtime_package(
     client: &Client,
     major: u32,
 ) -> Result<AdoptiumPackage, RuntimeInstallError> {
-    for image_type in ["jre", "jdk"] {
+    let os = if cfg!(target_os = "macos") {
+        "mac"
+    } else {
+        std::env::consts::OS
+    };
+    let arch = match std::env::consts::ARCH {
+        "x86_64" => "x64",
+        "x86" => "x32",
+        other => other,
+    };
+    for image_type in if cfg!(target_os = "macos") {
+        ["jdk", "jre"]
+    } else {
+        ["jre", "jdk"]
+    } {
         let assets_url = format!(
-            "https://api.adoptium.net/v3/assets/latest/{major}/hotspot?architecture=x64&image_type={image_type}&os=windows&vendor=eclipse"
+            "https://api.adoptium.net/v3/assets/latest/{major}/hotspot?architecture={arch}&image_type={image_type}&os={os}&vendor=eclipse"
         );
-        let response = client.get(assets_url).send()?.error_for_status()?;
+        let response = client.get(assets_url).send()?;
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            continue;
+        }
+        let response = response.error_for_status()?;
         let assets: Vec<AdoptiumAsset> =
             serde_json::from_slice(&read_bounded(response, MAX_RUNTIME_METADATA_SIZE)?)?;
 
@@ -309,6 +327,9 @@ fn file_sha256(path: &Path) -> Result<String, RuntimeInstallError> {
 }
 
 fn extract_archive(archive: &Path, destination: &Path) -> Result<(), RuntimeInstallError> {
+    if archive.to_string_lossy().ends_with(".tar.gz") {
+        return extract_tar_archive(archive, destination);
+    }
     let input = File::open(archive)?;
     let mut zip = ZipArchive::new(input)?;
     if zip.len() > MAX_ARCHIVE_ENTRIES {
@@ -337,6 +358,60 @@ fn extract_archive(archive: &Path, destination: &Path) -> Result<(), RuntimeInst
         let copied = std::io::copy(&mut entry.by_ref().take(expected_size + 1), &mut output)?;
         if copied != expected_size {
             return Err(RuntimeInstallError::ArchiveTooLarge);
+        }
+    }
+    Ok(())
+}
+
+// Extract only regular files/directories; links and device nodes cannot escape staging.
+fn extract_tar_archive(archive: &Path, destination: &Path) -> Result<(), RuntimeInstallError> {
+    let decoder = flate2::read::GzDecoder::new(File::open(archive)?);
+    let mut archive = tar::Archive::new(decoder);
+    let mut total = 0_u64;
+    for (index, entry) in archive.entries()?.enumerate() {
+        if index >= MAX_ARCHIVE_ENTRIES {
+            return Err(RuntimeInstallError::ArchiveTooLarge);
+        }
+        let mut entry = entry?;
+        let path = entry.path()?.into_owned();
+        let kind = entry.header().entry_type();
+        if path.is_absolute()
+            || path.components().any(|c| {
+                !matches!(
+                    c,
+                    std::path::Component::Normal(_) | std::path::Component::CurDir
+                )
+            })
+            || !(kind.is_file() || kind.is_dir())
+        {
+            return Err(RuntimeInstallError::UnsafeArchivePath(
+                path.display().to_string(),
+            ));
+        }
+        let size = entry.size();
+        total = total
+            .checked_add(size)
+            .filter(|n| *n <= MAX_EXTRACTED_RUNTIME_SIZE)
+            .ok_or(RuntimeInstallError::ArchiveTooLarge)?;
+        let target = destination.join(path);
+        if kind.is_dir() {
+            fs::create_dir_all(target)?;
+            continue;
+        }
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let mut output = File::create(&target)?;
+        if std::io::copy(&mut entry.by_ref().take(size + 1), &mut output)? != size {
+            return Err(RuntimeInstallError::ArchiveTooLarge);
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(
+                &target,
+                fs::Permissions::from_mode(entry.header().mode()? & 0o755),
+            )?;
         }
     }
     Ok(())
@@ -395,9 +470,7 @@ fn validate_package_name(name: &str) -> Result<(), RuntimeInstallError> {
     if !single_component
         || name.chars().count() > 240
         || name.chars().any(char::is_control)
-        || !path
-            .extension()
-            .is_some_and(|extension| extension.eq_ignore_ascii_case("zip"))
+        || !(name.ends_with(".zip") || name.ends_with(".tar.gz"))
     {
         return Err(RuntimeInstallError::InvalidPackageName(name.to_owned()));
     }
@@ -443,7 +516,12 @@ fn find_java(root: &Path) -> Result<Option<PathBuf>, RuntimeInstallError> {
     }
     for entry in fs::read_dir(root)? {
         let path = entry?.path();
-        let direct = path.join("bin").join("java.exe");
+        let home = if cfg!(target_os = "macos") {
+            path.join("Contents/Home")
+        } else {
+            path
+        };
+        let direct = home.join("bin").join(super::model::java_executable_name());
         if direct.is_file() {
             return Ok(Some(direct));
         }
@@ -468,10 +546,65 @@ mod tests {
     use super::*;
 
     #[test]
+    fn tar_rejects_links_and_preserves_executable_files() {
+        let root = std::env::temp_dir().join(format!("mona-tar-test-{}", std::process::id()));
+        fs::create_dir(&root).unwrap();
+        let archive = root.join("runtime.tar.gz");
+        let write_archive = |link: bool| {
+            let encoder = flate2::write::GzEncoder::new(
+                File::create(&archive).unwrap(),
+                flate2::Compression::default(),
+            );
+            let mut builder = tar::Builder::new(encoder);
+            let mut header = tar::Header::new_gnu();
+            header.set_mode(0o755);
+            if link {
+                header.set_entry_type(tar::EntryType::Symlink);
+                header.set_size(0);
+                header.set_link_name("../../outside").unwrap();
+                header.set_cksum();
+                builder
+                    .append_data(&mut header, "jdk/bin/java", &b""[..])
+                    .unwrap();
+            } else {
+                header.set_size(4);
+                header.set_cksum();
+                builder
+                    .append_data(&mut header, "jdk/bin/java", &b"java"[..])
+                    .unwrap();
+            }
+            builder.into_inner().unwrap().finish().unwrap();
+        };
+        let dest = root.join("out");
+        fs::create_dir(&dest).unwrap();
+        write_archive(true);
+        assert!(matches!(
+            extract_archive(&archive, &dest),
+            Err(RuntimeInstallError::UnsafeArchivePath(_))
+        ));
+        write_archive(false);
+        extract_archive(&archive, &dest).unwrap();
+        assert_eq!(fs::read(dest.join("jdk/bin/java")).unwrap(), b"java");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(dest.join("jdk/bin/java"))
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o755
+            );
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn validates_runtime_package_metadata() {
         assert!(validate_package_name("OpenJDK-jre_x64_windows_hotspot.zip").is_ok());
         assert!(validate_package_name("../runtime.zip").is_err());
-        assert!(validate_package_name("runtime.tar.gz").is_err());
+        assert!(validate_package_name("runtime.tar.gz").is_ok());
 
         assert!(validate_download_url("https://github.com/adoptium/runtime.zip").is_ok());
         assert!(validate_download_url("http://example.com/runtime.zip").is_err());

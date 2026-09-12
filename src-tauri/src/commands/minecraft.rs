@@ -480,7 +480,7 @@ pub async fn launch_minecraft_instance(
         &app,
         &instance_id,
         "preparing",
-        "AppContainerとゲームファイルを準備しています…",
+        "隔離環境とゲームファイルを準備しています…",
     );
     let launch_instance_id = instance_id.clone();
     let spawned = tauri::async_runtime::spawn_blocking(move || {
@@ -500,7 +500,11 @@ pub async fn launch_minecraft_instance(
             &app,
             &instance_id,
             "launcher",
-            "AppContainerトークンを確認しました。隔離環境で起動します。",
+            if cfg!(target_os = "macos") {
+                "Seatbelt経由で起動しました（実験対応）。"
+            } else {
+                "AppContainerトークンを確認しました。隔離環境で起動します。"
+            },
         );
     }
     let pid = spawned.child.id();

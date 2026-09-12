@@ -1,0 +1,51 @@
+; Experimental Minecraft compatibility profile, not a production policy.
+; Paths are canonicalized by the trusted harness and passed as parameters.
+(version 1)
+(deny default)
+(allow process-fork)
+(allow process-exec (subpath (param "JAVA_HOME")))
+(allow process-info* (target same-sandbox))
+(allow signal (target same-sandbox))
+(allow sysctl-read)
+(allow file-read-metadata)
+(allow file-read* (literal "/"))
+(allow file-read*
+    (subpath "/System/Library")
+    (subpath "/System/Cryptexes")
+    (subpath "/usr/lib")
+    (subpath "/private/var/db/timezone")
+    (subpath (param "JAVA_HOME"))
+    (subpath (param "LAUNCH"))
+    (subpath (param "LIBRARIES"))
+    (subpath (param "ASSETS"))
+    (subpath (param "VERSION")))
+(allow file-read* file-write* (subpath (param "GAME")))
+(allow file-read* file-write* (literal "/dev/null"))
+(allow file-read* (literal "/dev/random") (literal "/dev/urandom"))
+; IP networking and host Unix sockets receive no grant.
+
+(allow file-read* file-write* (subpath (param "TEMP")))
+
+; Added only for the explicit LWJGL probe. Headless tests run again under this
+; expanded profile; their results remain separate in the report.
+(allow mach-lookup
+    (global-name "com.apple.windowserver.active")
+    (global-name "com.apple.CARenderServer")
+    (global-name "com.apple.cvmsServ")
+    (global-name "com.apple.coreservices.launchservicesd")
+    (global-name "com.apple.lsd.mapdb")
+    (global-name "com.apple.FontObjectsServer")
+    (global-name "com.apple.fonts")
+    (global-name "com.apple.system.notification_center")
+    (global-name "com.apple.system.logger")
+    (global-name "com.apple.logd")
+    (global-name "com.apple.bsd.dirhelper"))
+(allow iokit-open
+    (iokit-user-client-class "AGXDeviceUserClient")
+    (iokit-user-client-class "IOGPUGLDrawableUserClient")
+    (iokit-user-client-class "IOGPUSurfaceMTL")
+    (iokit-user-client-class "IOSurfaceRootUserClient"))
+
+; Minecraft's shader compilation needs this XPC service (confirmed by crash + denial logs).
+; No blanket Mach lookup or user cache access is granted.
+(allow mach-lookup (xpc-service-name "com.apple.MTLCompilerService"))

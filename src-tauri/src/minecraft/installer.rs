@@ -480,7 +480,7 @@ where
             continue;
         }
 
-        if let Some(native) = library.windows_native() {
+        if let Some(native) = library.platform_native() {
             if let Some(relative_path) = native.path.as_deref() {
                 let target = safe_metadata_join(&paths.libraries(), relative_path)?;
                 library_tasks
@@ -1079,9 +1079,9 @@ fn validate_managed_java(
     if java_path
         .components()
         .any(|component| matches!(component, Component::ParentDir | Component::CurDir))
-        || !java_path
-            .file_name()
-            .is_some_and(|name| name.eq_ignore_ascii_case("java.exe"))
+        || !java_path.file_name().is_some_and(|name| {
+            name.eq_ignore_ascii_case(crate::minecraft::model::java_executable_name())
+        })
     {
         return Err(MinecraftInstallError::UnmanagedJavaRuntime(
             java_path.to_owned(),
@@ -1199,7 +1199,7 @@ mod tests {
             .join("a".repeat(64))
             .join("runtime")
             .join("bin")
-            .join("java.exe");
+            .join(crate::minecraft::model::java_executable_name());
         fs::create_dir_all(java.parent().unwrap()).unwrap();
         fs::write(&java, b"test runtime").unwrap();
         let manifest = InstanceManifest {
@@ -1307,7 +1307,10 @@ mod tests {
     fn rejects_an_external_java_for_a_sandboxed_instance() {
         let paths = temporary_minecraft_paths("external-java");
         write_test_instance(&paths, "trusted", "trusted");
-        let external = paths.root().join("external/bin/java.exe");
+        let external = paths
+            .root()
+            .join("external/bin")
+            .join(crate::minecraft::model::java_executable_name());
         fs::create_dir_all(external.parent().unwrap()).unwrap();
         fs::write(&external, b"unmanaged").unwrap();
         let manifest_path = paths.instance_manifest("trusted");

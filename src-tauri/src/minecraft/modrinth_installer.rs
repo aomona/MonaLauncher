@@ -1241,6 +1241,7 @@ fn validate_file_name(file_name: &str) -> Result<(), ModInstallError> {
         || components.next().is_some()
         || file_name.chars().count() > 240
         || file_name.chars().any(char::is_control)
+        || file_name.contains(['\\', ':'])
         || !is_jar_name(file_name)
     {
         return Err(ModInstallError::InvalidFileName(file_name.to_owned()));

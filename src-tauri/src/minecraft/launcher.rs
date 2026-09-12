@@ -8,6 +8,7 @@ use std::path::{Component, Path, PathBuf};
 use std::process::ExitStatus;
 #[cfg(windows)]
 use std::sync::Arc;
+#[cfg(windows)]
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use zip::ZipArchive;
@@ -15,7 +16,9 @@ use zip::ZipArchive;
 use super::fabric::{
     load_fabric_profile, maven_artifact_path, validate_profile, FabricError, FabricProfile,
 };
-use super::file_io::{path_is_link_or_reparse, read_bounded_file};
+#[cfg(windows)]
+use super::file_io::path_is_link_or_reparse;
+use super::file_io::read_bounded_file;
 use super::installer::{
     load_instance as load_instance_manifest, managed_java_major as installed_java_major,
 };
@@ -27,6 +30,7 @@ use super::paths::MinecraftPaths;
 const MAX_NATIVE_ARCHIVE_ENTRIES: usize = 10_000;
 const MAX_NATIVE_FILE_SIZE: u64 = 128 * 1024 * 1024;
 const MAX_NATIVE_TOTAL_SIZE: u64 = 512 * 1024 * 1024;
+#[cfg(windows)]
 const MAX_JNA_DISPATCH_SIZE: u64 = 64 * 1024 * 1024;
 const MAX_LOCAL_VERSION_METADATA_SIZE: u64 = 16 * 1024 * 1024;
 
@@ -70,7 +74,7 @@ impl fmt::Display for MinecraftLaunchError {
             Self::Json(error) => write!(formatter, "version metadata error: {error}"),
             Self::Install(error) => write!(formatter, "instance metadata error: {error}"),
             Self::Fabric(error) => write!(formatter, "Fabric起動設定エラー: {error}"),
-            Self::Sandbox(error) => write!(formatter, "AppContainer launch error: {error}"),
+            Self::Sandbox(error) => write!(formatter, "sandbox launch error: {error}"),
             Self::SandboxedProcessNotIsolated => {
                 write!(formatter, "Minecraft did not receive an AppContainer token")
             }
@@ -109,6 +113,8 @@ impl From<FabricError> for MinecraftLaunchError {
 }
 
 pub enum MinecraftProcess {
+    #[cfg(target_os = "macos")]
+    Seatbelt(crate::platform::macos::SeatbeltProcess),
     #[cfg(windows)]
     Sandboxed(crate::platform::windows::appcontainer_process::SpawnedAppContainerProcess),
 }
@@ -116,6 +122,8 @@ pub enum MinecraftProcess {
 impl MinecraftProcess {
     pub fn id(&self) -> u32 {
         match self {
+            #[cfg(target_os = "macos")]
+            Self::Seatbelt(child) => child.id(),
             #[cfg(windows)]
             Self::Sandboxed(child) => child.id(),
         }
@@ -123,6 +131,8 @@ impl MinecraftProcess {
 
     pub fn try_wait(&mut self) -> Result<Option<ExitStatus>, MinecraftLaunchError> {
         match self {
+            #[cfg(target_os = "macos")]
+            Self::Seatbelt(child) => child.try_wait().map_err(MinecraftLaunchError::Io),
             #[cfg(windows)]
             Self::Sandboxed(child) => child
                 .try_wait()
@@ -132,6 +142,8 @@ impl MinecraftProcess {
 
     pub fn kill(&mut self) -> Result<(), MinecraftLaunchError> {
         match self {
+            #[cfg(target_os = "macos")]
+            Self::Seatbelt(child) => child.kill().map_err(MinecraftLaunchError::Io),
             #[cfg(windows)]
             Self::Sandboxed(child) => child
                 .kill()
@@ -141,6 +153,8 @@ impl MinecraftProcess {
 
     pub fn wait(&mut self) -> Result<ExitStatus, MinecraftLaunchError> {
         match self {
+            #[cfg(target_os = "macos")]
+            Self::Seatbelt(child) => child.wait().map_err(MinecraftLaunchError::Io),
             #[cfg(windows)]
             Self::Sandboxed(child) => child
                 .wait()
@@ -178,13 +192,26 @@ pub struct MinecraftIdentity {
 
 #[derive(Debug)]
 struct SandboxLayout {
+    #[cfg(windows)]
     profile_name: String,
+    #[cfg(windows)]
     sid: String,
     launch_root: PathBuf,
+    #[cfg(target_os = "macos")]
+    cleanup_on_drop: bool,
     physical_root: PathBuf,
     virtual_root: PathBuf,
     #[cfg(windows)]
     drive: Option<crate::platform::windows::sandbox_drive::SandboxDrive>,
+}
+
+#[cfg(target_os = "macos")]
+impl Drop for SandboxLayout {
+    fn drop(&mut self) {
+        if self.cleanup_on_drop {
+            let _ = fs::remove_dir_all(&self.launch_root);
+        }
+    }
 }
 
 pub fn spawn_instance(
@@ -242,6 +269,7 @@ pub fn spawn_instance(
 
     let client_entry = if sandbox.is_some() {
         extract_native_libraries(paths, &version, &physical_natives_directory)?;
+        #[cfg(windows)]
         extract_jna_dispatch(paths, &version, &physical_natives_directory.join("jna"))?;
         sandbox_path(&sandbox, &source_client_jar)?
     } else {
@@ -249,6 +277,7 @@ pub fn spawn_instance(
     };
 
     let narrator_bridge = prepare_narrator_bridge(&sandbox)?;
+    #[cfg(windows)]
     let cursor_agent = prepare_cursor_agent(&sandbox)?;
     let mut classpath_entries = narrator_bridge.into_iter().collect::<Vec<_>>();
     classpath_entries.extend(
@@ -262,7 +291,7 @@ pub fn spawn_instance(
         .iter()
         .map(|path| path.to_string_lossy())
         .collect::<Vec<_>>()
-        .join(";");
+        .join(classpath_separator());
 
     let player_name = identity
         .map(|identity| identity.player_name.clone())
@@ -310,7 +339,7 @@ pub fn spawn_instance(
         ("${launcher_name}", "MonaLauncher".to_owned()),
         ("${launcher_version}", env!("CARGO_PKG_VERSION").to_owned()),
         ("${classpath}", classpath.clone()),
-        ("${classpath_separator}", ";".to_owned()),
+        ("${classpath_separator}", classpath_separator().to_owned()),
         (
             "${library_directory}",
             sandbox_path(&sandbox, &paths.libraries())?
@@ -349,6 +378,7 @@ pub fn spawn_instance(
                 .map(OsString::from),
         );
     }
+    #[cfg(windows)]
     if sandbox.is_some() {
         // JNA cannot safely unpack through a SUBST alias in an AppContainer. The trusted launcher
         // extracts jnidispatch.dll first, then the child only loads it from its sandbox drive.
@@ -372,6 +402,29 @@ pub fn spawn_instance(
         if std::env::var_os("MONALAUNCHER_EXPECT_NARRATOR").is_some() {
             arguments.push(OsString::from("-Dmonalauncher.narrator.smoke=true"));
         }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        if !arguments.iter().any(|arg| arg == "-XstartOnFirstThread") {
+            arguments.push(OsString::from("-XstartOnFirstThread"));
+        }
+        let temp = sandbox
+            .as_ref()
+            .expect("sandbox prepared")
+            .launch_root
+            .join("tmp");
+        for property in [
+            "java.io.tmpdir",
+            "jna.tmpdir",
+            "org.lwjgl.system.SharedLibraryExtractPath",
+            "io.netty.native.workdir",
+        ] {
+            arguments.push(OsString::from(format!("-D{property}={}", temp.display())));
+        }
+        arguments.push(OsString::from(format!(
+            "-Duser.home={}",
+            game_directory.display()
+        )));
     }
     arguments.push(OsString::from(
         fabric
@@ -409,6 +462,77 @@ pub fn spawn_instance(
         &game_directory,
         sandbox_narrator_token,
     )
+}
+
+fn classpath_separator() -> &'static str {
+    if cfg!(windows) {
+        ";"
+    } else {
+        ":"
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn prepare_sandbox_layout(
+    paths: &MinecraftPaths,
+    instance: &InstanceManifest,
+) -> Result<Option<SandboxLayout>, MinecraftLaunchError> {
+    use std::os::unix::fs::DirBuilderExt;
+    let root = fs::canonicalize(paths.root())?;
+    // A random, launcher-owned directory outside writable game storage avoids stale links.
+    let launch_root = paths
+        .instance(&instance.id)
+        .join(format!("seatbelt-{}", generate_narrator_token()?));
+    fs::DirBuilder::new().mode(0o700).create(&launch_root)?;
+    fs::create_dir(launch_root.join("tmp"))?;
+    Ok(Some(SandboxLayout {
+        launch_root: fs::canonicalize(launch_root)?,
+        cleanup_on_drop: true,
+        physical_root: root.clone(),
+        virtual_root: root,
+    }))
+}
+
+#[cfg(target_os = "macos")]
+fn spawn_sandboxed(
+    paths: &MinecraftPaths,
+    instance: &InstanceManifest,
+    sandbox: &mut SandboxLayout,
+    arguments: &[OsString],
+    game_directory: &Path,
+    _narrator_token: &str,
+) -> Result<SpawnedMinecraft, MinecraftLaunchError> {
+    let java = fs::canonicalize(&instance.java_path)?;
+    let java_home = java
+        .parent()
+        .and_then(Path::parent)
+        .ok_or_else(|| MinecraftLaunchError::Sandbox("invalid Java home".to_owned()))?;
+    let temp = sandbox.launch_root.join("tmp");
+    let grants = [
+        ("JAVA_HOME", java_home.to_owned()),
+        ("LAUNCH", sandbox.launch_root.clone()),
+        ("LIBRARIES", paths.libraries()),
+        ("ASSETS", paths.assets()),
+        ("VERSION", paths.version_directory(&instance.version_id)),
+        ("GAME", game_directory.to_owned()),
+        ("TEMP", temp.clone()),
+    ];
+    let command = crate::platform::macos::command(&java, &grants, game_directory, &temp)?;
+    let mut child = crate::platform::macos::spawn(command, arguments, sandbox.launch_root.clone())?;
+    sandbox.cleanup_on_drop = false; // The process now owns cleanup, including pipe setup failures.
+    let stdout = child
+        .take_stdout()
+        .ok_or_else(|| MinecraftLaunchError::Sandbox("stdout is unavailable".to_owned()))?;
+    let stderr = child
+        .take_stderr()
+        .ok_or_else(|| MinecraftLaunchError::Sandbox("stderr is unavailable".to_owned()))?;
+    Ok(SpawnedMinecraft {
+        child: MinecraftProcess::Seatbelt(child),
+        stdout: Box::new(stdout),
+        stderr: Box::new(stderr),
+        sandboxed: true,
+        narrator_token: None,
+    })
 }
 
 #[cfg(windows)]
@@ -472,7 +596,7 @@ fn spawn_sandboxed(
     })
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 fn spawn_sandboxed(
     _paths: &MinecraftPaths,
     _instance: &InstanceManifest,
@@ -620,13 +744,6 @@ fn prepare_cursor_agent(
 }
 
 #[cfg(not(windows))]
-fn prepare_cursor_agent(
-    _sandbox: &Option<SandboxLayout>,
-) -> Result<Option<PathBuf>, MinecraftLaunchError> {
-    Ok(None)
-}
-
-#[cfg(not(windows))]
 fn prepare_narrator_bridge(
     _sandbox: &Option<SandboxLayout>,
 ) -> Result<Option<PathBuf>, MinecraftLaunchError> {
@@ -642,7 +759,7 @@ fn extract_native_libraries(
         if !rules_allow(library.rules.as_deref(), &HashMap::new()) {
             continue;
         }
-        let Some(native) = library.windows_native() else {
+        let Some(native) = library.platform_native() else {
             continue;
         };
         let Some(relative_path) = native.path.as_deref() else {
@@ -651,13 +768,19 @@ fn extract_native_libraries(
         let archive = safe_library_path(paths, relative_path)?;
         require_file(&archive)?;
         extract_archive(&archive, destination, |path| {
-            path.extension()
-                .is_some_and(|extension| extension.eq_ignore_ascii_case("dll"))
+            path.extension().is_some_and(|extension| {
+                extension.eq_ignore_ascii_case(if cfg!(target_os = "macos") {
+                    "dylib"
+                } else {
+                    "dll"
+                })
+            })
         })?;
     }
     Ok(())
 }
 
+#[cfg(windows)]
 fn extract_jna_dispatch(
     paths: &MinecraftPaths,
     version: &VersionMetadata,
@@ -708,6 +831,7 @@ fn extract_jna_dispatch(
     Ok(())
 }
 
+#[cfg(any(windows, test))]
 fn is_jna_core_library_path(path: &str) -> bool {
     path.replace('\\', "/").contains("/jna/jna/")
 }
@@ -818,7 +942,7 @@ fn copy_exact_bounded<R: Read, W: Write>(
     Ok(())
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 fn prepare_sandbox_layout(
     _paths: &MinecraftPaths,
     instance: &InstanceManifest,
@@ -1033,7 +1157,7 @@ mod tests {
                 rules: vec![Rule {
                     action: "allow".to_owned(),
                     os: Some(RuleOs {
-                        name: Some("windows".to_owned()),
+                        name: Some(super::super::model::platform_os().to_owned()),
                         arch: None,
                         version: None,
                     }),

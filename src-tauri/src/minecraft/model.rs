@@ -86,14 +86,29 @@ pub struct LibraryDownloads {
 }
 
 impl Library {
-    pub fn windows_native(&self) -> Option<&DownloadInfo> {
-        let classifier = self.natives.as_ref()?.get("windows")?;
-        let classifier = classifier.replace("${arch}", windows_native_architecture());
+    pub fn platform_native(&self) -> Option<&DownloadInfo> {
+        let classifier = self.natives.as_ref()?.get(platform_os())?;
+        let classifier = classifier.replace("${arch}", platform_native_architecture());
         self.downloads.classifiers.get(&classifier)
     }
 }
 
-fn windows_native_architecture() -> &'static str {
+pub fn platform_os() -> &'static str {
+    match std::env::consts::OS {
+        "macos" => "osx",
+        other => other,
+    }
+}
+
+pub fn java_executable_name() -> &'static str {
+    if cfg!(windows) {
+        "java.exe"
+    } else {
+        "java"
+    }
+}
+
+fn platform_native_architecture() -> &'static str {
     if cfg!(target_pointer_width = "64") {
         "64"
     } else {
@@ -198,7 +213,7 @@ pub fn rules_allow(rules: Option<&[Rule]>, features: &HashMap<String, bool>) -> 
 
 fn rule_matches(rule: &Rule, features: &HashMap<String, bool>) -> bool {
     if let Some(os) = &rule.os {
-        if os.name.as_deref().is_some_and(|name| name != "windows") {
+        if os.name.as_deref().is_some_and(|name| name != platform_os()) {
             return false;
         }
 
@@ -230,7 +245,7 @@ fn rule_matches(rule: &Rule, features: &HashMap<String, bool>) -> bool {
 fn architecture_matches(expected: &str) -> bool {
     matches!(
         (std::env::consts::ARCH, expected),
-        ("x86_64", "x86_64") | ("x86", "x86") | ("aarch64", "arm64")
+        ("x86_64", "x86_64") | ("x86", "x86") | ("aarch64", "arm64" | "aarch64")
     )
 }
 
@@ -318,11 +333,11 @@ mod tests {
     }
 
     #[test]
-    fn rejects_non_windows_rule() {
+    fn rejects_other_platform_rule() {
         let rule = Rule {
             action: "allow".to_owned(),
             os: Some(RuleOs {
-                name: Some("linux".to_owned()),
+                name: Some("other-os".to_owned()),
                 arch: None,
                 version: None,
             }),
@@ -333,7 +348,7 @@ mod tests {
     }
 
     #[test]
-    fn selects_windows_native_classifier() {
+    fn selects_platform_native_classifier() {
         let native = DownloadInfo {
             path: Some("native.jar".to_owned()),
             sha1: "hash".to_owned(),
@@ -347,14 +362,14 @@ mod tests {
             },
             rules: None,
             natives: Some(HashMap::from([(
-                "windows".to_owned(),
+                platform_os().to_owned(),
                 "natives-windows-${arch}".to_owned(),
             )])),
         };
 
         assert_eq!(
             library
-                .windows_native()
+                .platform_native()
                 .and_then(|item| item.path.as_deref()),
             Some("native.jar")
         );

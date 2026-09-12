@@ -2,7 +2,9 @@
 
 Windows AppContainer内でMinecraftを実行する、開発中のランチャーです。ゲームプロセスにはネットワークCapabilityを付与せず、インスタンス専用のファイル領域だけへアクセスを限定します。
 
-## セキュリティ境界
+macOSではSeatbeltによる実験的な起動にも対応しています。Minecraft 1.21.8デモ版のタイトル画面まで確認済みです。[macOSの起動手順・制限・検証結果](docs/macos-seatbelt.md)を参照してください。
+
+## Windowsのセキュリティ境界
 
 - MinecraftとModは専用AppContainer SIDで実行し、ネットワークCapabilityを付与しません。そのため、現状はマルチプレイ、Realmsなどゲーム側の通信機能を利用できません。
 - 共有ライブラリ、Java、起動メタデータ、インスタンス設定は読み取り専用です。書き込みを許可するのはゲームデータと起動ごとの一時ディレクトリだけです。
