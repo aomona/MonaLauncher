@@ -19,6 +19,29 @@ pub fn render(policy: &SandboxPolicy) -> Result<String, PolicyError> {
             "\n(deny file-write* (subpath (param \"GAME_READONLY_{index}\")))\n"
         ));
     }
+    if let Some(caches) = &policy.caches {
+        for (index, grant) in caches
+            .grants(policy.skin_cache, policy.graphics_cache)
+            .iter()
+            .enumerate()
+        {
+            let operations = if grant.access == FileAccess::ReadOnly {
+                "file-read*"
+            } else {
+                "file-read* file-write*"
+            };
+            profile.push_str(&format!(
+                "\n(allow {operations} (subpath (param \"CACHE_{index}\")))\n"
+            ));
+        }
+    }
+    if policy.desktop.integration {
+        profile.push_str(include_str!("../platform/macos/desktop-integration.sb"));
+    }
+    if policy.graphics_cache {
+        profile
+            .push_str("\n(allow file-read* file-write* (subpath (param \"JAVA_METAL_CACHE\")))\n");
+    }
     if policy.network == super::NetworkAccess::Internet {
         profile.push_str(include_str!("../platform/macos/network.sb"));
     }

@@ -286,3 +286,94 @@ fn granular_permissions_reject_preexisting_aliases() {
         .with_readonly_game_directories(&[GameDirectory::Worlds])
         .is_err());
 }
+
+#[test]
+fn runtime_cache_grants_are_owned_and_independent_of_game_write() {
+    let fixture = Fixture::new();
+    let mut policy = fixture
+        .policy()
+        .with_file_access(Resource::Game, FileAccess::ReadOnly)
+        .unwrap();
+    let caches = runtime_cache::RuntimeCaches::prepare(policy.resources()).unwrap();
+    policy.caches = Some(caches.clone());
+    for enabled in [false, true] {
+        policy.skin_cache = enabled;
+        policy.graphics_cache = enabled;
+        policy.desktop.integration = enabled;
+        for backend in [
+            Backend::Seatbelt,
+            Backend::Bubblewrap,
+            Backend::AppContainer,
+        ] {
+            if !enabled && backend != Backend::Seatbelt {
+                assert!(policy.compile(backend).is_err());
+                continue;
+            }
+            let plan = policy.compile(backend).unwrap();
+            assert!(plan.files.iter().any(|f| f.path == caches.skins
+                && f.access
+                    == if enabled {
+                        FileAccess::ReadWrite
+                    } else {
+                        FileAccess::ReadOnly
+                    }));
+            assert!(plan
+                .files
+                .iter()
+                .any(|f| f.path == caches.assets && f.access == FileAccess::ReadOnly));
+            assert!(plan
+                .files
+                .iter()
+                .any(|f| f.path == policy.resources().assets && f.access == FileAccess::ReadOnly));
+        }
+        let profile = seatbelt::render(&policy).unwrap();
+        assert_eq!(
+            profile.contains("TextInputUI.xpc.CursorUIViewService"),
+            enabled
+        );
+        assert_eq!(profile.contains("JAVA_METAL_CACHE"), enabled);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn runtime_cache_aliases_are_rejected() {
+    let fixture = Fixture::new();
+    let resources = fixture.resources();
+    std::os::unix::fs::symlink(
+        &resources.assets,
+        resources.instance_root.join("runtime-cache"),
+    )
+    .unwrap();
+    assert!(runtime_cache::RuntimeCaches::prepare(&resources).is_err());
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn seatbelt_runtime_cache_writes_can_be_revoked_and_restored() {
+    let fixture = Fixture::new();
+    let mut resources = fixture.resources();
+    resources.runtimes_root = "/bin".into();
+    resources.java_home = "/bin".into();
+    let mut policy = SandboxPolicy::minecraft(resources)
+        .unwrap()
+        .with_file_access(Resource::Game, FileAccess::ReadOnly)
+        .unwrap();
+    let caches = runtime_cache::RuntimeCaches::prepare(policy.resources()).unwrap();
+    std::fs::write(caches.skins.join("fixture"), "skin").unwrap();
+    std::fs::write(caches.assets.join("immutable"), "asset").unwrap();
+    policy.caches = Some(caches.clone());
+    for enabled in [true, false, true] {
+        policy.skin_cache = enabled;
+        policy.graphics_cache = enabled;
+        let output = crate::platform::macos::command(Path::new("/bin/sh"), &policy).unwrap()
+            .args(["-c", "cat \"$1/skins/fixture\" >/dev/null || exit 10; if echo x > \"$1/immutable\"; then exit 11; fi; if echo x > \"$1/skins/new\"; then skin=1; else skin=0; fi; if echo x > \"$2/new\"; then graphics=1; else graphics=0; fi; test \"$skin:$graphics\" = \"$3:$3\"", "probe"])
+            .arg(&caches.assets).arg(&caches.graphics).arg(if enabled { "1" } else { "0" })
+            .output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}

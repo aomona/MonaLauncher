@@ -12,6 +12,9 @@ export type InstancePermissions = {
   modsWrite: boolean;
   configWrite: boolean;
   logsWrite: boolean;
+  skinCache: boolean;
+  desktopIntegration: boolean;
+  graphicsCache: boolean;
 };
 
 export type PermissionSupport = {
@@ -20,6 +23,8 @@ export type PermissionSupport = {
   audioOutput: boolean;
   microphone: boolean;
   clipboard: boolean;
+  desktopIntegration: boolean;
+  graphicsCache: boolean;
 };
 
 export type MinecraftInstance = {

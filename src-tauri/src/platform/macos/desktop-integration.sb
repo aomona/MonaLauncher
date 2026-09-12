@@ -1,0 +1,13 @@
+; Optional input-method UI and native full-screen integration, observed in Java denial logs.
+(allow mach-lookup
+    (xpc-service-name "com.apple.hiservices-xpcservice")
+    (xpc-service-name "com.apple.ViewBridgeAuxiliary")
+    (xpc-service-name "com.apple.TextInputUI.xpc.CursorUIViewService")
+    (global-name "com.apple.tsm.uiserver")
+    (global-name "com.apple.dock.fullscreen"))
+(allow mach-register (local-name "com.apple.tsm.portname"))
+(allow user-preference-read
+    (preference-domain "com.apple.HIToolbox")
+    (preference-domain "com.apple.hitoolbox"))
+(allow file-read* (subpath "/usr/share/icu") (subpath "/usr/share/locale"))
+(allow file-read* (literal "/Library/Preferences/com.apple.HIToolbox.plist"))

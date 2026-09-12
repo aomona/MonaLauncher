@@ -42,5 +42,9 @@ pub fn policy_for_instance(
         launch: launch.to_owned(),
         temp: launch.join("tmp"),
     })?;
-    instance.permissions.apply(policy)
+    let mut policy = instance.permissions.apply(policy)?;
+    policy.caches = Some(crate::sandbox::runtime_cache::RuntimeCaches::prepare(
+        policy.resources(),
+    )?);
+    Ok(policy)
 }

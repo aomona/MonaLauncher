@@ -291,6 +291,13 @@ pub fn spawn_instance(
     fs::create_dir_all(launch_root.join("tmp"))?;
     let policy = super::sandbox_policy::policy_for_instance(paths, &instance, launch_root)
         .map_err(|error| MinecraftLaunchError::Sandbox(error.to_string()))?;
+    let assets_root = policy
+        .caches
+        .as_ref()
+        .expect("instance caches prepared")
+        .assets
+        .clone();
+    super::runtime_assets::prepare(&paths.assets(), &assets_root, &version)?;
     let narrator_bridge = prepare_narrator_bridge(&sandbox)?;
     #[cfg(windows)]
     let cursor_agent = prepare_cursor_agent(&sandbox)?;
@@ -336,7 +343,7 @@ pub fn spawn_instance(
         ),
         (
             "${assets_root}",
-            sandbox_path(&sandbox, &paths.assets())?
+            sandbox_path(&sandbox, &assets_root)?
                 .to_string_lossy()
                 .into_owned(),
         ),

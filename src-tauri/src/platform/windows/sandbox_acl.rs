@@ -116,6 +116,13 @@ pub fn grant_policy_access(
     crate::sandbox::game_files::validate_tree(&policy.resources().game)
         .map_err(|e| SandboxAclError::Policy(e.to_string()))?;
     update_deny(&policy.resources().game, appcontainer_sid, None, true)?;
+    if let Some(caches) = &policy.caches {
+        for path in [&caches.skins, &caches.graphics] {
+            crate::sandbox::game_files::validate_tree(path)
+                .map_err(|e| SandboxAclError::Policy(e.to_string()))?;
+            update_deny(path, appcontainer_sid, None, true)?;
+        }
+    }
     for path in &plan.traverse {
         grant(path, appcontainer_sid, "RX", false)?;
     }
@@ -137,6 +144,16 @@ pub fn grant_policy_access(
             } else if access == FileAccess::ReadWrite {
                 set_integrity_level(&file.path, "L")?;
             }
+        }
+    }
+    if let Some(caches) = &policy.caches {
+        if !policy.skin_cache {
+            update_deny(
+                &caches.skins,
+                appcontainer_sid,
+                Some("(OI)(CI)(WD,AD,WEA,WA,DE,DC,WDAC,WO)"),
+                true,
+            )?;
         }
     }
     if !policy.readonly_game_directories().is_empty() {

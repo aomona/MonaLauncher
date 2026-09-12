@@ -256,6 +256,44 @@ print('NETWORK/AUDIO PASS enabled='+str(expected))
         }
         print!("{}", String::from_utf8_lossy(&output.stdout));
     }
+    let caches = runtime_cache::RuntimeCaches::prepare(&resources)?;
+    fs::write(caches.skins.join("fixture"), "skin")?;
+    fs::write(caches.assets.join("immutable"), "asset")?;
+    for enabled in [true, false, true] {
+        let mut cache_policy = policy.clone();
+        cache_policy.caches = Some(caches.clone());
+        cache_policy.skin_cache = enabled;
+        cache_policy.graphics_cache = enabled;
+        let output = prepare(
+            std::path::Path::new("/usr/bin/python3"),
+            &cache_policy,
+            None,
+        )?
+        .output(&[
+            "-c".into(),
+            r#"import os,pathlib,sys
+assets,graphics=map(pathlib.Path,sys.argv[1:3]); enabled=sys.argv[3]=='true'
+assert (assets/'skins/fixture').read_text()=='skin'
+def writable(path):
+    try: path.write_text('fixture'); return True
+    except OSError: return False
+assert not writable(assets/'immutable')
+assert writable(assets/'skins/new')==enabled
+assert writable(graphics/'new')==enabled
+assert os.environ['MESA_SHADER_CACHE_DISABLE']==str(not enabled).lower()
+assert os.environ['MESA_SHADER_CACHE_DIR']==str(graphics)
+print('CACHE PASS enabled='+str(enabled))
+"#
+            .into(),
+            caches.assets.as_os_str().into(),
+            caches.graphics.as_os_str().into(),
+            enabled.to_string().into(),
+        ])?;
+        if !output.status.success() {
+            return Err(String::from_utf8_lossy(&output.stderr).into_owned().into());
+        }
+        print!("{}", String::from_utf8_lossy(&output.stdout));
+    }
     // A detached descendant must die with the owned namespace supervisor.
     let args = vec![OsString::from("-c"), OsString::from(
         "import os,time; p=os.fork(); os.setsid() if p==0 else None; print('ready',flush=True); time.sleep(120)"

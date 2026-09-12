@@ -12,3 +12,5 @@ pub mod runtime;
 pub mod sandbox_policy;
 
 pub(crate) mod native_overrides;
+
+pub(crate) mod runtime_assets;

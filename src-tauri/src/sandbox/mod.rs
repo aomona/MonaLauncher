@@ -1,5 +1,6 @@
 //! OS-independent permission requests and explicit backend compatibility differences.
 pub mod game_files;
+pub mod runtime_cache;
 pub mod seatbelt;
 pub use game_files::GameDirectory;
 #[cfg(test)]
@@ -161,6 +162,7 @@ pub enum NetworkAccess {
 
 #[derive(Debug, Clone, Copy)]
 pub struct DesktopPermissions {
+    pub integration: bool,
     pub window_and_input: bool,
     pub audio_output: bool,
     pub microphone: bool,
@@ -173,6 +175,9 @@ pub struct SandboxPolicy {
     resources: SandboxResources,
     files: Vec<(Resource, FileAccess)>,
     game_readonly: Vec<PathBuf>,
+    pub skin_cache: bool,
+    pub graphics_cache: bool,
+    pub caches: Option<runtime_cache::RuntimeCaches>,
     pub network: NetworkAccess,
     pub desktop: DesktopPermissions,
     pub narrator: bool,
@@ -244,8 +249,12 @@ impl SandboxPolicy {
                 (Temp, ReadWrite),
             ],
             game_readonly: vec![],
+            skin_cache: true,
+            graphics_cache: true,
+            caches: None,
             network: NetworkAccess::Denied,
             desktop: DesktopPermissions {
+                integration: true,
                 window_and_input: true,
                 audio_output: true,
                 microphone: false,
@@ -309,6 +318,11 @@ impl SandboxPolicy {
     }
 
     pub fn compile(&self, backend: Backend) -> Result<CompiledPolicy, PolicyError> {
+        if (!self.desktop.integration && backend != Backend::Seatbelt)
+            || (!self.graphics_cache && backend == Backend::AppContainer)
+        {
+            return Err(PolicyError("independent desktop integration/graphics cache control is unsupported on this backend".into()));
+        }
         if self.desktop.microphone && !self.desktop.audio_output {
             return Err(PolicyError(
                 "microphone access requires the shared audio service to remain enabled".into(),
@@ -348,6 +362,10 @@ impl SandboxPolicy {
                 path: path.clone(),
                 access: FileAccess::ReadOnly,
             }));
+        if let Some(caches) = &self.caches {
+            plan.files
+                .extend(caches.grants(self.skin_cache, self.graphics_cache));
+        }
         if backend == Backend::Bubblewrap {
             if !self.allow_linux_desktop_compatibility {
                 return Err(PolicyError(

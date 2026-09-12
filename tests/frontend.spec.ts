@@ -34,6 +34,9 @@ async function mockDesktop(
             modsWrite: true,
             configWrite: true,
             logsWrite: true,
+            skinCache: true,
+            desktopIntegration: true,
+            graphicsCache: true,
           },
           demo: false,
           modLoader: { type: "fabric", version: "0.16.0" },
@@ -59,6 +62,9 @@ async function mockDesktop(
             modsWrite: true,
             configWrite: true,
             logsWrite: true,
+            skinCache: true,
+            desktopIntegration: true,
+            graphicsCache: true,
           },
           demo: false,
           modLoader: { type: "vanilla" },
@@ -148,6 +154,8 @@ async function mockDesktop(
                   platform,
                   editable: platform !== "unsupported",
                   audioOutput: platform === "macos" || platform === "linux",
+                  desktopIntegration: platform === "macos",
+                  graphicsCache: platform === "macos" || platform === "linux",
                   microphone: platform === "macos",
                   clipboard: platform === "macos",
                 };
@@ -1053,6 +1061,23 @@ for (const platform of ["windows", "macos", "linux"] as const) {
     await mockDesktop(page, 2, platform);
     await openSurvival(page);
     await page.getByRole("tab", { name: "Permissions", exact: true }).click();
+    const skin = page.getByRole("switch", { name: "スキンキャッシュ", exact: true });
+    await expect(skin).toBeChecked();
+    await skin.click();
+    await expect(skin).not.toBeChecked();
+    for (const [name, supported] of [
+      ["日本語入力・全画面連携", platform === "macos"],
+      ["描画キャッシュ", platform !== "windows"],
+    ] as const) {
+      const control = page.getByRole("switch", { name, exact: true });
+      if (supported) {
+        await expect(control).toBeChecked();
+        await control.click();
+        await expect(control).not.toBeChecked();
+      } else {
+        await expect(control).toHaveCount(0);
+      }
+    }
     const worlds = page.getByRole("switch", { name: "ワールドの保存", exact: true });
     await worlds.click();
     await expect(worlds).not.toBeChecked();
@@ -1067,6 +1092,7 @@ for (const platform of ["windows", "macos", "linux"] as const) {
     await page.getByRole("tab", { name: "Permissions", exact: true }).click();
     await expect(worlds).not.toBeChecked();
     await expect(network).toBeChecked();
+    await expect(skin).not.toBeChecked();
     await page.getByRole("switch", { name: "ゲームデータへの書き込み", exact: true }).click();
     await expect(worlds).toBeDisabled();
     await expect(network).toBeEnabled();
@@ -1126,4 +1152,28 @@ test("an invalid imported microphone setting can be disabled without enabling au
   await expect(microphone).toBeDisabled();
   await expect(audio).not.toBeChecked();
   await expect(audio).toBeEnabled();
+});
+
+test("default-enabled compatibility permissions remain readable at narrow widths", async ({
+  page,
+}, testInfo) => {
+  await mockDesktop(page, 2, "macos");
+  await openSurvival(page);
+  await page.getByRole("tab", { name: "Permissions", exact: true }).click();
+  for (const width of [1440, 320]) {
+    await page.setViewportSize({ width, height: width === 320 ? 640 : 900 });
+    const skin = page.getByRole("switch", { name: "スキンキャッシュ", exact: true });
+    await skin.focus();
+    await expect(skin).toBeChecked();
+    await page.screenshot({ path: testInfo.outputPath(`compatibility-${width}.png`) });
+    for (const name of ["日本語入力・全画面連携", "描画キャッシュ"]) {
+      const control = page.getByRole("switch", { name, exact: true });
+      await control.focus();
+      await expect(control).toBeChecked();
+      await expect(control).toBeInViewport();
+    }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
+  }
 });

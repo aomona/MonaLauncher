@@ -1,4 +1,5 @@
 //! Experimental Seatbelt backend. No unsandboxed fallback is permitted.
+mod graphics_cache;
 pub(crate) mod narrator;
 use std::ffi::OsString;
 use std::fs;
@@ -76,6 +77,26 @@ pub fn command(java: &Path, policy: &SandboxPolicy) -> io::Result<Command> {
         command
             .arg("-D")
             .arg(format!("GAME_READONLY_{index}={value}"));
+    }
+    if let Some(caches) = &policy.caches {
+        for (index, grant) in caches
+            .grants(policy.skin_cache, policy.graphics_cache)
+            .iter()
+            .enumerate()
+        {
+            let value = grant
+                .path
+                .to_str()
+                .ok_or_else(|| io::Error::other("Seatbelt requires UTF-8 cache paths"))?;
+            command.arg("-D").arg(format!("CACHE_{index}={value}"));
+        }
+    }
+    if policy.graphics_cache {
+        let cache = graphics_cache::java_metal_cache()?;
+        let value = cache
+            .to_str()
+            .ok_or_else(|| io::Error::other("Seatbelt requires UTF-8 cache paths"))?;
+        command.arg("-D").arg(format!("JAVA_METAL_CACHE={value}"));
     }
     command.arg("-p").arg(profile).arg(java);
     command
@@ -155,9 +176,12 @@ mod tests {
             policy.desktop.audio_output = enabled;
             policy.desktop.microphone = enabled;
             policy.desktop.clipboard = enabled;
+            policy.desktop.integration = enabled;
+            policy.graphics_cache = enabled;
             let output = command(&executable, &policy)
                 .unwrap()
                 .arg(listener.local_addr().unwrap().port().to_string())
+                .arg(graphics_cache::java_metal_cache().unwrap())
                 .output()
                 .unwrap();
             assert!(
@@ -166,7 +190,14 @@ mod tests {
                 String::from_utf8_lossy(&output.stderr)
             );
             let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-            for key in ["network", "audio", "clipboard", "microphone_policy"] {
+            for key in [
+                "network",
+                "audio",
+                "clipboard",
+                "fullscreen",
+                "graphics_cache",
+                "microphone_policy",
+            ] {
                 assert_eq!(result[key], i32::from(enabled), "{key}: {result}");
             }
         }

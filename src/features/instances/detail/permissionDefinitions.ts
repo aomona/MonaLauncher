@@ -5,8 +5,11 @@ type Permission = {
   label: string;
   description: string;
   file?: boolean;
-  support?: "audioOutput" | "microphone" | "clipboard";
+  support?: "audioOutput" | "microphone" | "clipboard" | "desktopIntegration" | "graphicsCache";
 };
+export function permissionDefault(key: keyof InstancePermissions) {
+  return key === "audioOutput" || key === "desktopIntegration" || key === "graphicsCache";
+}
 export const permissionGroups: { label: string; items: Permission[] }[] = [
   {
     label: "ファイル",
@@ -65,6 +68,31 @@ export const permissionGroups: { label: string; items: Permission[] }[] = [
     ],
   },
   {
+    label: "キャッシュとOS連携",
+    items: [
+      {
+        key: "skinCache",
+        label: "スキンキャッシュ",
+        description:
+          "このインスタンス専用のスキン画像キャッシュへの保存・更新を許可します。OFFでも保存済み画像の読み取りは可能です。ダウンロードには通信の許可も必要です。ゲームデータ全体の書き込み設定とは独立しています。",
+      },
+      {
+        key: "desktopIntegration",
+        label: "日本語入力・全画面連携",
+        description:
+          "macOSの入力候補表示とネイティブ全画面切替に必要なOSサービスへの接続を許可します。OFFではこれらの操作が動かない場合があります。通常の画面・キーボード・マウスの許可とは別です。",
+        support: "desktopIntegration",
+      },
+      {
+        key: "graphicsCache",
+        label: "描画キャッシュ",
+        description:
+          "描画用キャッシュへのアクセスを許可します。macOSは同じユーザーのJavaアプリと共有するMetal専用キャッシュ、Linuxはインスタンス専用の保存先を使います。OFFでも描画やメモリ上のキャッシュは使えます。",
+        support: "graphicsCache",
+      },
+    ],
+  },
+  {
     label: "通信とデスクトップ",
     items: [
       {
@@ -107,6 +135,10 @@ export const permissionGroups: { label: string; items: Permission[] }[] = [
 export function unavailableReason(item: Permission, support: PermissionSupport | null) {
   if (!item.support || support?.[item.support]) return null;
   if (!support) return "対応状況を確認しています…";
+  if (item.key === "desktopIntegration")
+    return "このOSでは入力・全画面の連携を画面サービスから個別に遮断する設定は未対応です。OS・デスクトップ環境側の機能に従います。";
+  if (item.key === "graphicsCache")
+    return "WindowsではドライバーやAppContainerの描画キャッシュを個別に遮断する設定は未対応です。";
   if (item.key === "audioOutput") return "Windowsでは通常音声の接続を個別に遮断できません。";
   if (item.key === "microphone")
     return support?.platform === "linux"

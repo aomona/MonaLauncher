@@ -1,5 +1,5 @@
 import { useId, useState } from "react";
-import { permissionGroups, unavailableReason } from "./permissionDefinitions";
+import { permissionDefault, permissionGroups, unavailableReason } from "./permissionDefinitions";
 import type { Launcher } from "../../../app/useLauncher";
 import { Button } from "../../../components/Button";
 import { ErrorMessage } from "../../../components/ErrorMessage";
@@ -81,7 +81,7 @@ export function PermissionsPanel({
             const incompatible =
               unavailable &&
               l.permissionSupport?.editable &&
-              (key === "audioOutput" ? !instance.permissions[key] : instance.permissions[key]);
+              instance.permissions[key] !== permissionDefault(key);
             const dependency =
               item.file && !instance.permissions.gameWrite
                 ? "ゲーム全体の書き込みがOFFのため、読み取り専用です。"
@@ -115,10 +115,10 @@ export function PermissionsPanel({
                       <p>別のOSの設定が残っているため、このままでは起動できません。</p>
                       <Button
                         disabled={disabled}
-                        onClick={() => void save(key, key === "audioOutput")}
+                        onClick={() => void save(key, permissionDefault(key))}
                       >
-                        {key === "audioOutput"
-                          ? "通常音声を許可に戻す"
+                        {permissionDefault(key)
+                          ? `${label}を許可に戻す`
                           : `${label}の追加許可を解除`}
                       </Button>
                     </div>

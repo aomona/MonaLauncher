@@ -14,7 +14,7 @@ static int service(const char *name) {
     return ok;
 }
 int main(int argc, char **argv) {
-    if (argc != 2) return 2;
+    if (argc != 3) return 2;
     alarm(5);
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     struct sockaddr_in address = {0};
@@ -23,8 +23,15 @@ int main(int argc, char **argv) {
     inet_pton(AF_INET, "127.0.0.1", &address.sin_addr);
     int network = fd >= 0 && connect(fd, (struct sockaddr *)&address, sizeof(address)) == 0;
     if (fd >= 0) close(fd);
-    printf("{\"network\":%d,\"audio\":%d,\"clipboard\":%d,\"microphone_policy\":%d}\n", network,
+    char fixture[4096];
+    snprintf(fixture, sizeof(fixture), "%s/mona-permission-probe-%d", argv[2], getpid());
+    FILE *cache = fopen(fixture, "wx");
+    int graphics = cache != NULL;
+    if (cache) { fputs("fixture", cache); fclose(cache); unlink(fixture); }
+    printf("{\"network\":%d,\"audio\":%d,\"clipboard\":%d,\"fullscreen\":%d,\"graphics_cache\":%d,\"microphone_policy\":%d}\n", network,
         service("com.apple.audio.audiohald"), service("com.apple.pasteboard.1"),
+        service("com.apple.dock.fullscreen"),
+        graphics,
         sandbox_check(getpid(), "device-microphone", 0) == 0);
     return 0;
 }

@@ -35,6 +35,12 @@ pub struct InstancePermissions {
     pub config_write: bool,
     #[serde(default = "enabled")]
     pub logs_write: bool,
+    #[serde(default = "enabled")]
+    pub skin_cache: bool,
+    #[serde(default = "enabled")]
+    pub desktop_integration: bool,
+    #[serde(default = "enabled")]
+    pub graphics_cache: bool,
 }
 
 fn enabled() -> bool {
@@ -57,6 +63,9 @@ impl Default for InstancePermissions {
             mods_write: true,
             config_write: true,
             logs_write: true,
+            skin_cache: true,
+            desktop_integration: true,
+            graphics_cache: true,
         }
     }
 }
@@ -71,6 +80,9 @@ impl InstancePermissions {
                 FileAccess::ReadOnly
             },
         )?;
+        policy.skin_cache = self.skin_cache;
+        policy.graphics_cache = self.graphics_cache;
+        policy.desktop.integration = self.desktop_integration;
         policy.narrator = self.narrator;
         policy.network = if self.network {
             NetworkAccess::Internet
@@ -105,6 +117,8 @@ pub struct PermissionSupport {
     pub audio_output: bool,
     pub microphone: bool,
     pub clipboard: bool,
+    pub desktop_integration: bool,
+    pub graphics_cache: bool,
 }
 
 pub fn permission_support() -> PermissionSupport {
@@ -122,6 +136,8 @@ pub fn permission_support() -> PermissionSupport {
         audio_output: cfg!(any(target_os = "macos", target_os = "linux")),
         microphone: cfg!(target_os = "macos"),
         clipboard: cfg!(target_os = "macos"),
+        desktop_integration: cfg!(target_os = "macos"),
+        graphics_cache: cfg!(any(target_os = "macos", target_os = "linux")),
     }
 }
 
@@ -155,12 +171,14 @@ fn validate_change(
     // Imported settings may be incompatible. Permit unchanged fields and reductions so
     // the UI can repair them one at a time; launch still validates the entire policy.
     if (!support.audio_output && !next.audio_output && previous.audio_output)
+        || (!support.desktop_integration
+            && !next.desktop_integration
+            && previous.desktop_integration)
+        || (!support.graphics_cache && !next.graphics_cache && previous.graphics_cache)
         || (!support.microphone && next.microphone && !previous.microphone)
         || (!support.clipboard && next.clipboard && !previous.clipboard)
     {
-        return Err(
-            "このOSでは指定された音声・マイク・クリップボードの個別制御に対応していません".into(),
-        );
+        return Err("このOSでは指定されたデスクトップ機能の個別制御に対応していません".into());
     }
     if next.microphone && !next.audio_output && (!previous.microphone || previous.audio_output) {
         return Err("マイクを許可するには通常音声へのアクセスも有効にしてください".into());
@@ -180,6 +198,8 @@ mod tests {
             audio_output: false,
             microphone: false,
             clipboard: false,
+            desktop_integration: false,
+            graphics_cache: false,
         };
         let defaults = InstancePermissions::default();
         let imported = InstancePermissions {
@@ -201,6 +221,7 @@ mod tests {
         let old: InstancePermissions =
             serde_json::from_str(r#"{"gameWrite":false,"narrator":true}"#).unwrap();
         assert!(!old.game_write && old.worlds_write && old.audio_output);
+        assert!(old.skin_cache && old.desktop_integration && old.graphics_cache);
         assert!(!old.network && !old.microphone && !old.clipboard);
         assert_eq!(
             serde_json::from_str::<InstancePermissions>(&serde_json::to_string(&old).unwrap())

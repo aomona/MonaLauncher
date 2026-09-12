@@ -278,6 +278,25 @@ pub fn prepare(
         .env("TMPDIR", &resources.temp)
         .env("XDG_RUNTIME_DIR", "/run/mona")
         .env("LANG", "C.UTF-8");
+    if let Some(caches) = &policy.caches {
+        command
+            .env("XDG_CACHE_HOME", &caches.graphics)
+            .env("MESA_SHADER_CACHE_DIR", &caches.graphics)
+            .env("__GL_SHADER_DISK_CACHE_PATH", &caches.graphics);
+    }
+    command
+        .env(
+            "MESA_SHADER_CACHE_DISABLE",
+            if policy.graphics_cache {
+                "false"
+            } else {
+                "true"
+            },
+        )
+        .env(
+            "__GL_SHADER_DISK_CACHE",
+            if policy.graphics_cache { "1" } else { "0" },
+        );
     if let Some(desktop) = desktop {
         match &desktop.display {
             DisplayConnection::X11 {

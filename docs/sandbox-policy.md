@@ -109,3 +109,16 @@ Windowsでは既存CIの `cargo run --locked --bin sandbox_probe -- --acl` と `
 macOSのマイクは通常音声と同じCoreAudioサービスを必要とするため、音声OFF/マイクONは拒否する。マイクのOSプライバシー許可や実録音は別。Linuxは通常音声ONで録音を含むPulseAudioサービス全体へ接続できる。クリップボードについてもWindows/Linuxで偽の拒否状態を表示せず、未対応であることを表示する。
 
 別OSから持ち込まれた非対応の設定を黙って広げない。保存APIは新しい非対応要求を拒否し、既存の非対応設定の保持・縮小を認める。起動時はポリシー全体を再検証し、非対応の設定が残っていればエラーにする。実施結果は[権限細分化の検証記録](../tools/linux-validation/granular-permissions-2026-09-12.md)を参照。
+
+### 既定ONのキャッシュ・OS連携
+
+`skinCache`、`desktopIntegration`、`graphicsCache` は新規・旧JSONともtrue。要求に応じた互換性設定であり、通信・マイク・クリップボードの既定値は変更しない。これらのキャッシュはゲーム全体の書き込み設定とは独立する。
+
+- スキン: 全OSで `instance/runtime-cache/assets/skins` への書き込みを切り替える。MinecraftのassetsDirをインスタンス専用のアセット参照先へ変更し、対象バージョンのindex/objectを読み取り専用で配置する。オブジェクトは可能ならhardlink、別ボリュームではコピーする。共有assetsは読み取り専用を維持する。OFFでも保存済みスキンを読める。PNGの内容やModの独自保存先を識別する制御ではない。
+- 日本語入力・全画面連携: macOSの特定XPC/Machサービス・入力設定・ロケールデータへの許可をまとめる。OFFでも基本のWindowServer接続やキーボード/マウスを止めない。Windows/Linuxは既存の画面連携に含まれ、追加設定の個別OFFは未対応。
+- 描画キャッシュ: Linuxは `instance/runtime-cache/graphics` をMesa/NVIDIA/XDGのキャッシュ環境変数に設定。OFFではこの保存先をread-onlyにし、標準ドライバーのディスクキャッシュ無効フラグを設定する。描画そのものやModの独自のキャッシュ保存を止める設定ではない。Windowsのドライバー/AppContainerキャッシュの個別OFFは未対応。
+- macOSの描画キャッシュ: 信頼するランチャー側のconfstrでDarwin user cacheを解決し、その下の `net.java.openjdk.java/com.apple.metal` のみに読み書きを許可する。OSが選ぶこのパスはインスタンス専用ではなく、同じユーザーのJavaアプリと共有される明示的な互換許可。OFFではその許可を除く。ユーザーキャッシュ全体・別アプリのキャッシュ・任意のsandbox extensionには許可を出さない。
+
+キャッシュの固定ディレクトリはcanonical path・reparse pointを検査し、ゲームが書き込めるcache subtreeでは既存のsymlink/hardlink/特殊ファイルを拒否する。変更済み設定を次回起動で再適用する。Metalの限定パスについても既存エイリアスを拒否する。他のホストプロセスによる起動準備中の競合は既存と同じ信頼境界にある。
+
+Metalのキャッシュ位置と基本プロファイルの比較には[Chromium common.sb](https://github.com/chromium/chromium/blob/main/sandbox/policy/mac/common.sb)を参照した。個別の許可対象は今回のMinecraft/Seatbelt拒否ログと実プローブで絞った。
