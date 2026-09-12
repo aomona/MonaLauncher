@@ -2,7 +2,7 @@ name: Publish news RSS
 
 on:
   push:
-    branches: [main]
+    branches: [dev]
     paths:
       - news/**
       - scripts/generate-feed*
@@ -24,7 +24,7 @@ concurrency:
 
 jobs:
   build:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

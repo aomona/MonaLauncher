@@ -2,7 +2,7 @@
 
 ## 記事の追加
 
-`news/*.md` にUTF-8のMarkdownを追加し、`main` にpushする。サブディレクトリは走査しない。
+`news/*.md` にUTF-8のMarkdownを追加し、`dev` にpushする。リリースまでは`dev`を公開対象とする。サブディレクトリは走査しない。
 
 ```md
 ---
@@ -40,10 +40,12 @@ URLはリポジトリのGitHub Pages標準URLから設定したもの。実装�
 
 ## 初回のGitHub設定
 
-1. この変更を`main`へ反映する。現在のデフォルトブランチは`dev`だが、このworkflowは依頼どおり`main`のみを公開対象にしている。
+1. この変更を`dev`へ反映する。
 2. リポジトリの **Settings → Pages → Build and deployment → Source** を **GitHub Actions** にする。
-3. `github-pages` Environmentのブランチ制限がある場合は`main`からのデプロイを許可する。
-4. `main`へ記事をpushするか、Actionsの **Publish news RSS** を`main`で手動実行する。
+3. `github-pages` Environmentのブランチ制限がある場合は`dev`からのデプロイを許可する。
+4. `dev`へ記事をpushするか、Actionsの **Publish news RSS** を`dev`で手動実行する。
+
+リリース時に公開対象を`main`へ移す場合は、workflowの`on.push.branches`とbuild jobの`if`、Environmentのブランチ制限、この手順を合わせて変更する。
 
 公開に使うのは `.github/workflows/generate-feed.yml`。Nodeとpnpmは既存の`mise.toml`（Node 24.18.0 / pnpm 11.20.0）を使用する。
 
@@ -55,7 +57,7 @@ pnpm install --frozen-lockfile
   → actions/deploy-pages
 ```
 
-ランチャー本体・フォント・リポジトリ全体はPagesへ公開しない。生成物のcommit/pushも行わないため、生成による再実行ループは起こらない。`contents`はreadのみで、Pages公開用の権限はdeploy jobだけに付与する。ブランチ制限で手動実行も`main`だけを公開する。
+ランチャー本体・フォント・リポジトリ全体はPagesへ公開しない。生成物のcommit/pushも行わないため、生成による再実行ループは起こらない。`contents`はreadのみで、Pages公開用の権限はdeploy jobだけに付与する。ブランチ制限で手動実行も`dev`だけを公開する。
 
 生成に失敗した場合、build jobは停止し、前回の公開内容が維持される。記事を削除した場合も次回の生成で古いHTMLを除去する。
 

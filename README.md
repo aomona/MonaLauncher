@@ -54,7 +54,7 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib --locked auth:: -- --inclu
 
 ## ニュースとRSS
 
-`news/*.md` にYAML Front Matter付きMarkdownを追加して`main`へpushすると、GitHub ActionsでRSSと記事HTMLを生成・公開できます。初回のPages設定、記事形式、URLの変更方法は[ニュース配信の手順](docs/news-feed.md)を参照してください。
+`news/*.md` にYAML Front Matter付きMarkdownを追加して`dev`へpushすると、GitHub ActionsでRSSと記事HTMLを生成・公開できます。リリースまでは`dev`を公開対象とします。初回のPages設定、記事形式、URLの変更方法は[ニュース配信の手順](docs/news-feed.md)を参照してください。
 
 ```sh
 pnpm generate:feed
