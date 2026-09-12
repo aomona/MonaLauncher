@@ -31,10 +31,17 @@ const permissions = [
   },
 ] as const;
 
-export function PermissionsPanel({ launcher: l }: { launcher: Model }) {
+export function PermissionsPanel({
+  launcher: l,
+  onSaved,
+  onSaveError,
+}: {
+  launcher: Model;
+  onSaved: () => void;
+  onSaveError: () => void;
+}) {
   const id = useId();
   const [saving, setSaving] = useState<keyof InstancePermissions | null>(null);
-  const [saved, setSaved] = useState<keyof InstancePermissions | null>(null);
   const [failed, setFailed] = useState<{ key: keyof InstancePermissions; value: boolean } | null>(
     null,
   );
@@ -48,12 +55,14 @@ export function PermissionsPanel({ launcher: l }: { launcher: Model }) {
   const save = async (key: keyof InstancePermissions, value: boolean) => {
     if (disabled || saving) return;
     setSaving(key);
-    setSaved(null);
     setFailed(null);
     const ok = await l.saveSelectedPermissions({ ...instance.permissions, [key]: value });
     setSaving(null);
-    if (ok) setSaved(key);
-    else setFailed({ key, value });
+    if (ok) onSaved();
+    else {
+      setFailed({ key, value });
+      onSaveError();
+    }
   };
   return (
     <>
@@ -91,7 +100,6 @@ export function PermissionsPanel({ launcher: l }: { launcher: Model }) {
               {description}
             </p>
             {saving === key && <output className="block mt-2 text-small">Saving…</output>}
-            {saved === key && <output className="mt-2 block text-small">Saved</output>}
             {failed?.key === key && (
               <div className="mt-2 flex flex-wrap items-center gap-2 text-small">
                 <span>保存できなかったため、元の設定を維持しています。</span>

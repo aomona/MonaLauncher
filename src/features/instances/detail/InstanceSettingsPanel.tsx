@@ -17,7 +17,7 @@ export function InstanceSettingsPanel({
   onDelete: () => void;
 }) {
   const instance = l.selected!;
-  const { draft, saved, setSaved, save } = editor;
+  const { draft, save } = editor;
   return (
     <>
       <h3 className="text-section-title">General</h3>
@@ -31,7 +31,6 @@ export function InstanceSettingsPanel({
             disabled={l.busy === "rename"}
             onChange={(event) => {
               l.setSettingsName(event.target.value);
-              setSaved(false);
             }}
             onKeyDown={(event) => {
               if (
@@ -61,7 +60,6 @@ export function InstanceSettingsPanel({
             </Button>
           </div>
         )}
-        {saved && <output className="mt-2 text-small">Saved</output>}
       </div>
       <h3 className="mt-8 text-section-title">Java</h3>
       <dl className="facts">

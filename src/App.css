@@ -152,6 +152,31 @@
   .setting-row {
     @apply flex flex-wrap items-start justify-between gap-4 border-b border-border-subtle py-4;
   }
+  .toast-viewport {
+    @apply pointer-events-none fixed right-4 bottom-4 z-50 flex flex-col gap-2;
+    max-width: calc(100vw - 2 * var(--spacing-4));
+  }
+  .toast {
+    @apply pointer-events-auto flex items-center gap-2 rounded-control border border-border-subtle bg-background-floating py-1 pl-3 pr-1 text-text-body shadow-floating;
+  }
+  .toast[data-type="success"] {
+    @apply border-success-foreground/20 bg-success-background text-success-foreground;
+  }
+  .toast[data-type="error"] {
+    @apply border-danger-foreground/20 bg-danger-background text-danger-foreground;
+  }
+  .toast[data-type="warning"] {
+    @apply border-toast-warning-foreground/20 bg-toast-warning-background text-toast-warning-foreground;
+  }
+  .toast .toast-close {
+    @apply text-current p-0;
+    min-height: var(--mona-controls-compact-hit-target);
+    width: var(--mona-controls-compact-hit-target);
+  }
+  .toast[data-limited],
+  .toast[data-ending-style] {
+    display: none;
+  }
   .switch {
     @apply design-focus inline-flex shrink-0 cursor-pointer items-center justify-center rounded-control;
     min-height: var(--mona-controls-switch-hit-height);

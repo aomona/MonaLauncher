@@ -637,19 +637,45 @@ test("permissions persist per instance and failed saves retain the confirmed val
   await page.keyboard.press("Space");
   await expect(game).not.toBeChecked();
   await expect(narrator).toBeChecked();
+  const toast = page.locator(".toast");
+  await expect(toast).toHaveText("権限を保存しました");
+  await expect(page.getByRole("tabpanel").getByText("Saved", { exact: true })).toHaveCount(0);
+  const toastBounds = (await toast.boundingBox())!;
+  const viewport = page.viewportSize()!;
+  expect(toastBounds.x + toastBounds.width).toBeCloseTo(viewport.width - 16, 0);
+  expect(toastBounds.y + toastBounds.height).toBeCloseTo(viewport.height - 16, 0);
+  expect(toastBounds.height).toBeLessThanOrEqual(44);
+  await expect(toast).toHaveAttribute("data-type", "success");
+  await page.screenshot({ path: testInfo.outputPath("permissions-saved-toast.png") });
+  await toast.focus();
+  await page.getByRole("button", { name: "通知を閉じる", exact: true }).focus();
+  await page.keyboard.press("Space");
+  await expect(toast).toHaveCount(0);
+  await expect(page.getByRole("dialog")).toBeVisible();
   await page.evaluate(() => {
     (window as any).__test.failPermissions = true;
   });
   await narrator.click();
-  await expect(page.getByRole("alert")).toContainText("権限を保存できませんでした");
+  await expect(page.getByRole("tabpanel").getByRole("alert")).toContainText(
+    "権限を保存できませんでした",
+  );
   await expect(narrator).toBeChecked();
-  await expect(page.getByText("Saved", { exact: true })).toHaveCount(0);
+  await expect(toast).toHaveAttribute("data-type", "error");
+  await expect(toast).toHaveText("保存できませんでした");
   await page.evaluate(() => {
     (window as any).__test.failPermissions = false;
   });
+  await page.clock.install();
   await page.getByRole("button", { name: "再試行", exact: true }).click();
   await expect(narrator).not.toBeChecked();
   await expect(game).not.toBeChecked();
+  await toast.hover();
+  await page.clock.fastForward(6000);
+  await expect(toast).toBeVisible();
+  await page.getByRole("heading", { name: "Survival", exact: true }).hover();
+  await page.clock.fastForward(6000);
+  await expect(toast).toHaveCount(0);
+  await page.clock.resume();
   await page.screenshot({ path: testInfo.outputPath("permissions-macos.png") });
   await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "Survival", exact: true }).click();
@@ -761,4 +787,49 @@ test("permission controls reflow in both themes and remain usable with accessibi
     .poll(() => page.getByRole("tabpanel").evaluate((el) => el.scrollWidth <= el.clientWidth))
     .toBe(true);
   await page.screenshot({ path: testInfo.outputPath("permissions-high-contrast-200.png") });
+});
+
+test("toast tones stay compact at the window corner in light and dark themes", async ({
+  page,
+}, testInfo) => {
+  await page.goto("/");
+  await page.evaluate(async () => {
+    // Vite loads this test-only fixture through its normal module pipeline.
+    const path = "/tests/fixtures/toasts.tsx";
+    const fixture = await import(path);
+    const show = fixture.mountToasts();
+    await new Promise(requestAnimationFrame);
+    show();
+  });
+  const toasts = page.locator(".toast");
+  await expect(toasts).toHaveCount(4);
+  for (const theme of ["light", "dark"]) {
+    await page.evaluate((theme) => {
+      document.documentElement.dataset.theme = theme;
+    }, theme);
+    const colors = await toasts.evaluateAll((items) =>
+      items.map((item) => {
+        const css = getComputedStyle(item);
+        return {
+          type: item.getAttribute("data-type"),
+          text: css.color,
+          background: css.backgroundColor,
+          height: item.getBoundingClientRect().height,
+        };
+      }),
+    );
+    expect(colors.map((item) => item.type).sort()).toEqual([
+      "error",
+      "neutral",
+      "success",
+      "warning",
+    ]);
+    expect(new Set(colors.map((item) => item.text)).size).toBe(4);
+    expect(new Set(colors.map((item) => item.background)).size).toBe(4);
+    expect(colors.every((item) => item.height <= 44)).toBe(true);
+    await page.screenshot({ path: testInfo.outputPath(`toast-tones-${theme}.png`) });
+  }
+  await page.setViewportSize({ width: 320, height: 640 });
+  await expect(page.locator(".toast-viewport")).toBeInViewport({ ratio: 1 });
+  await page.screenshot({ path: testInfo.outputPath("toast-tones-narrow.png") });
 });

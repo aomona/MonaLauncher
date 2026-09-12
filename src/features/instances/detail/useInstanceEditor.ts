@@ -2,9 +2,8 @@ import { useRef, useState } from "react";
 import type { Launcher } from "../../../app/useLauncher";
 
 /** Holds the draft's navigation guard across tab unmounts; failed saves never advance. */
-export function useInstanceEditor(l: Launcher) {
+export function useInstanceEditor(l: Launcher, onSaved: () => void, onSaveError: () => void) {
   const [guard, setGuard] = useState(false);
-  const [saved, setSaved] = useState(false);
   const pending = useRef<(() => void) | null>(null);
   const draft = l.settingsName !== l.selected!.name;
   const request = (action: () => void) => {
@@ -15,7 +14,8 @@ export function useInstanceEditor(l: Launcher) {
   };
   const save = async () => {
     const ok = await l.renameSelected();
-    if (ok) setSaved(true);
+    if (ok) onSaved();
+    else onSaveError();
     return ok;
   };
   const cancelNavigation = () => {
@@ -37,8 +37,6 @@ export function useInstanceEditor(l: Launcher) {
   };
   return {
     guard,
-    saved,
-    setSaved,
     draft,
     request,
     save,

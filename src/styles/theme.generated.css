@@ -120,6 +120,8 @@
   --color-warning-foreground: var(--mona-warning-foreground);
   --color-warning-background: var(--mona-warning-background);
   --color-warning-mark: var(--mona-warning-mark);
+  --color-toast-warning-foreground: var(--mona-toast-warning-foreground);
+  --color-toast-warning-background: var(--mona-toast-warning-background);
   --color-info-foreground: var(--mona-info-foreground);
   --color-info-background: var(--mona-info-background);
   --color-info-mark: var(--mona-info-mark);
@@ -264,6 +266,8 @@
     --mona-warning-foreground: #92400e;
     --mona-warning-background: #fffbeb;
     --mona-warning-mark: #b45309;
+    --mona-toast-warning-foreground: #9a3412;
+    --mona-toast-warning-background: #fff7ed;
     --mona-info-foreground: #1d4ed8;
     --mona-info-background: #eff6ff;
     --mona-info-mark: #2563eb;
@@ -322,6 +326,8 @@
       --mona-warning-foreground: #fbbf24;
       --mona-warning-background: #251a08;
       --mona-warning-mark: #fbbf24;
+      --mona-toast-warning-foreground: #fdba74;
+      --mona-toast-warning-background: #2a170b;
       --mona-info-foreground: #60a5fa;
       --mona-info-background: #0b1930;
       --mona-info-mark: #60a5fa;
@@ -380,6 +386,8 @@
     --mona-warning-foreground: #fbbf24;
     --mona-warning-background: #251a08;
     --mona-warning-mark: #fbbf24;
+    --mona-toast-warning-foreground: #fdba74;
+    --mona-toast-warning-background: #2a170b;
     --mona-info-foreground: #60a5fa;
     --mona-info-background: #0b1930;
     --mona-info-mark: #60a5fa;

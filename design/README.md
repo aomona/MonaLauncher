@@ -137,3 +137,7 @@ Tailwindの設定方式は [公式Themeドキュメント](https://tailwindcss.c
 Instance ModalにPermissionsを追加。ゲームデータ書き込み・ナレーターのSwitchは保存結果を反映し、次回起動の共通ポリシーに接続する。保存失敗時は確定値と再試行を残し、保存中は重複操作を防ぐ。固定権限は表示のみ。原本8.2・18章のTab数を更新し、寸法・色は既存トークンを再利用したためJSONの値は変更していない。
 
 Playwrightでは11タブへのキーボード到達、インスタンス別の保存・失敗と再試行・保存中のタブ移動/閉じる操作・実行中と未対応OSの編集禁止を確認。PermissionsのLight/Dark、1440×900・1024×640・実効幅320px、200%文字とHigh contrast/Reduced motionも確認した。IPCモックの保存テストと、Rustの実ファイル保存/ポリシー変換テストを区別する。
+
+Instanceの表示名・Permissionsの保存完了は、アプリ画面全体の右下のBase UI Toastへ統一する。成功通知は5秒、Hover/Focusで停止し、連続保存は1件にまとめる。保存失敗と再試行は本文に残す。
+
+Toastは共通managerの `notify({ title, type })` で表示する。typeはneutral（既定）/success/error/warning。通常はニュートラル、成功は緑、失敗は赤、警告は専用のオレンジトークンを使う。縦padding4px、閉じる操作32pxの小型表示とし、枠線はsubtleまたは意味色20%。画面右下16pxに固定し、ModalのFocus境界内で操作可能にする。失敗通知は自動消去せず、本文のエラーと再試行を残す。
