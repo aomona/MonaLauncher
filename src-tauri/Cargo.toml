@@ -64,3 +64,4 @@ windows = { version = "0.62.2", features = [
 
 [target.'cfg(target_os = "macos")'.dependencies]
 libc = "0.2"
+security-framework = "3.7"

@@ -365,6 +365,28 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "contacts Microsoft to validate the configured public client's device flow"]
+    fn live_device_authorization_reaches_pending() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let client = MicrosoftOAuthClient::from_configuration().unwrap();
+            let challenge = client.begin_device_authorization().await.unwrap();
+            // Never print or persist the challenge codes. No user login is performed.
+            tokio::time::sleep(challenge.interval).await;
+            assert!(matches!(
+                client
+                    .poll_device_authorization(&challenge.device_code)
+                    .await
+                    .unwrap(),
+                TokenPoll::Pending
+            ));
+        });
+    }
+
+    #[test]
     fn validates_microsoft_client_ids() {
         assert!(is_guid(DEFAULT_CLIENT_ID));
         assert!(is_guid("01234567-89ab-cdef-0123-456789abcdef"));

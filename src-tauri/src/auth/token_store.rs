@@ -5,21 +5,25 @@ const REFRESH_TOKEN_TARGET: &str = "MonaLauncher/MicrosoftRefreshToken";
 
 #[derive(Debug)]
 pub enum TokenStoreError {
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "macos")))]
     UnsupportedPlatform,
+    #[cfg(windows)]
     TokenTooLarge,
     InvalidUtf8(std::string::FromUtf8Error),
     #[cfg(windows)]
     Windows(windows::core::Error),
+    #[cfg(target_os = "macos")]
+    Keychain(security_framework::base::Error),
 }
 
 impl fmt::Display for TokenStoreError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            #[cfg(not(windows))]
+            #[cfg(not(any(windows, target_os = "macos")))]
             Self::UnsupportedPlatform => {
                 write!(formatter, "安全なトークン保存はこのOSに対応していません")
             }
+            #[cfg(windows)]
             Self::TokenTooLarge => {
                 write!(formatter, "認証トークンがWindowsの保存上限を超えています")
             }
@@ -29,6 +33,13 @@ impl fmt::Display for TokenStoreError {
             #[cfg(windows)]
             Self::Windows(error) => {
                 write!(formatter, "Windows資格情報を操作できませんでした: {error}")
+            }
+            #[cfg(target_os = "macos")]
+            Self::Keychain(error) => {
+                write!(
+                    formatter,
+                    "macOSキーチェーンを操作できませんでした: {error}"
+                )
             }
         }
     }
@@ -163,17 +174,52 @@ fn wide_null(value: &str) -> Vec<u16> {
     value.encode_utf16().chain([0]).collect()
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+const KEYCHAIN_ACCOUNT: &str = "Microsoft account";
+// errSecItemNotFound from Security.framework. Other errors must remain visible.
+#[cfg(target_os = "macos")]
+const KEYCHAIN_ITEM_NOT_FOUND: i32 = -25300;
+
+#[cfg(target_os = "macos")]
+fn save_secret(target: &str, secret: &str) -> Result<(), TokenStoreError> {
+    security_framework::passwords::set_generic_password(target, KEYCHAIN_ACCOUNT, secret.as_bytes())
+        .map_err(TokenStoreError::Keychain)
+}
+
+#[cfg(target_os = "macos")]
+fn load_secret(target: &str) -> Result<Option<String>, TokenStoreError> {
+    use security_framework::passwords::{generic_password, PasswordOptions};
+
+    match generic_password(PasswordOptions::new_generic_password(
+        target,
+        KEYCHAIN_ACCOUNT,
+    )) {
+        Ok(bytes) => Ok(Some(String::from_utf8(bytes)?)),
+        Err(error) if error.code() == KEYCHAIN_ITEM_NOT_FOUND => Ok(None),
+        Err(error) => Err(TokenStoreError::Keychain(error)),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn delete_secret(target: &str) -> Result<(), TokenStoreError> {
+    match security_framework::passwords::delete_generic_password(target, KEYCHAIN_ACCOUNT) {
+        Ok(()) => Ok(()),
+        Err(error) if error.code() == KEYCHAIN_ITEM_NOT_FOUND => Ok(()),
+        Err(error) => Err(TokenStoreError::Keychain(error)),
+    }
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 fn save_secret(_target: &str, _secret: &str) -> Result<(), TokenStoreError> {
     Err(TokenStoreError::UnsupportedPlatform)
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 fn load_secret(_target: &str) -> Result<Option<String>, TokenStoreError> {
     Err(TokenStoreError::UnsupportedPlatform)
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 fn delete_secret(_target: &str) -> Result<(), TokenStoreError> {
     Err(TokenStoreError::UnsupportedPlatform)
 }
@@ -185,5 +231,37 @@ mod tests {
     #[test]
     fn credential_target_is_app_specific() {
         assert_eq!(REFRESH_TOKEN_TARGET, "MonaLauncher/MicrosoftRefreshToken");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "writes a disposable item to the current user's macOS keychain"]
+    fn macos_keychain_round_trip() {
+        // Use a unique service, never the real account's refresh token.
+        let mut nonce = [0u8; 16];
+        getrandom::fill(&mut nonce).unwrap();
+        let target = format!("MonaLauncher/Test/{nonce:x?}");
+        struct Cleanup(String);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ = delete_secret(&self.0);
+            }
+        }
+        let _cleanup = Cleanup(target.clone());
+        assert!(load_secret(&target).unwrap().is_none());
+        delete_secret(&target).unwrap();
+        save_secret(&target, "test-only-first").unwrap();
+        assert_eq!(
+            load_secret(&target).unwrap().as_deref(),
+            Some("test-only-first")
+        );
+        save_secret(&target, "test-only-rotated").unwrap();
+        assert_eq!(
+            load_secret(&target).unwrap().as_deref(),
+            Some("test-only-rotated")
+        );
+        delete_secret(&target).unwrap();
+        assert!(load_secret(&target).unwrap().is_none());
+        delete_secret(&target).unwrap();
     }
 }

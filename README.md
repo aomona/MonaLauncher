@@ -36,8 +36,18 @@ $env:MONALAUNCHER_MICROSOFT_CLIENT_ID = "別の開発用クライアントID"
 mise run dev
 ```
 
-既定ではMonaLauncher用のクライアントIDがビルドへ組み込まれているため、環境変数の設定は不要です。環境変数は別のアプリ登録で開発するときの上書き用です。クライアントIDは公開情報です。Microsoftのアクセストークン、device code、更新トークンはReactへ返さず、アクセストークンはゲーム／Modにも渡しません。更新トークンは現在のWindowsユーザーの資格情報マネージャーへ保存します。
+既定ではMonaLauncher用の公開クライアントID `f8d68570-e721-4aba-9c3e-1052d41e431a` がビルドへ組み込まれているため、環境変数の設定は不要です。環境変数は別のアプリ登録で開発するときの上書き用です。Microsoftのアクセストークン、device code、更新トークンはReactへ返さず、アクセストークンはゲーム／Modにも渡しません。更新トークンはWindowsでは現在のユーザーの資格情報マネージャー、macOSではキーチェーンへ保存します。Linuxのトークン保存は未対応です。
+
+ランチャーのアカウント設定からサインインを開始し、表示されたコードをブラウザーのMicrosoft認証画面で入力してください。macOSでは保存・読込・サインアウト時の削除にSecurity.frameworkを使用し、保存先を平文ファイルへ切り替えることはありません。
 
 認証プロトコルについては、[Microsoft Device Code Flow](https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-device-code)を参照してください。
 
 Microsoft OAuth、Xbox Live、XSTS、Minecraft Services、Minecraftプロフィール取得までを実装しています。Microsoftアプリ登録がMinecraft Servicesで利用できない場合は、認証時に`Invalid app registration`が返されます。
+
+macOSでの認証接続・保存先の実機確認:
+
+```sh
+cargo test --manifest-path src-tauri/Cargo.toml --lib --locked auth:: -- --include-ignored
+```
+
+この確認はMicrosoftからの認証コード取得とログイン待ち応答、キーチェーンの専用テスト項目の保存・更新・読込・削除を検証します。認証コードやトークンを出力・ファイル保存せず、既存のサインイン情報には触れません。2026-09-12に上記の既定IDとmacOSで成功を確認しました。ユーザーによるサインイン完了とMinecraft Servicesの利用可否は、このテストの確認範囲に含まれません。
