@@ -374,7 +374,8 @@ pub fn version_java_major(version_id: &str) -> Result<u32, MinecraftInstallError
         .ok_or_else(|| MinecraftInstallError::VersionMissing(version_id.to_owned()))?;
     let version_bytes = fetch_bytes(&client, &selected.url)?;
     verify_bytes_sha1(&version_bytes, &selected.sha1, PathBuf::from(version_id))?;
-    let version: VersionMetadata = serde_json::from_slice(&version_bytes)?;
+    let version =
+        serde_json::from_slice::<VersionMetadata>(&version_bytes)?.for_current_platform()?;
     if version.id != version_id {
         return Err(MinecraftInstallError::VersionIdMismatch {
             expected: version_id.to_owned(),
@@ -451,7 +452,8 @@ where
         &release.sha1,
         paths.version_json(&release_id),
     )?;
-    let version: VersionMetadata = serde_json::from_slice(&version_bytes)?;
+    let version =
+        serde_json::from_slice::<VersionMetadata>(&version_bytes)?.for_current_platform()?;
     if version.id != release_id {
         return Err(MinecraftInstallError::VersionIdMismatch {
             expected: release_id,
@@ -918,6 +920,7 @@ fn minecraft_download_url_allowed(url: &Url) -> bool {
         && url
             .host_str()
             .is_some_and(|host| MINECRAFT_DOWNLOAD_HOSTS.contains(&host))
+        || super::native_overrides::trusted_url(url.as_str())
 }
 
 fn validate_sha1(value: &str) -> Result<String, MinecraftInstallError> {
@@ -1221,7 +1224,7 @@ mod tests {
         .unwrap();
     }
 
-    #[cfg(any(windows, target_os = "macos"))]
+    #[cfg(any(windows, target_os = "macos", target_os = "linux"))]
     #[test]
     fn saves_permissions_without_replacing_other_settings_and_uses_them_at_launch() {
         use crate::minecraft::{
@@ -1275,7 +1278,7 @@ mod tests {
         fs::remove_dir_all(paths.root()).unwrap();
     }
 
-    #[cfg(any(windows, target_os = "macos"))]
+    #[cfg(any(windows, target_os = "macos", target_os = "linux"))]
     #[test]
     fn permission_save_rejects_unsafe_or_legacy_instances_without_changes() {
         use crate::minecraft::permissions::{save_permissions, InstancePermissions};

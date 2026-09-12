@@ -1,4 +1,6 @@
 //! Bounded, authenticated narrator protocol shared by the native speech backends.
+#[cfg(target_os = "linux")]
+use super::linux::narrator::run_worker;
 #[cfg(target_os = "macos")]
 use super::macos::narrator::run_worker;
 #[cfg(windows)]
@@ -6,13 +8,13 @@ use super::windows::narrator_broker::run_worker;
 
 #[derive(Default)]
 pub(crate) struct PlaybackState {
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     pub started: std::sync::atomic::AtomicUsize,
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     pub completed: std::sync::atomic::AtomicUsize,
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     pub stopped: std::sync::atomic::AtomicUsize,
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     pub speaking: std::sync::atomic::AtomicBool,
 }
 
@@ -81,7 +83,7 @@ impl NarratorBroker {
         })
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     pub fn playback_counts(&self) -> (usize, usize) {
         use std::sync::atomic::Ordering;
         (
@@ -90,14 +92,14 @@ impl NarratorBroker {
         )
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     pub fn stopped_count(&self) -> usize {
         self.playback
             .stopped
             .load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     pub fn is_speaking(&self) -> bool {
         self.playback
             .speaking

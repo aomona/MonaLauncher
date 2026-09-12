@@ -3,7 +3,7 @@ import { test, expect, type Page } from "@playwright/test";
 async function mockDesktop(
   page: Page,
   count = 2,
-  platform: "windows" | "macos" | "unsupported" = "windows",
+  platform: "windows" | "macos" | "linux" | "unsupported" = "windows",
 ) {
   await page.addInitScript(
     ({ count, platform }) => {
@@ -813,6 +813,19 @@ test("permission save continues across tabs and prevents conflicting actions", a
   await expect(page.getByText("権限を変更するにはゲームを終了してください。")).toBeVisible();
   await expect(page.getByRole("switch").first()).toBeDisabled();
   await expect(page.getByRole("switch").last()).toBeDisabled();
+});
+
+test("Linux exposes common permission controls and desktop compatibility limits", async ({
+  page,
+}) => {
+  await mockDesktop(page, 2, "linux");
+  await openSurvival(page);
+  await page.getByRole("tab", { name: "Permissions", exact: true }).click();
+  await expect(page.getByText(/LinuxではX11/)).toBeVisible();
+  const narrator = page.getByRole("switch", { name: "ナレーター", exact: true });
+  await narrator.click();
+  await expect(narrator).not.toBeChecked();
+  await expect(page.locator(".toast:not([data-ending-style])")).toHaveText("権限を保存しました");
 });
 
 test("unsupported platforms show permissions without offering ineffective edits", async ({

@@ -1,0 +1,7 @@
+# Namespace eligibility for a root-owned packaged launcher, following Ubuntu's Flatpak profile.
+# Confinement is provided by bubblewrap + seccomp, not this unconfined AppArmor profile.
+abi <abi/4.0>,
+include <tunables/global>
+profile monalauncher /usr/bin/monalauncher flags=(unconfined) {
+  userns,
+}

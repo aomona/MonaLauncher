@@ -1,0 +1,6 @@
+# Dedicated test VM only. The directory and executables must be owned by root.
+abi <abi/4.0>,
+include <tunables/global>
+profile monalauncher-production-probes /usr/local/libexec/monalauncher-probes/* flags=(unconfined) {
+  userns,
+}

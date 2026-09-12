@@ -137,6 +137,11 @@ export function PermissionsPanel({
           Windowsでは互換性のため、起動用ファイルへの書き込みと、バージョン領域・当該インスタンスの管理情報の読み取りも許可します。
         </p>
       )}
+      {l.permissionSupport?.platform === "linux" && (
+        <p className="mt-4 text-small text-text-secondary">
+          LinuxではX11/XWaylandとPulseAudio互換サーバーへの接続を許可します。同じX11画面の他アプリへの操作や、音声サーバーの録音機能へのアクセスも含まれます。ナレーター設定はランチャーの読み上げブローカーに適用します。
+        </p>
+      )}
     </>
   );
 }

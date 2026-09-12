@@ -519,6 +519,8 @@ pub async fn launch_minecraft_instance(
             "launcher",
             if cfg!(target_os = "macos") {
                 "Seatbelt経由で起動しました（実験対応）。"
+            } else if cfg!(target_os = "linux") {
+                "bubblewrap + seccomp経由で起動を要求しました（実験対応）。"
             } else {
                 "AppContainerトークンを確認しました。隔離環境で起動します。"
             },
@@ -693,7 +695,7 @@ fn spawn_stdout_reader<R>(
 ) where
     R: std::io::Read + Send + 'static,
 {
-    #[cfg(any(windows, target_os = "macos"))]
+    #[cfg(any(windows, target_os = "macos", target_os = "linux"))]
     {
         use crate::platform::narrator_broker::NarratorBroker;
 
@@ -730,7 +732,7 @@ fn spawn_stdout_reader<R>(
         });
     }
 
-    #[cfg(not(any(windows, target_os = "macos")))]
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
     {
         let _ = narrator_token;
         spawn_log_reader(app, instance_id, "stdout", reader);

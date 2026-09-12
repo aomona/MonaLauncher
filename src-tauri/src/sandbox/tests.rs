@@ -47,7 +47,11 @@ impl Drop for Fixture {
 fn both_backends_use_the_same_application_grants() {
     let fixture = Fixture::new();
     let policy = fixture.policy();
-    for backend in [Backend::AppContainer, Backend::Seatbelt] {
+    for backend in [
+        Backend::AppContainer,
+        Backend::Seatbelt,
+        Backend::Bubblewrap,
+    ] {
         let plan = policy.compile(backend).unwrap();
         for (resource, requested) in policy.requested_files() {
             let expected = if backend == Backend::AppContainer && *resource == Resource::Launch {
@@ -91,7 +95,11 @@ fn windows_compatibility_is_explicit_and_can_be_rejected() {
 #[test]
 fn unsupported_requests_fail_closed_on_each_backend() {
     let fixture = Fixture::new();
-    for backend in [Backend::AppContainer, Backend::Seatbelt] {
+    for backend in [
+        Backend::AppContainer,
+        Backend::Seatbelt,
+        Backend::Bubblewrap,
+    ] {
         let mut policy = fixture.policy();
         policy.network = NetworkAccess::Internet;
         assert!(policy.compile(backend).is_err());
@@ -102,7 +110,23 @@ fn unsupported_requests_fail_closed_on_each_backend() {
         policy.desktop.window_and_input = false;
         assert!(policy.compile(backend).is_err());
     }
-    assert!(fixture.policy().compile(Backend::Bubblewrap).is_err());
+}
+
+#[test]
+fn linux_desktop_compatibility_is_explicit_and_can_be_rejected() {
+    let fixture = Fixture::new();
+    let mut policy = fixture.policy();
+    assert_eq!(
+        policy.compile(Backend::Bubblewrap).unwrap().exceptions,
+        [
+            BackendException::LinuxSystemRuntimeRead,
+            BackendException::LinuxX11PeerAccess,
+            BackendException::LinuxPulseAudioServiceAccess,
+        ]
+    );
+    policy.allow_linux_desktop_compatibility = false;
+    assert!(policy.compile(Backend::Bubblewrap).is_err());
+    assert!(policy.compile(Backend::Seatbelt).is_ok());
 }
 
 #[test]
@@ -112,7 +136,11 @@ fn game_read_only_is_translated_by_both_backends() {
         .policy()
         .with_file_access(Resource::Game, FileAccess::ReadOnly)
         .unwrap();
-    for backend in [Backend::AppContainer, Backend::Seatbelt] {
+    for backend in [
+        Backend::AppContainer,
+        Backend::Seatbelt,
+        Backend::Bubblewrap,
+    ] {
         let plan = policy.compile(backend).unwrap();
         assert!(plan
             .files
@@ -151,7 +179,11 @@ fn narrator_permission_is_carried_to_both_backends() {
     let fixture = Fixture::new();
     let mut policy = fixture.policy();
     policy.narrator = false;
-    for backend in [Backend::AppContainer, Backend::Seatbelt] {
+    for backend in [
+        Backend::AppContainer,
+        Backend::Seatbelt,
+        Backend::Bubblewrap,
+    ] {
         assert!(!policy.compile(backend).unwrap().narrator);
     }
 }

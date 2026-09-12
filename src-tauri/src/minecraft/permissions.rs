@@ -50,10 +50,12 @@ pub fn permission_support() -> PermissionSupport {
             "windows"
         } else if cfg!(target_os = "macos") {
             "macos"
+        } else if cfg!(target_os = "linux") {
+            "linux"
         } else {
             "unsupported"
         },
-        editable: cfg!(any(windows, target_os = "macos")),
+        editable: cfg!(any(windows, target_os = "macos", target_os = "linux")),
     }
 }
 

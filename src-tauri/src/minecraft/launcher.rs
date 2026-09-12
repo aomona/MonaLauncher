@@ -113,6 +113,8 @@ impl From<FabricError> for MinecraftLaunchError {
 }
 
 pub enum MinecraftProcess {
+    #[cfg(target_os = "linux")]
+    Bubblewrap(crate::platform::linux::BubblewrapProcess),
     #[cfg(target_os = "macos")]
     Seatbelt(crate::platform::macos::SeatbeltProcess),
     #[cfg(windows)]
@@ -122,6 +124,8 @@ pub enum MinecraftProcess {
 impl MinecraftProcess {
     pub fn id(&self) -> u32 {
         match self {
+            #[cfg(target_os = "linux")]
+            Self::Bubblewrap(child) => child.id(),
             #[cfg(target_os = "macos")]
             Self::Seatbelt(child) => child.id(),
             #[cfg(windows)]
@@ -131,6 +135,8 @@ impl MinecraftProcess {
 
     pub fn try_wait(&mut self) -> Result<Option<ExitStatus>, MinecraftLaunchError> {
         match self {
+            #[cfg(target_os = "linux")]
+            Self::Bubblewrap(child) => child.try_wait().map_err(MinecraftLaunchError::Io),
             #[cfg(target_os = "macos")]
             Self::Seatbelt(child) => child.try_wait().map_err(MinecraftLaunchError::Io),
             #[cfg(windows)]
@@ -142,6 +148,8 @@ impl MinecraftProcess {
 
     pub fn kill(&mut self) -> Result<(), MinecraftLaunchError> {
         match self {
+            #[cfg(target_os = "linux")]
+            Self::Bubblewrap(child) => child.kill().map_err(MinecraftLaunchError::Io),
             #[cfg(target_os = "macos")]
             Self::Seatbelt(child) => child.kill().map_err(MinecraftLaunchError::Io),
             #[cfg(windows)]
@@ -153,6 +161,8 @@ impl MinecraftProcess {
 
     pub fn wait(&mut self) -> Result<ExitStatus, MinecraftLaunchError> {
         match self {
+            #[cfg(target_os = "linux")]
+            Self::Bubblewrap(child) => child.wait().map_err(MinecraftLaunchError::Io),
             #[cfg(target_os = "macos")]
             Self::Seatbelt(child) => child.wait().map_err(MinecraftLaunchError::Io),
             #[cfg(windows)]
@@ -197,7 +207,7 @@ struct SandboxLayout {
     #[cfg(windows)]
     sid: String,
     launch_root: PathBuf,
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     cleanup_on_drop: bool,
     physical_root: PathBuf,
     virtual_root: PathBuf,
@@ -205,7 +215,7 @@ struct SandboxLayout {
     drive: Option<crate::platform::windows::sandbox_drive::SandboxDrive>,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 impl Drop for SandboxLayout {
     fn drop(&mut self) {
         if self.cleanup_on_drop {
@@ -226,10 +236,11 @@ pub fn spawn_instance(
     let version_path = paths.version_json(&instance.version_id);
     require_file(&version_path)?;
 
-    let version: VersionMetadata = serde_json::from_slice(&read_bounded_file(
+    let version = serde_json::from_slice::<VersionMetadata>(&read_bounded_file(
         &version_path,
         MAX_LOCAL_VERSION_METADATA_SIZE,
-    )?)?;
+    )?)?
+    .for_current_platform()?;
     let fabric = load_instance_fabric_profile(paths, &instance)?;
     let detected_java_major = installed_java_major(paths, Path::new(&instance.java_path))?;
     if let Some(java_version) = &version.java_version {
@@ -382,7 +393,7 @@ pub fn spawn_instance(
                 .map(OsString::from),
         );
     }
-    #[cfg(any(windows, target_os = "macos"))]
+    #[cfg(any(windows, target_os = "macos", target_os = "linux"))]
     if sandbox.is_some() {
         arguments.push(OsString::from(format!(
             "-Dmonalauncher.narrator.enabled={}",
@@ -414,9 +425,9 @@ pub fn spawn_instance(
             sandbox_narrator_token
         )));
     }
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     {
-        if !arguments.iter().any(|arg| arg == "-XstartOnFirstThread") {
+        if cfg!(target_os = "macos") && !arguments.iter().any(|arg| arg == "-XstartOnFirstThread") {
             arguments.push(OsString::from("-XstartOnFirstThread"));
         }
         let temp = sandbox
@@ -484,7 +495,7 @@ fn classpath_separator() -> &'static str {
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn prepare_sandbox_layout(
     paths: &MinecraftPaths,
     instance: &InstanceManifest,
@@ -494,7 +505,7 @@ fn prepare_sandbox_layout(
     // A random, launcher-owned directory outside writable game storage avoids stale links.
     let launch_root = paths
         .instance(&instance.id)
-        .join(format!("seatbelt-{}", generate_narrator_token()?));
+        .join(format!("sandbox-{}", generate_narrator_token()?));
     fs::DirBuilder::new().mode(0o700).create(&launch_root)?;
     fs::create_dir(launch_root.join("tmp"))?;
     Ok(Some(SandboxLayout {
@@ -601,7 +612,37 @@ fn spawn_sandboxed(
     })
 }
 
-#[cfg(not(any(windows, target_os = "macos")))]
+#[cfg(target_os = "linux")]
+fn spawn_sandboxed(
+    _paths: &MinecraftPaths,
+    instance: &InstanceManifest,
+    sandbox: &mut SandboxLayout,
+    arguments: &[OsString],
+    _game_directory: &Path,
+    narrator_token: &str,
+    policy: &crate::sandbox::SandboxPolicy,
+) -> Result<SpawnedMinecraft, MinecraftLaunchError> {
+    let java = fs::canonicalize(&instance.java_path)?;
+    let desktop = crate::platform::linux::Desktop::detect()?;
+    let command = crate::platform::linux::prepare(&java, policy, Some(&desktop))?;
+    let mut child = command.spawn(arguments, sandbox.launch_root.clone())?;
+    sandbox.cleanup_on_drop = false;
+    let stdout = child
+        .take_stdout()
+        .ok_or_else(|| MinecraftLaunchError::Sandbox("sandbox stdout is unavailable".into()))?;
+    let stderr = child
+        .take_stderr()
+        .ok_or_else(|| MinecraftLaunchError::Sandbox("sandbox stderr is unavailable".into()))?;
+    Ok(SpawnedMinecraft {
+        child: MinecraftProcess::Bubblewrap(child),
+        stdout: Box::new(stdout),
+        stderr: Box::new(stderr),
+        sandboxed: true,
+        narrator_token: policy.narrator.then(|| narrator_token.to_owned()),
+    })
+}
+
+#[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
 fn spawn_sandboxed(
     _paths: &MinecraftPaths,
     _instance: &InstanceManifest,
@@ -714,7 +755,7 @@ fn sandbox_alias(
     Ok(sandbox.virtual_root.join(relative))
 }
 
-#[cfg(any(windows, target_os = "macos"))]
+#[cfg(any(windows, target_os = "macos", target_os = "linux"))]
 fn prepare_narrator_bridge(
     sandbox: &Option<SandboxLayout>,
 ) -> Result<Option<PathBuf>, MinecraftLaunchError> {
@@ -744,7 +785,7 @@ fn prepare_cursor_agent(
     Ok(Some(sandbox_alias(layout, &physical)?))
 }
 
-#[cfg(not(any(windows, target_os = "macos")))]
+#[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
 fn prepare_narrator_bridge(
     _sandbox: &Option<SandboxLayout>,
 ) -> Result<Option<PathBuf>, MinecraftLaunchError> {
@@ -772,6 +813,8 @@ fn extract_native_libraries(
             path.extension().is_some_and(|extension| {
                 extension.eq_ignore_ascii_case(if cfg!(target_os = "macos") {
                     "dylib"
+                } else if cfg!(target_os = "linux") {
+                    "so"
                 } else {
                     "dll"
                 })
@@ -943,7 +986,7 @@ fn copy_exact_bounded<R: Read, W: Write>(
     Ok(())
 }
 
-#[cfg(not(any(windows, target_os = "macos")))]
+#[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
 fn prepare_sandbox_layout(
     _paths: &MinecraftPaths,
     instance: &InstanceManifest,

@@ -166,6 +166,7 @@ pub struct SandboxPolicy {
     pub desktop: DesktopPermissions,
     pub narrator: bool,
     pub allow_windows_compatibility: bool,
+    pub allow_linux_desktop_compatibility: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -174,6 +175,9 @@ pub enum BackendException {
     WindowsInstanceMetadataRead,
     WindowsAllVersionsRead,
     WindowsPrivateProfileStorage,
+    LinuxSystemRuntimeRead,
+    LinuxX11PeerAccess,
+    LinuxPulseAudioServiceAccess,
 }
 
 #[derive(Debug)]
@@ -217,6 +221,8 @@ impl SandboxPolicy {
             narrator: true,
             // Explicitly preserve the existing AppContainer compatibility contract for this preset.
             allow_windows_compatibility: true,
+            // X11 and PulseAudio expose service capabilities beyond window/audio output.
+            allow_linux_desktop_compatibility: true,
         })
     }
 
@@ -247,11 +253,6 @@ impl SandboxPolicy {
     }
 
     pub fn compile(&self, backend: Backend) -> Result<CompiledPolicy, PolicyError> {
-        if backend == Backend::Bubblewrap {
-            return Err(PolicyError(
-                "bubblewrap is not integrated into the launcher yet".into(),
-            ));
-        }
         if self.network != NetworkAccess::Denied {
             return Err(PolicyError(
                 "sandbox network access is not supported".into(),
@@ -276,6 +277,19 @@ impl SandboxPolicy {
             exceptions: vec![],
             narrator: self.narrator,
         };
+        if backend == Backend::Bubblewrap {
+            if !self.allow_linux_desktop_compatibility {
+                return Err(PolicyError(
+                    "Linux desktop requires explicit X11/PulseAudio compatibility permissions"
+                        .into(),
+                ));
+            }
+            plan.exceptions.extend([
+                BackendException::LinuxSystemRuntimeRead,
+                BackendException::LinuxX11PeerAccess,
+                BackendException::LinuxPulseAudioServiceAccess,
+            ]);
+        }
         if backend == Backend::AppContainer {
             if !self.allow_windows_compatibility {
                 return Err(PolicyError(

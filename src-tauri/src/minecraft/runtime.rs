@@ -363,11 +363,13 @@ fn extract_archive(archive: &Path, destination: &Path) -> Result<(), RuntimeInst
     Ok(())
 }
 
-// Extract only regular files/directories; links and device nodes cannot escape staging.
+// Extract regular files/directories. Legal-document aliases in Linux JRE packages
+// are copied after extraction; never create filesystem links in staging.
 fn extract_tar_archive(archive: &Path, destination: &Path) -> Result<(), RuntimeInstallError> {
     let decoder = flate2::read::GzDecoder::new(File::open(archive)?);
     let mut archive = tar::Archive::new(decoder);
     let mut total = 0_u64;
+    let mut legal_links = Vec::new();
     for (index, entry) in archive.entries()?.enumerate() {
         if index >= MAX_ARCHIVE_ENTRIES {
             return Err(RuntimeInstallError::ArchiveTooLarge);
@@ -382,11 +384,19 @@ fn extract_tar_archive(archive: &Path, destination: &Path) -> Result<(), Runtime
                     std::path::Component::Normal(_) | std::path::Component::CurDir
                 )
             })
-            || !(kind.is_file() || kind.is_dir())
+            || !(kind.is_file() || kind.is_dir() || kind.is_symlink())
         {
             return Err(RuntimeInstallError::UnsafeArchivePath(
                 path.display().to_string(),
             ));
+        }
+        if kind.is_symlink() {
+            let link = entry.link_name()?.ok_or_else(|| {
+                RuntimeInstallError::UnsafeArchivePath(path.display().to_string())
+            })?;
+            let resolved = legal_link_target(&path, &link)?;
+            legal_links.push((destination.join(&path), destination.join(resolved)));
+            continue;
         }
         let size = entry.size();
         total = total
@@ -414,7 +424,57 @@ fn extract_tar_archive(archive: &Path, destination: &Path) -> Result<(), Runtime
             )?;
         }
     }
+    while !legal_links.is_empty() {
+        let before = legal_links.len();
+        let mut pending = Vec::new();
+        for (target, source) in legal_links {
+            if !source.exists() {
+                pending.push((target, source));
+                continue;
+            }
+            let metadata = fs::symlink_metadata(&source)?;
+            if !metadata.file_type().is_file() || target.exists() {
+                return Err(RuntimeInstallError::UnsafeArchivePath(
+                    target.display().to_string(),
+                ));
+            }
+            total = total
+                .checked_add(metadata.len())
+                .filter(|n| *n <= MAX_EXTRACTED_RUNTIME_SIZE)
+                .ok_or(RuntimeInstallError::ArchiveTooLarge)?;
+            if let Some(parent) = target.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::copy(source, target)?;
+        }
+        if pending.len() == before {
+            return Err(RuntimeInstallError::UnsafeArchivePath(
+                "missing or cyclic legal document alias".into(),
+            ));
+        }
+        legal_links = pending;
+    }
     Ok(())
+}
+
+fn legal_link_target(path: &Path, link: &Path) -> Result<PathBuf, RuntimeInstallError> {
+    use std::path::Component;
+    let reject = || RuntimeInstallError::UnsafeArchivePath(path.display().to_string());
+    let mut resolved = path.parent().ok_or_else(reject)?.to_owned();
+    if path.components().count() < 4 || path.iter().nth(1) != Some(std::ffi::OsStr::new("legal")) {
+        return Err(reject());
+    }
+    for component in link.components() {
+        match component {
+            Component::Normal(name) => resolved.push(name),
+            Component::CurDir => {}
+            Component::ParentDir if resolved.components().count() > 2 => {
+                resolved.pop();
+            }
+            _ => return Err(reject()),
+        }
+    }
+    Ok(resolved)
 }
 
 fn runtime_client() -> Result<Client, RuntimeInstallError> {
@@ -544,6 +604,48 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn legal_aliases_are_copied_and_cannot_escape_the_legal_tree() {
+        for link in ["../../../outside", "/etc/passwd", "../../bin/java"] {
+            assert!(
+                legal_link_target(Path::new("jdk/legal/module/LICENSE"), Path::new(link)).is_err()
+            );
+        }
+        assert!(legal_link_target(Path::new("jdk/bin/java"), Path::new("../lib/java")).is_err());
+        let root = std::env::temp_dir().join(format!("mona-legal-test-{}", std::process::id()));
+        fs::create_dir(&root).unwrap();
+        let archive = root.join("runtime.tar.gz");
+        let encoder = flate2::write::GzEncoder::new(
+            File::create(&archive).unwrap(),
+            flate2::Compression::default(),
+        );
+        let mut builder = tar::Builder::new(encoder);
+        let mut link = tar::Header::new_gnu();
+        link.set_entry_type(tar::EntryType::Symlink);
+        link.set_size(0);
+        link.set_mode(0o644);
+        link.set_link_name("../java.base/LICENSE").unwrap();
+        link.set_cksum();
+        builder
+            .append_data(&mut link, "jdk/legal/module/LICENSE", &b""[..])
+            .unwrap();
+        let mut file = tar::Header::new_gnu();
+        file.set_size(7);
+        file.set_mode(0o644);
+        file.set_cksum();
+        builder
+            .append_data(&mut file, "jdk/legal/java.base/LICENSE", &b"license"[..])
+            .unwrap();
+        builder.into_inner().unwrap().finish().unwrap();
+        let dest = root.join("out");
+        fs::create_dir(&dest).unwrap();
+        extract_archive(&archive, &dest).unwrap();
+        let copied = dest.join("jdk/legal/module/LICENSE");
+        assert!(fs::symlink_metadata(&copied).unwrap().file_type().is_file());
+        assert_eq!(fs::read(copied).unwrap(), b"license");
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn tar_rejects_links_and_preserves_executable_files() {

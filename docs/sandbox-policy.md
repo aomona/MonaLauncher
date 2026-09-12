@@ -1,6 +1,6 @@
 # 共通サンドボックスポリシー
 
-Minecraftの権限指定は `src-tauri/src/sandbox/` にまとめる。`minecraft/sandbox_policy.rs` が検証済みインスタンスからリソースの実パスを解決し、WindowsとmacOSの起動処理へ同じ `SandboxPolicy` を渡す。InstanceのPermissionsタブからゲームデータ書き込み・ナレーターを設定できる。任意のパスやOS固有の追加許可を受け取るAPIは設けていない。対象はゲームプロセス全体であり、個々のModを識別した権限制御ではない。
+Minecraftの権限指定は `src-tauri/src/sandbox/` にまとめる。`minecraft/sandbox_policy.rs` が検証済みインスタンスからリソースの実パスを解決し、Windows・macOS・Linuxの起動処理へ同じ `SandboxPolicy` を渡す。InstanceのPermissionsタブからゲームデータ書き込み・ナレーターを設定できる。任意のパスやOS固有の追加許可を受け取るAPIは設けていない。対象はゲームプロセス全体であり、個々のModを識別した権限制御ではない。
 
 ## 指定と適用
 
@@ -37,9 +37,24 @@ Windowsのtmpは変更可能なlaunchの子なので、tmpだけを読み取り�
 
 共通化はOSの保証を同一にするものではない。Seatbeltにはシステム領域の読み取り・広いメタデータ参照・列挙したMach/IOKitサービスがある。WindowsにはOSがAppContainerへ公開する資源や既知フォルダーがある。子の終了はWindowsがJob Object、macOSがプロセスグループで、ランチャー異常終了時やグループ離脱時の保証も異なる。これらを同等の隔離と扱わない。
 
-Linuxは `Backend::Bubblewrap` として未対応を返す。独立したsandbox-labのLinux/UTM検証をランチャー対応済みとは扱わない。次段階では、このポリシーをbubblewrapのマウント・ネットワーク名前空間・デスクトップ接続へ変換する。
+Linuxは `Backend::Bubblewrap` へ変換する。`platform/linux` が新しいuser/PID/network/IPC/mount namespace、ファイルのbind mount、seccompを構成する。`--unshare-user` と `--disable-userns` を明示し、追加のnamespace作成も拒否する。seccompはネイティブABIのみを許可し、IPv4/IPv6などAF_UNIX以外のsocket、ptrace、mount、BPF、keyring等を拒否する。clone3はENOSYSを返し、JVMの通常のthread作成はcloneへフォールバックできる。フィルターのFD以外はゲームへ追加継承せず、stdinは閉じる。起動失敗を通常起動へフォールバックしない。
+
+Linuxの `allow_linux_desktop_compatibility = true` は以下を明示的に受け入れる。falseならLinuxデスクトップ起動を拒否する。
+
+- システム実行環境（`/usr`・ライブラリ・列挙したフォント/loader設定）の読み取り。ホーム全体や `/etc` 全体は公開しない。
+- 選択したX11/XWaylandソケットと認証ファイル。X11の他クライアントの観測・操作を防ぐものではない。Wayland専用セッションは未対応。
+- 選択したローカルPulseAudio互換ソケット。録音・音声サーバー操作も含まれ、出力専用の権限ではない。外部接続を含むホストサービス経由の間接操作も、直接のネットワークsyscall拒否と区別する。
+- 存在するDRM render node。`/dev/input`・DRM primary node・`/dev/snd`・D-Bus・ホストの `/run/user` 全体は公開しない。
+
+ナレーターは共通の認証済みstdoutプロトコルを、ホストのeSpeak NGへ渡す。テキストは標準入力で渡し、シェルのコマンドやファイル名に使わない。無効時はブリッジから要求せず、ブローカーも起動しない。一般音声の生成能力やMod独自の音声合成まで禁止する設定ではない。
+
+Linuxのプロセス終了ではbubblewrapの監視プロセスを停止する。PID namespace内でセッションを分離した子も終了することを実プローブで確認する。カーネル脆弱性への耐性や、CPU/メモリ/ディスクの使用量上限を保証するものではない。
+
+UbuntuのAppArmor user namespace制限を持つ環境では、root所有のパッケージ実行ファイルへのプロファイル登録が必要。`packaging/linux/monalauncher.apparmor` を参照。システム全体のAppArmorやsysctlは無効にしない。依存関係・再現手順・今回の観測は [Linux検証手順](../tools/linux-validation/README.md) を参照。
 
 ## 検証
+
+Linux本体への統合後の確認は [2026-09-12 Linux統合検証](../tools/linux-validation/results-2026-09-12.md) に記録した。以下は先行する共通化・macOS検証の記録。
 
 - 共通テスト: 両OSのファイル割当、Windowsの明示的追加許可、未対応要求の拒否、読み取り専用への縮小、パスの重なり・リンクの拒否。
 - macOS実Seatbelt: 共通ポリシーからの許可・拒否、リンク経由アクセス、子プロセスの制限、gameを読み取り専用にした場合の書き込み拒否。
@@ -65,6 +80,6 @@ Windowsでは既存CIの `cargo run --locked --bin sandbox_probe -- --acl` と `
 
 `update_minecraft_permissions` はインスタンス操作を予約し、ゲーム実行中・他操作中・未対応OS・旧形式のインスタンスを拒否する。既存の検証済みmanifestを読み、permissionsだけを変更して原子的に保存する。改名・修復はこの設定を維持する。保存は次回起動向けで、実行中のプロセスの権限を変更しない。
 
-`policy_for_instance` は保存した設定を共通ポリシーへ適用する。ゲーム領域のReadOnly指定とナレーターブローカーの無効化はWindows/macOSの既存変換に渡す。UIはOSの対応状況をバックエンドから取得し、対応状況が不明な間も変更できない。書き込み無効はログや設定の保存も止めるため、バージョンによってゲームが起動しない可能性がある。
+`policy_for_instance` は保存した設定を共通ポリシーへ適用する。ゲーム領域のReadOnly指定とナレーターブローカーの無効化はWindows/macOS/Linuxの変換に渡す。UIはOSの対応状況をバックエンドから取得し、対応状況が不明な間も変更できない。書き込み無効はログや設定の保存も止めるため、バージョンによってゲームが起動しない可能性がある。
 
-追加検証: 既存設定の移行、厳格な入力検査、実ファイルへの保存と再読込、改名後の保持、別インスタンスの分離、保存値から両OSのポリシーへの変換を確認。Windows ACL実適用は引き続きWindowsホストでの確認が必要。
+追加検証: 既存設定の移行、厳格な入力検査、実ファイルへの保存と再読込、改名後の保持、別インスタンスの分離、保存値から各OSのポリシーへの変換を確認。Windows ACL実適用は引き続きWindowsホストでの確認が必要。

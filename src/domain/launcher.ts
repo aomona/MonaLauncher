@@ -4,7 +4,7 @@ export type InstancePermissions = {
 };
 
 export type PermissionSupport = {
-  platform: "windows" | "macos" | "unsupported";
+  platform: "windows" | "macos" | "linux" | "unsupported";
   editable: boolean;
 };
 

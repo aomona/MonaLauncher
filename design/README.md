@@ -143,3 +143,5 @@ Instanceの表示名・Permissionsの保存中・完了は、アプリ画面全�
 Toastは共通managerの `notify({ title, type })` で表示する。typeはneutral（既定）/success/error/warning。通常はニュートラル、成功は緑、失敗は赤、警告は専用のオレンジトークンを使う。縦padding4px、閉じる操作32pxの小型表示とし、枠線はsubtleまたは意味色20%。画面右下16pxに固定し、ModalのFocus境界内で操作可能にする。失敗通知は自動消去せず、本文のエラーと再試行を残す。
 
 ToastのstackはBase UIのindex・height・offsetとexpanded/behind状態を使用する。通常は背後の本文を隠し、Hover/Focusで展開する。出入り・並び替え・スワイプ退出をアニメーション化し、Reduced motionではtransitionを停止する。幅280px・motion500msはトークンから生成する。
+
+LinuxのPermissionsも同じ保存APIとSwitchを使用する。X11/XWayland・PulseAudio互換サーバーの接続が、他クライアント操作・録音を含む互換許可であることを固定権限の下に明記する。

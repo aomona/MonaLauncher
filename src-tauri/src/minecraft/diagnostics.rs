@@ -92,6 +92,8 @@ pub fn diagnose_instance(
         detail: if instance.sandboxed {
             if cfg!(target_os = "macos") {
                 "Seatbelt起動が有効です（実験対応）"
+            } else if cfg!(target_os = "linux") {
+                "bubblewrap + seccomp起動が有効です（実験対応）"
             } else {
                 "AppContainer起動が有効です"
             }
@@ -103,8 +105,11 @@ pub fn diagnose_instance(
     });
 
     let version_path = paths.version_json(&instance.version_id);
-    let version: VersionMetadata =
-        serde_json::from_slice(&read_bounded_file(&version_path, MAX_METADATA_SIZE)?)?;
+    let version = serde_json::from_slice::<VersionMetadata>(&read_bounded_file(
+        &version_path,
+        MAX_METADATA_SIZE,
+    )?)?
+    .for_current_platform()?;
     if version.id != instance.version_id {
         return Err(MinecraftInstallError::VersionIdMismatch {
             expected: instance.version_id.clone(),

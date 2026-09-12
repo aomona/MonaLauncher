@@ -4,8 +4,10 @@ pub mod minecraft;
 mod platform;
 pub mod sandbox;
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 pub mod probe {
+    #[cfg(target_os = "linux")]
+    pub use crate::platform::linux::{prepare, Desktop};
     pub use crate::platform::narrator_broker::NarratorBroker;
 }
 
