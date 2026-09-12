@@ -5,10 +5,10 @@ These probes call the production `sandbox::SandboxPolicy`, Linux bubblewrap back
 ## Desktop dependencies and scope
 
 - Linux x86_64 or ARM64, bubblewrap 0.9+, unprivileged user namespaces and seccomp.
-- Local X11 or XWayland, a regular Xauthority file, and a local PulseAudio-compatible server (including PipeWire PulseAudio).
+- A named local Wayland socket, or local X11/XWayland with a regular Xauthority file; a local PulseAudio-compatible server (including PipeWire PulseAudio).
 - eSpeak NG for the trusted narrator broker. The current worker uses its default voice; Japanese voice quality is not verified.
 - Tauri build dependencies on Ubuntu: `libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf libssl-dev build-essential pkg-config`, Rust, and a JDK providing `javac`/`jar`.
-- Probe helpers: `x11-utils pulseaudio-utils`; screenshot inspection additionally uses `scrot`.
+- Probe helpers: `x11-utils pulseaudio-utils`; X11 screenshots use `scrot`. This GNOME Wayland VM uses `gnome-screenshot` and `wayland-info` (`wayland-utils`).
 
 The launcher does not disable the host's namespace restrictions. On Ubuntu with AppArmor's restricted unprivileged namespaces, install the root-owned application at `/usr/bin/monalauncher` and register `packaging/linux/monalauncher.apparmor`. This profile grants namespace eligibility, not confinement. Distribution packaging still needs to arrange installation and upgrades of this file. Do not apply the profile to a user-writable binary or turn off AppArmor globally.
 
@@ -41,7 +41,7 @@ MONALAUNCHER_EXPECT_NARRATOR=1 \
   /home/mona/.local/share/me.aomona.monalauncher/minecraft 60 26.2 narrator-on
 ```
 
-Repeat with `narrator-off`. Each run persists that permission through the production API and starts the game from those saved values. The disabled case must not create a broker token or emit narrator requests. The enabled case must complete an eSpeak process. The CLI observes a viewable Minecraft window, sound-engine initialization, and a Java PulseAudio stream; these are not a user's acoustic confirmation. It kills its owned process after the observation interval. Read-only game access is tested by the boundary probe: Minecraft may fail to start or save when that permission is disabled.
+Repeat with `narrator-off`. Each run persists that permission through the production API and starts the game from those saved values. The disabled case must not create a broker token or emit narrator requests. The enabled case must complete an eSpeak process. On X11, the CLI observes a viewable Minecraft window; on Wayland, it reports `window_viewable: null` and requires graphics initialization, with separate compositor screenshots for visibility. Both observe sound-engine initialization and a Java PulseAudio stream; these are not a user's acoustic confirmation. It kills its owned process after the observation interval. Read-only game access is tested by the boundary probe: Minecraft may fail to start or save when that permission is disabled.
 
 On ARM64, the 26.2 metadata's x64-only LWJGL 3.4.1 native jars are replaced with explicitly pinned upstream ARM64 artifacts in `src-tauri/src/minecraft/linux-arm64-natives.json`. Installer, launcher and diagnosis apply the same in-memory mapping. The original Mojang metadata remains unchanged on disk. Jar size and SHA-1 are verified by the existing downloader; Maven URLs are allowed only for those exact checked-in pins. Older/unpinned LWJGL and legacy classifiers fail explicitly rather than selecting unverified replacements. This is not blanket ARM64 compatibility for Minecraft or arbitrary Mods.
 
@@ -49,16 +49,38 @@ The Linux JRE's legal-document symlinks are materialized as regular copies withi
 
 ## Boundaries
 
-X11 and PulseAudio are compatibility service grants. They permit more than drawing one window and playing sound: other X11 clients and recording/server operations may be reachable. No host D-Bus, full home/runtime directory, input devices, or ALSA devices are mounted. Direct network syscalls are denied, but this does not sanitize every operation offered by an exposed desktop service. See [the shared policy](../../docs/sandbox-policy.md).
+Wayland, X11 and PulseAudio are compatibility service grants. The Wayland path mounts only the selected socket, with no X11 or host session-bus connection. It does not filter compositor protocols or implement Flatpak security-context; clipboard and any other offered compositor capabilities remain in scope. GPU discovery gets only individual read-only identification attributes and reconstructed links/directories, not host sysfs subtrees or primary devices. X11 and PulseAudio permit more than drawing one window and playing sound: other X11 clients and recording/server operations may be reachable. No host D-Bus, full home/runtime directory, input devices, or ALSA devices are mounted. Direct network syscalls are denied, but this does not sanitize every operation offered by an exposed desktop service. See [the shared policy](../../docs/sandbox-policy.md).
 
-The initial UTM validation used software rendering (`llvmpipe`); do not treat that run as GPU-driver coverage. Native Wayland, Linux Microsoft credential storage/sign-in, arbitrary Minecraft/Mod versions, Windows runtime behavior, and production package installation are separate work.
+The initial UTM validation used software rendering (`llvmpipe`); do not treat that run as GPU-driver coverage. Linux Microsoft credential storage/sign-in, arbitrary Minecraft/Mod versions, Windows runtime behavior, and production package installation are separate work.
 
 The subsequent [UTM 4.7.5 GPU comparison](utm-4.7.5-gpu-2026-09-12.md) detected accelerated Apple M4 Pro rendering, but both ANGLE backends exposed only OpenGL 2.1 to this guest. Minecraft 26.2 requires 3.3 and did not launch through that GPU path; an unrestricted core-context probe failed too.
 
 [UTM 5.0.5 Beta with Apple Core OpenGL](utm-5.0.5-gpu-2026-09-12.md) subsequently exposed OpenGL 4.1 and passed the GPU context/readback and sandboxed Minecraft smoke tests. In that VM, launch the native UI with `WEBKIT_DISABLE_DMABUF_RENDERER=1` to avoid missing text. Do not set `LIBGL_ALWAYS_SOFTWARE=1` for this GPU test. This covers the virtual M4 Pro graphics path, not physical Linux GPU drivers.
+
+## Native Wayland
+
+The [Wayland validation report](wayland-2026-09-12.md) covers Ubuntu GNOME, UTM 5.0.5 and Minecraft 26.2. The backend prefers `WAYLAND_DISPLAY` or a Wayland session type. Invalid named sockets and inherited `WAYLAND_SOCKET` descriptors fail explicitly, even if `DISPLAY` is also set.
+
+```sh
+env -u DISPLAY -u XAUTHORITY XDG_RUNTIME_DIR=/run/user/1000 \
+  WAYLAND_DISPLAY=wayland-0 XDG_SESSION_TYPE=wayland \
+  /usr/local/libexec/monalauncher-probes/linux_sandbox_probe --wayland
+
+env -u DISPLAY -u XAUTHORITY XDG_RUNTIME_DIR=/run/user/1000 \
+  WAYLAND_DISPLAY=wayland-0 XDG_SESSION_TYPE=wayland MONALAUNCHER_EXPECT_NARRATOR=1 \
+  /usr/local/libexec/monalauncher-probes/linux_minecraft_smoke \
+  /home/mona/.local/share/me.aomona.monalauncher/minecraft 60 26.2 narrator-on
+```
+
+Repeat the smoke test with `narrator-off`. The desktop boundary probe needs an accessible XWayland `X0` socket and session bus as positive controls; a Wayland-only compositor without these controls does not satisfy this particular validation setup. It checks both pathname and abstract X11 connections, the host session bus, missing input/primary devices and unrelated sysfs, plus read-only GPU identification mounts when the host supplies PCI vendor attributes.
+
+Minecraft 26.2's inspected GLX implementation selects X11 by default. For this exact version and Wayland only, the launcher adds `-DMC_DEBUG_ENABLED=true -DMC_DEBUG_PREFER_WAYLAND=true`; other individual debug flags remain unset. These private properties are a version-specific compatibility measure, not a promise for other Minecraft versions or Mods.
 
 ## Upstream references
 
 - [bubblewrap options](https://github.com/containers/bubblewrap/blob/main/bwrap.xml): namespace lifetime, seccomp FD and nested user-namespace controls.
 - [Flatpak PulseAudio integration](https://github.com/flatpak/flatpak/blob/main/common/flatpak-run-pulseaudio.c): local socket mount and no-shared-memory client configuration. We do not copy its ALSA device grant.
 - [LWJGL supported platforms](https://github.com/LWJGL/lwjgl3/blob/master/README.md): ARM64 natives. Pinned artifacts come from Maven Central and were checked against its published SHA-1 files.
+
+- [Flatpak Wayland integration](https://github.com/flatpak/flatpak/blob/main/common/flatpak-run-wayland.c): socket and optional security-context handling; the latter is not implemented here.
+- [libdrm device discovery](https://gitlab.freedesktop.org/mesa/drm/-/blob/main/xf86drm.c): GPU bus/PCI identification via sysfs.

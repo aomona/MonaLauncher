@@ -144,4 +144,4 @@ Toastは共通managerの `notify({ title, type })` で表示する。typeはneut
 
 ToastのstackはBase UIのindex・height・offsetとexpanded/behind状態を使用する。通常は背後の本文を隠し、Hover/Focusで展開する。出入り・並び替え・スワイプ退出をアニメーション化し、Reduced motionではtransitionを停止する。幅280px・motion500msはトークンから生成する。
 
-LinuxのPermissionsも同じ保存APIとSwitchを使用する。X11/XWayland・PulseAudio互換サーバーの接続が、他クライアント操作・録音を含む互換許可であることを固定権限の下に明記する。
+LinuxのPermissionsも同じ保存APIとSwitchを使用する。Wayland優先と、その場合はX11接続を公開しないことを明記する。X11/XWayland・PulseAudio互換サーバーの接続が、他クライアント操作・録音を含む互換許可であることも固定権限の下に明記する。

@@ -43,4 +43,26 @@ result['clone3_fallback'] = libc.syscall(clone3, 0, 0) == -1 and ctypes.get_errn
 status = pathlib.Path('/proc/self/status').read_text()
 result['seccomp'] = 'Seccomp:\t2' in status
 result['no_new_privs'] = 'NoNewPrivs:\t1' in status
+if len(sys.argv) > 3 and sys.argv[3] == 'wayland':
+    runtime = pathlib.Path(os.environ['XDG_RUNTIME_DIR'])
+    display = pathlib.Path(os.environ['WAYLAND_DISPLAY'])
+    result.update({
+        'wayland_connect': attempt(lambda: connect(socket.AF_UNIX, str(runtime / display))),
+        'x11_path': attempt(lambda: connect(socket.AF_UNIX, '/tmp/.X11-unix/X0')),
+        'x11_abstract': attempt(lambda: connect(socket.AF_UNIX, '\0/tmp/.X11-unix/X0')),
+        'display_env': 'DISPLAY' in os.environ,
+        'xauthority_env': 'XAUTHORITY' in os.environ,
+        'session_bus': attempt(lambda: connect(socket.AF_UNIX, '/run/user/1000/bus')),
+        'sys_network': pathlib.Path('/sys/class/net').exists(),
+        'drm_primary': any(pathlib.Path('/dev/dri').glob('card*')),
+        'input_devices': pathlib.Path('/dev/input').exists(),
+        'gpu_config': any(pathlib.Path('/sys/class/drm').glob('*/device/config')),
+
+    })
+    mounts = pathlib.Path('/proc/self/mountinfo').read_text().splitlines()
+    vendors = list(pathlib.Path('/sys/class/drm').glob('renderD*/device/vendor'))
+    result['gpu_vendor_read'] = bool(vendors) and all(attempt(p.read_bytes) for p in vendors)
+    result['gpu_vendor_readonly_mount'] = bool(vendors) and all(
+        any(line.split()[4] == str(p.resolve()) and 'ro' in line.split()[5].split(',') for line in mounts)
+        for p in vendors)
 print(json.dumps(result), flush=True)

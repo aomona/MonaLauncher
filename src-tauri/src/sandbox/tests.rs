@@ -124,8 +124,24 @@ fn linux_desktop_compatibility_is_explicit_and_can_be_rejected() {
             BackendException::LinuxPulseAudioServiceAccess,
         ]
     );
+    let wayland = policy.compile_linux(LinuxDisplayProtocol::Wayland).unwrap();
+    assert!(wayland
+        .exceptions
+        .contains(&BackendException::LinuxGpuIdentificationRead));
+    assert!(wayland
+        .exceptions
+        .contains(&BackendException::LinuxWaylandCompositorAccess));
+    assert!(!wayland
+        .exceptions
+        .contains(&BackendException::LinuxX11PeerAccess));
+    let x11 = policy.compile_linux(LinuxDisplayProtocol::X11).unwrap();
+    for (a, b) in wayland.files.iter().zip(&x11.files) {
+        assert_eq!(a.path, b.path);
+        assert_eq!(a.access, b.access);
+    }
     policy.allow_linux_desktop_compatibility = false;
     assert!(policy.compile(Backend::Bubblewrap).is_err());
+    assert!(policy.compile_linux(LinuxDisplayProtocol::Wayland).is_err());
     assert!(policy.compile(Backend::Seatbelt).is_ok());
 }
 

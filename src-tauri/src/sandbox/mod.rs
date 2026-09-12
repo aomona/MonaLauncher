@@ -13,6 +13,12 @@ pub enum Backend {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinuxDisplayProtocol {
+    X11,
+    Wayland,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileAccess {
     ReadOnly,
     ReadWrite,
@@ -177,6 +183,8 @@ pub enum BackendException {
     WindowsPrivateProfileStorage,
     LinuxSystemRuntimeRead,
     LinuxX11PeerAccess,
+    LinuxWaylandCompositorAccess,
+    LinuxGpuIdentificationRead,
     LinuxPulseAudioServiceAccess,
 }
 
@@ -199,6 +207,23 @@ pub struct CompiledPolicy {
 }
 
 impl SandboxPolicy {
+    /// Select the actual display service, without changing common file/network grants.
+    pub fn compile_linux(
+        &self,
+        display: LinuxDisplayProtocol,
+    ) -> Result<CompiledPolicy, PolicyError> {
+        let mut plan = self.compile(Backend::Bubblewrap)?;
+        if display == LinuxDisplayProtocol::Wayland {
+            plan.exceptions
+                .push(BackendException::LinuxGpuIdentificationRead);
+            for exception in &mut plan.exceptions {
+                if *exception == BackendException::LinuxX11PeerAccess {
+                    *exception = BackendException::LinuxWaylandCompositorAccess;
+                }
+            }
+        }
+        Ok(plan)
+    }
     pub fn minecraft(resources: SandboxResources) -> Result<Self, PolicyError> {
         use FileAccess::*;
         use Resource::*;
@@ -280,7 +305,7 @@ impl SandboxPolicy {
         if backend == Backend::Bubblewrap {
             if !self.allow_linux_desktop_compatibility {
                 return Err(PolicyError(
-                    "Linux desktop requires explicit X11/PulseAudio compatibility permissions"
+                    "Linux desktop requires explicit display/PulseAudio compatibility permissions"
                         .into(),
                 ));
             }

@@ -624,8 +624,9 @@ fn spawn_sandboxed(
 ) -> Result<SpawnedMinecraft, MinecraftLaunchError> {
     let java = fs::canonicalize(&instance.java_path)?;
     let desktop = crate::platform::linux::Desktop::detect()?;
+    let arguments = linux_display_arguments(&instance.version_id, desktop.protocol(), arguments);
     let command = crate::platform::linux::prepare(&java, policy, Some(&desktop))?;
-    let mut child = command.spawn(arguments, sandbox.launch_root.clone())?;
+    let mut child = command.spawn(&arguments, sandbox.launch_root.clone())?;
     sandbox.cleanup_on_drop = false;
     let stdout = child
         .take_stdout()
@@ -640,6 +641,26 @@ fn spawn_sandboxed(
         sandboxed: true,
         narrator_token: policy.narrator.then(|| narrator_token.to_owned()),
     })
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn linux_display_arguments(
+    version: &str,
+    display: crate::sandbox::LinuxDisplayProtocol,
+    arguments: &[OsString],
+) -> Vec<OsString> {
+    let mut result = Vec::new();
+    // Verified against 26.2's GLX._initGlfw and SharedConstants: the game otherwise
+    // explicitly selects X11 even when GLFW supports Wayland. Other debug flags
+    // remain unset. Do not assume the same private flags exist in other versions.
+    if version == "26.2" && display == crate::sandbox::LinuxDisplayProtocol::Wayland {
+        result.extend([
+            OsString::from("-DMC_DEBUG_ENABLED=true"),
+            OsString::from("-DMC_DEBUG_PREFER_WAYLAND=true"),
+        ]);
+    }
+    result.extend_from_slice(arguments);
+    result
 }
 
 #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
@@ -1189,6 +1210,21 @@ fn require_file(path: &Path) -> Result<(), MinecraftLaunchError> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn wayland_compatibility_flags_are_scoped_to_verified_version_and_display() {
+        use crate::sandbox::LinuxDisplayProtocol::{Wayland, X11};
+        let args = vec![std::ffi::OsString::from("net.minecraft.client.main.Main")];
+        assert_eq!(super::linux_display_arguments("26.2", X11, &args), args);
+        assert_eq!(
+            super::linux_display_arguments("1.21.8", Wayland, &args),
+            args
+        );
+        let native = super::linux_display_arguments("26.2", Wayland, &args);
+        assert_eq!(native.len(), 3);
+        assert_eq!(native[0], "-DMC_DEBUG_ENABLED=true");
+        assert_eq!(native[1], "-DMC_DEBUG_PREFER_WAYLAND=true");
+        assert_eq!(native[2], args[0]);
+    }
     use super::*;
     use crate::minecraft::model::{Rule, RuleOs};
 

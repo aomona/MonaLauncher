@@ -1,7 +1,8 @@
 //! Experimental Linux desktop backend; never falls back to an unrestricted process.
+mod graphics;
 pub(crate) mod narrator;
 mod seccomp;
-use crate::sandbox::{Backend, FileAccess, SandboxPolicy};
+use crate::sandbox::{FileAccess, LinuxDisplayProtocol, SandboxPolicy};
 use std::ffi::OsString;
 use std::fs::{self, File};
 use std::io;
@@ -10,50 +11,101 @@ use std::os::unix::{fs::FileTypeExt, process::CommandExt};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Output, Stdio};
 
-/// X11 (including XWayland) and a local PulseAudio-compatible server.
-/// These services are compatibility grants, not an output-only security boundary.
+/// Only the selected display service is exposed, alongside local PulseAudio.
 pub struct Desktop {
-    display: String,
-    x_socket: PathBuf,
-    authority: PathBuf,
+    display: DisplayConnection,
     pulse: PathBuf,
 }
+#[derive(Debug)]
+enum DisplayConnection {
+    X11 {
+        display: String,
+        socket: PathBuf,
+        authority: PathBuf,
+    },
+    Wayland {
+        socket: PathBuf,
+    },
+}
 impl Desktop {
+    pub fn protocol(&self) -> LinuxDisplayProtocol {
+        match self.display {
+            DisplayConnection::X11 { .. } => LinuxDisplayProtocol::X11,
+            DisplayConnection::Wayland { .. } => LinuxDisplayProtocol::Wayland,
+        }
+    }
     pub fn detect() -> io::Result<Self> {
-        let display = std::env::var("DISPLAY").map_err(|_| {
-            io::Error::other("Linux desktop sandbox requires local X11/XWayland DISPLAY")
-        })?;
-        let number = display_number(&display)?;
-        let x_socket = PathBuf::from(format!("/tmp/.X11-unix/X{number}"));
-        require_socket(&x_socket)?;
-        let authority = std::env::var_os("XAUTHORITY")
-            .map(PathBuf::from)
-            .or_else(|| {
-                std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".Xauthority"))
-            })
-            .ok_or_else(|| io::Error::other("XAUTHORITY is required"))?;
-        if !authority.is_absolute() || !authority.is_file() {
+        if std::env::var_os("WAYLAND_SOCKET").is_some() {
             return Err(io::Error::other(
-                "XAUTHORITY must name an absolute regular file",
+                "inherited WAYLAND_SOCKET is unsupported; use a named Wayland socket",
             ));
         }
+        let runtime = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from);
+        let wayland = std::env::var_os("WAYLAND_DISPLAY");
+        let session = std::env::var("XDG_SESSION_TYPE").ok();
+        let display = if wayland.is_some() || session.as_deref() == Some("wayland") {
+            let name = wayland.unwrap_or_else(|| "wayland-0".into());
+            let socket = wayland_socket_path(Path::new(&name), runtime.as_deref())?;
+            require_socket(&socket)?;
+            DisplayConnection::Wayland {
+                socket: fs::canonicalize(socket)?,
+            }
+        } else {
+            let display = std::env::var("DISPLAY").map_err(|_| {
+                io::Error::other("Linux desktop requires Wayland or local X11 DISPLAY")
+            })?;
+            let number = display_number(&display)?;
+            let socket = PathBuf::from(format!("/tmp/.X11-unix/X{number}"));
+            require_socket(&socket)?;
+            let authority = std::env::var_os("XAUTHORITY")
+                .map(PathBuf::from)
+                .or_else(|| {
+                    std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".Xauthority"))
+                })
+                .ok_or_else(|| io::Error::other("XAUTHORITY is required"))?;
+            if !authority.is_absolute() || !authority.is_file() {
+                return Err(io::Error::other(
+                    "XAUTHORITY must name an absolute regular file",
+                ));
+            }
+            DisplayConnection::X11 {
+                display,
+                socket,
+                authority: fs::canonicalize(authority)?,
+            }
+        };
         let pulse = match std::env::var("PULSE_SERVER") {
             Ok(server) => PathBuf::from(server.strip_prefix("unix:").ok_or_else(|| {
                 io::Error::other("sandbox audio requires a local unix: PULSE_SERVER")
             })?),
-            Err(_) => PathBuf::from(std::env::var_os("XDG_RUNTIME_DIR").ok_or_else(|| {
-                io::Error::other("XDG_RUNTIME_DIR is required for desktop audio")
-            })?)
-            .join("pulse/native"),
+            Err(_) => runtime
+                .ok_or_else(|| io::Error::other("XDG_RUNTIME_DIR is required for desktop audio"))?
+                .join("pulse/native"),
         };
         require_socket(&pulse)?;
-        Ok(Self {
-            display,
-            x_socket,
-            authority: fs::canonicalize(authority)?,
-            pulse,
-        })
+        Ok(Self { display, pulse })
     }
+}
+fn wayland_socket_path(name: &Path, runtime: Option<&Path>) -> io::Result<PathBuf> {
+    if name.is_absolute() {
+        return Ok(name.to_owned());
+    }
+    // Relative WAYLAND_DISPLAY is a socket name, never traversal into sibling services.
+    if name.as_os_str().is_empty()
+        || name.components().count() != 1
+        || !matches!(
+            name.components().next(),
+            Some(std::path::Component::Normal(_))
+        )
+    {
+        return Err(io::Error::other(
+            "WAYLAND_DISPLAY must be a socket name or absolute path",
+        ));
+    }
+    let runtime = runtime.filter(|p| p.is_absolute()).ok_or_else(|| {
+        io::Error::other("relative WAYLAND_DISPLAY requires absolute XDG_RUNTIME_DIR")
+    })?;
+    Ok(runtime.join(name))
 }
 fn require_socket(path: &Path) -> io::Result<()> {
     if !path.is_absolute() || !fs::metadata(path)?.file_type().is_socket() {
@@ -128,7 +180,11 @@ pub fn prepare(
     desktop: Option<&Desktop>,
 ) -> io::Result<PreparedCommand> {
     let plan = policy
-        .compile(Backend::Bubblewrap)
+        .compile_linux(
+            desktop
+                .map(Desktop::protocol)
+                .unwrap_or(LinuxDisplayProtocol::X11),
+        )
         .map_err(io::Error::other)?;
     let resources = policy.resources();
     let bwrap = Path::new("/usr/bin/bwrap");
@@ -172,6 +228,8 @@ pub fn prepare(
         "/dev",
         "--tmpfs",
         "/tmp",
+        "--perms",
+        "0700",
         "--dir",
         "/run/mona",
     ]);
@@ -195,24 +253,43 @@ pub fn prepare(
         .env("XDG_RUNTIME_DIR", "/run/mona")
         .env("LANG", "C.UTF-8");
     if let Some(desktop) = desktop {
+        match &desktop.display {
+            DisplayConnection::X11 {
+                display,
+                socket,
+                authority,
+            } => {
+                command
+                    .arg("--ro-bind")
+                    .arg(socket)
+                    .arg(socket)
+                    .arg("--ro-bind")
+                    .arg(authority)
+                    .arg("/run/mona/Xauthority")
+                    .env("DISPLAY", display)
+                    .env("XAUTHORITY", "/run/mona/Xauthority")
+                    .env("XDG_SESSION_TYPE", "x11");
+            }
+            DisplayConnection::Wayland { socket } => {
+                command
+                    .arg("--ro-bind")
+                    .arg(socket)
+                    .arg("/run/mona/wayland-0")
+                    .env("WAYLAND_DISPLAY", "wayland-0")
+                    .env("XDG_SESSION_TYPE", "wayland");
+            }
+        }
         command
-            .arg("--ro-bind")
-            .arg(&desktop.x_socket)
-            .arg(&desktop.x_socket)
-            .arg("--ro-bind")
-            .arg(&desktop.authority)
-            .arg("/run/mona/Xauthority")
             .arg("--ro-bind")
             .arg(&desktop.pulse)
             .arg("/run/mona/pulse");
         let config = resources.launch.join("pulse-client.conf");
         fs::write(&config, "enable-shm=no\nautospawn=no\n")?;
         command
-            .env("DISPLAY", &desktop.display)
-            .env("XAUTHORITY", "/run/mona/Xauthority")
             .env("PULSE_SERVER", "unix:/run/mona/pulse")
             .env("PULSE_CLIENTCONFIG", config)
             .env("ALSOFT_DRIVERS", "pulse");
+        let mut gpu_metadata = graphics::Metadata::default();
         if let Ok(entries) = fs::read_dir("/dev/dri") {
             for entry in entries {
                 let path = entry?.path();
@@ -223,6 +300,9 @@ pub fn prepare(
                     .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
                 if render && fs::symlink_metadata(&path)?.file_type().is_char_device() {
                     command.arg("--dev-bind").arg(&path).arg(&path);
+                    if desktop.protocol() == LinuxDisplayProtocol::Wayland {
+                        gpu_metadata.expose(&mut command, &path)?;
+                    }
                 }
             }
         }
@@ -304,6 +384,23 @@ impl Drop for BubblewrapProcess {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn wayland_socket_resolution_rejects_traversal_and_missing_runtime() {
+        let runtime = Some(Path::new("/run/user/1000"));
+        assert_eq!(
+            wayland_socket_path(Path::new("wayland-1"), runtime).unwrap(),
+            Path::new("/run/user/1000/wayland-1")
+        );
+        assert_eq!(
+            wayland_socket_path(Path::new("/custom/socket"), None).unwrap(),
+            Path::new("/custom/socket")
+        );
+        for name in ["", ".", "..", "../bus", "sub/socket"] {
+            assert!(wayland_socket_path(Path::new(name), runtime).is_err());
+        }
+        assert!(wayland_socket_path(Path::new("wayland-0"), None).is_err());
+        assert!(wayland_socket_path(Path::new("wayland-0"), Some(Path::new("relative"))).is_err());
+    }
     #[test]
     fn local_display_only() {
         assert_eq!(display_number(":0.1").unwrap(), "0");

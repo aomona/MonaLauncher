@@ -139,7 +139,7 @@ export function PermissionsPanel({
       )}
       {l.permissionSupport?.platform === "linux" && (
         <p className="mt-4 text-small text-text-secondary">
-          LinuxではX11/XWaylandとPulseAudio互換サーバーへの接続を許可します。同じX11画面の他アプリへの操作や、音声サーバーの録音機能へのアクセスも含まれます。ナレーター設定はランチャーの読み上げブローカーに適用します。
+          LinuxではWayland接続を優先し、Wayland使用時はX11接続を公開しません。X11/XWayland使用時は同じ画面の他アプリへの操作も可能です。PulseAudio互換サーバーへの接続は録音機能へのアクセスも含みます。ナレーター設定はランチャーの読み上げブローカーに適用します。
         </p>
       )}
     </>

@@ -42,9 +42,12 @@ Linuxは `Backend::Bubblewrap` へ変換する。`platform/linux` が新しいus
 Linuxの `allow_linux_desktop_compatibility = true` は以下を明示的に受け入れる。falseならLinuxデスクトップ起動を拒否する。
 
 - システム実行環境（`/usr`・ライブラリ・列挙したフォント/loader設定）の読み取り。ホーム全体や `/etc` 全体は公開しない。
-- 選択したX11/XWaylandソケットと認証ファイル。X11の他クライアントの観測・操作を防ぐものではない。Wayland専用セッションは未対応。
+- Waylandを選んだ場合は単一のcompositorソケットだけを公開し、DISPLAY・Xauthority・X11のパス/abstractソケットは公開しない。X11/XWaylandを選んだ場合は従来のソケットと認証ファイルを公開し、他のX11クライアントの観測・操作を防ぐものではない。
+- Waylandでは接続先compositorが提供するプロトコル全体への接続を許す。クリップボード等の権限を分離するプロトコルフィルターやFlatpak型security-contextは未実装であり、ウィンドウ描画だけの許可や全compositor共通のクライアント間隔離を保証しない。
 - 選択したローカルPulseAudio互換ソケット。録音・音声サーバー操作も含まれ、出力専用の権限ではない。外部接続を含むホストサービス経由の間接操作も、直接のネットワークsyscall拒否と区別する。
-- 存在するDRM render node。`/dev/input`・DRM primary node・`/dev/snd`・D-Bus・ホストの `/run/user` 全体は公開しない。
+- 存在するDRM render node。Waylandのlibdrm初期化用に、そのGPUの識別属性（uevent、vendor/device/subsystem IDs、revision、DRM nodeのdev）を個別に読み取り専用bindし、必要なディレクトリ/リンクを再構成する。GPUのprimary nodeの識別情報も含むが、デバイス自体・PCI config/resource・コネクター・ホストのsysfs全体は公開しない。`/dev/input`・DRM primary node・`/dev/snd`・D-Bus・ホストの `/run/user` 全体は公開しない。
+
+`WAYLAND_DISPLAY` またはWaylandの `XDG_SESSION_TYPE` がある場合はWaylandを優先する。名前付きソケットを検証できなければ起動エラーとし、X11へ切り替えない。継承FDを指定する `WAYLAND_SOCKET` は未対応として拒否する。Minecraft 26.2はGLXが明示的にX11を選ぶため、このバージョンのWayland起動だけに検証済みの `MC_DEBUG_ENABLED` / `MC_DEBUG_PREFER_WAYLAND` JVMプロパティを追加する。他バージョンやModのWayland互換性は別途検証が必要。
 
 ナレーターは共通の認証済みstdoutプロトコルを、ホストのeSpeak NGへ渡す。テキストは標準入力で渡し、シェルのコマンドやファイル名に使わない。無効時はブリッジから要求せず、ブローカーも起動しない。一般音声の生成能力やMod独自の音声合成まで禁止する設定ではない。
 

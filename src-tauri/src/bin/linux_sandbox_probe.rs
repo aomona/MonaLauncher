@@ -1,8 +1,22 @@
 //! Exercises the production bubblewrap command using controlled accessible/denied resources.
 #[cfg(target_os = "linux")]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    use monalauncher_lib::{probe::prepare, sandbox::*};
+    use monalauncher_lib::{
+        probe::{prepare, Desktop},
+        sandbox::*,
+    };
     use std::{ffi::OsString, fs, net::TcpListener};
+    let desktop = match std::env::args().nth(1).as_deref() {
+        None => None,
+        Some("--wayland") => {
+            let desktop = Desktop::detect()?;
+            if desktop.protocol() != LinuxDisplayProtocol::Wayland {
+                return Err("Wayland was required for this probe".into());
+            }
+            Some(desktop)
+        }
+        _ => return Err("usage: linux_sandbox_probe [--wayland]".into()),
+    };
     let mut nonce = [0u8; 8];
     getrandom::fill(&mut nonce).map_err(|error| error.to_string())?;
     let root = std::env::temp_dir().join(format!("mona-linux-policy-{:x?}", nonce));
@@ -40,11 +54,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let socket = std::os::unix::net::UnixListener::bind(root.join("host/service"))?;
     let script = resources.libraries.join("probe.py");
     fs::write(&script, include_str!("linux_sandbox_probe.py"))?;
-    let args = vec![
+    let mut args = vec![
         script.as_os_str().to_owned(),
         root.as_os_str().to_owned(),
         OsString::from(tcp.local_addr()?.port().to_string()),
     ];
+    if desktop.is_some() {
+        args.push(OsString::from("wayland"));
+    }
     let baseline = std::process::Command::new("/usr/bin/python3")
         .args(&args)
         .output()?;
@@ -76,8 +93,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 FileAccess::ReadOnly
             },
         )?;
-        let output =
-            prepare(std::path::Path::new("/usr/bin/python3"), &policy, None)?.output(&args)?;
+        let output = prepare(
+            std::path::Path::new("/usr/bin/python3"),
+            &policy,
+            desktop.as_ref(),
+        )?
+        .output(&args)?;
         if !output.status.success() {
             return Err(format!(
                 "sandbox failed to start: {}",
@@ -86,6 +107,37 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .into());
         }
         let result: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+        if desktop.is_some() {
+            if control["wayland_connect"] != true || result["wayland_connect"] != true {
+                return Err("Wayland connection failed in control or sandbox".into());
+            }
+            for check in ["x11_path", "x11_abstract", "session_bus", "sys_network"] {
+                if control[check] != true {
+                    return Err(format!("desktop positive control {check} failed").into());
+                }
+            }
+            for check in [
+                "x11_path",
+                "x11_abstract",
+                "display_env",
+                "xauthority_env",
+                "session_bus",
+                "sys_network",
+                "drm_primary",
+                "input_devices",
+                "gpu_config",
+            ] {
+                if result[check] != false {
+                    return Err(format!("unexpected desktop access {check}: {result}").into());
+                }
+            }
+        }
+        if desktop.is_some()
+            && control["gpu_vendor_read"] == true
+            && (result["gpu_vendor_read"] != true || result["gpu_vendor_readonly_mount"] != true)
+        {
+            return Err("GPU identification must remain readable through read-only mounts".into());
+        }
         for check in [
             "host_read",
             "other_read",

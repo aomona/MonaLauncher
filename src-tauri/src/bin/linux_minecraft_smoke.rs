@@ -38,6 +38,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         return Err("invalid arguments".into());
     }
+    let wayland = monalauncher_lib::probe::Desktop::detect()?.protocol()
+        == monalauncher_lib::sandbox::LinuxDisplayProtocol::Wayland;
     let paths = MinecraftPaths::new(PathBuf::from(root));
     let id = format!("linux-demo-{}", version.replace('.', "-"));
     if !paths.instance_manifest(&id).exists() {
@@ -83,6 +85,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         None
     };
+    let graphics = Arc::new(AtomicBool::new(false));
+    let observed_graphics = graphics.clone();
     let speech = narrator.clone();
     let sound = Arc::new(AtomicBool::new(false));
     let observed_sound = sound.clone();
@@ -100,6 +104,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if line.ends_with("]: Sound engine started") {
                 observed_sound.store(true, Ordering::Relaxed);
             }
+            if line.contains("Using graphics backend OpenGL, using drivers:") {
+                observed_graphics.store(true, Ordering::Relaxed);
+            }
             println!("{line}");
         })
     });
@@ -114,21 +121,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if let Some(status) = spawned.child.try_wait()? {
             return Err(format!("Minecraft exited early: {status}").into());
         }
-        // Read-only X11 inspection in the dedicated guest; never activate or focus a window.
-        let windows = Command::new("/usr/bin/xwininfo")
-            .args(["-root", "-tree"])
-            .output()?;
-        let text = String::from_utf8_lossy(&windows.stdout);
-        if let Some(line) = text
-            .lines()
-            .find(|line| line.contains("\"Minecraft") && line.contains("854x480"))
-        {
-            if let Some(id) = line.split_whitespace().next() {
-                let state = Command::new("/usr/bin/xwininfo")
-                    .args(["-id", id])
-                    .output()?;
-                window_seen |=
-                    String::from_utf8_lossy(&state.stdout).contains("Map State: IsViewable");
+        // Wayland has no universal external window-enumeration API. Its visibility
+        // must be checked separately through the compositor, not inferred from XWayland.
+        if !wayland {
+            // Read-only X11 inspection in the dedicated guest; never activate or focus a window.
+            let windows = Command::new("/usr/bin/xwininfo")
+                .args(["-root", "-tree"])
+                .output()?;
+            let text = String::from_utf8_lossy(&windows.stdout);
+            if let Some(line) = text
+                .lines()
+                .find(|line| line.contains("\"Minecraft") && line.contains("854x480"))
+            {
+                if let Some(id) = line.split_whitespace().next() {
+                    let state = Command::new("/usr/bin/xwininfo")
+                        .args(["-id", id])
+                        .output()?;
+                    window_seen |=
+                        String::from_utf8_lossy(&state.stdout).contains("Map State: IsViewable");
+                }
             }
         }
         let audio = Command::new("/usr/bin/pactl")
@@ -150,9 +161,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let narrator_protocol = protocol_seen.load(Ordering::Relaxed);
     println!(
         "OBSERVATION {}",
-        serde_json::json!({"window_viewable":window_seen, "sound_engine":sound_started, "pulse_java_stream":audio_stream_seen, "narrator_enabled":narrator_enabled, "narrator_protocol":narrator_protocol, "speech_started":speech_counts.0, "speech_completed":speech_counts.1})
+        serde_json::json!({"display_protocol":if wayland {"wayland"} else {"x11"}, "window_viewable":if wayland {None} else {Some(window_seen)}, "graphics_initialized":graphics.load(Ordering::Relaxed), "sound_engine":sound_started, "pulse_java_stream":audio_stream_seen, "narrator_enabled":narrator_enabled, "narrator_protocol":narrator_protocol, "speech_started":speech_counts.0, "speech_completed":speech_counts.1})
     );
-    if !window_seen || !sound_started || !audio_stream_seen {
+    if (!wayland && !window_seen)
+        || (wayland && !graphics.load(Ordering::Relaxed))
+        || !sound_started
+        || !audio_stream_seen
+    {
         return Err("desktop/sound observations incomplete".into());
     }
     if std::env::var_os("MONALAUNCHER_EXPECT_NARRATOR").is_some()
@@ -164,7 +179,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if !narrator_enabled && narrator_protocol {
         return Err("disabled narrator emitted requests".into());
     }
-    println!("SMOKE PASS: production Linux sandbox desktop/audio/narrator policy and shutdown");
+    if wayland {
+        println!("SMOKE PASS: Wayland process/graphics/audio/narrator policy and shutdown; visibility requires separate compositor observation");
+    } else {
+        println!("SMOKE PASS: production Linux sandbox desktop/audio/narrator policy and shutdown");
+    }
     Ok(())
 }
 #[cfg(not(target_os = "linux"))]

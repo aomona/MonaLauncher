@@ -821,7 +821,8 @@ test("Linux exposes common permission controls and desktop compatibility limits"
   await mockDesktop(page, 2, "linux");
   await openSurvival(page);
   await page.getByRole("tab", { name: "Permissions", exact: true }).click();
-  await expect(page.getByText(/LinuxではX11/)).toBeVisible();
+  await expect(page.getByText(/LinuxではWayland接続を優先/)).toBeVisible();
+  await expect(page.getByText(/Wayland使用時はX11接続を公開しません/)).toBeVisible();
   const narrator = page.getByRole("switch", { name: "ナレーター", exact: true });
   await narrator.click();
   await expect(narrator).not.toBeChecked();
