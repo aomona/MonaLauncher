@@ -2,7 +2,7 @@
 
 本番ランチャーから独立した実験用ツール。共通APIの確定前に、同じ操作が各OSのサンドボックスでどう制限されるかを確かめる。ゲーム起動処理や既存AppContainerの設定は変更しない。
 
-採用方針は Windows = AppContainer、macOS = Seatbelt、Linux = bubblewrap + seccomp。現時点の実験用Linuxバックエンドは **namespaceとmountだけ**で、seccomp・GUIはまだ実装していない。この段階の合格を製品のサンドボックス完成とは扱わない。
+採用方針は Windows = AppContainer、macOS = Seatbelt、Linux = bubblewrap + seccomp。現時点の実験用Linuxバックエンドは **namespaceとmountだけ**で、seccompはまだ実装していない。GUIはX11とDRM render nodeを対象に初期検証する。この段階の合格を製品のサンドボックス完成とは扱わない。
 
 ## 再実行
 
@@ -42,6 +42,12 @@ cargo run --manifest-path tools/sandbox-lab/Cargo.toml --locked -- \
 `bwrap`と非特権user namespaceを利用できるホストが必要。利用できなければ失敗として扱い、ホストのsysctlやAppArmor設定を自動変更したり、隔離なしで代替したりしない。[OrbStack上のUbuntu ARM64での実行結果と再実行手順](results/2026-09-12-linux-orbstack.md)を保存済み。
 
 Debian/UbuntuのOpenJDKでは`conf/security/java.security`や`conf/net.properties`がJDK外へのsymlinkになっている。Linuxバックエンドはこの2ファイルの実体を解決し、JDK外の場合にそのファイルだけを読み取り専用で公開する。`/etc`全体やJava設定ディレクトリ全体は公開しない。
+
+### Linux: UTMデスクトップでLWJGLを検証
+
+[UTM環境の作成・実行手順](utm/README.md)を参照。Linux arm64/x64用native JARもダウンローダーの対象。X11デスクトップの`DISPLAY`と`XAUTHORITY`を指定し、macOSと同じ`--lwjgl`オプションで実行する。GUIプロファイルでもファイル・ネットワーク・子プロセスの検証を繰り返す。
+
+X11は選択したローカルUnix socket、描画はDRM render nodeを公開する。一般ネットワークの共有は加えない。X11クライアント間のアクセス、Wayland、音声、入力デバイスの検証は今後の作業。
 
 ### Windows: 既存の検証を維持
 

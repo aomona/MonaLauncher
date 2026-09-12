@@ -31,12 +31,6 @@ pub fn command(root: &Path, java: &Path, program: &Path, gui: bool) -> Result<Co
             Ok(cmd)
         }
         "linux" => {
-            if gui {
-                return Err(
-                    "Linux desktop grants have not been implemented; run the headless probes first"
-                        .into(),
-                );
-            }
             let bwrap = ["/usr/bin/bwrap", "/bin/bwrap"]
                 .iter()
                 .map(PathBuf::from)
@@ -79,6 +73,25 @@ pub fn command(root: &Path, java: &Path, program: &Path, gui: bool) -> Result<Co
             cmd.arg("--bind")
                 .arg(root.join("game"))
                 .arg(root.join("game"));
+            if gui {
+                let (socket, authority) = x11_paths()?;
+                for path in [socket, authority] {
+                    cmd.arg("--ro-bind").arg(&path).arg(&path);
+                }
+                // Render nodes only: no input devices or DRM primary nodes.
+                if let Ok(entries) = std::fs::read_dir("/dev/dri") {
+                    for entry in entries {
+                        let path = entry?.path();
+                        if path.file_name().and_then(|n| n.to_str()).is_some_and(|n| {
+                            n.strip_prefix("renderD").is_some_and(|s| {
+                                !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit())
+                            })
+                        }) {
+                            cmd.arg("--dev-bind").arg(&path).arg(&path);
+                        }
+                    }
+                }
+            }
             cmd.arg("--chdir")
                 .arg(root.join("game"))
                 .arg("--")
@@ -87,6 +100,41 @@ pub fn command(root: &Path, java: &Path, program: &Path, gui: bool) -> Result<Co
         }
         _ => Err("unsupported lab backend".into()),
     }
+}
+
+pub fn gui_environment(cmd: &mut Command) -> Result<()> {
+    if cfg!(target_os = "linux") {
+        let (_, authority) = x11_paths()?;
+        cmd.env("DISPLAY", std::env::var("DISPLAY")?)
+            .env("XAUTHORITY", authority);
+    }
+    Ok(())
+}
+
+fn display_socket(display: &str) -> Result<PathBuf> {
+    let local = display
+        .strip_prefix(':')
+        .ok_or("only local X11 DISPLAY=:N[.S] is supported")?;
+    let mut parts = local.split('.');
+    let number = parts.next().unwrap_or_default();
+    let valid = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    if !valid(number) || parts.next().is_some_and(|s| !valid(s)) || parts.next().is_some() {
+        return Err("invalid local X11 display".into());
+    }
+    Ok(PathBuf::from(format!("/tmp/.X11-unix/X{number}")))
+}
+
+fn x11_paths() -> Result<(PathBuf, PathBuf)> {
+    use std::os::unix::fs::FileTypeExt;
+    let socket = display_socket(&std::env::var("DISPLAY")?)?;
+    if !std::fs::metadata(&socket)?.file_type().is_socket() {
+        return Err("X11 display path must be a socket".into());
+    }
+    let authority = PathBuf::from(std::env::var_os("XAUTHORITY").ok_or("XAUTHORITY is required")?);
+    if !authority.is_absolute() || !authority.is_file() {
+        return Err("XAUTHORITY must be an absolute regular-file path".into());
+    }
+    Ok((socket, std::fs::canonicalize(authority)?))
 }
 
 fn external_java_config_files(java: &Path) -> Result<Vec<PathBuf>> {
@@ -110,6 +158,24 @@ fn external_java_config_files(java: &Path) -> Result<Vec<PathBuf>> {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn x11_display_accepts_only_local_numeric_sockets() {
+        assert_eq!(
+            display_socket(":0.1").unwrap(),
+            PathBuf::from("/tmp/.X11-unix/X0")
+        );
+        for value in [
+            "localhost:0",
+            ":",
+            ":../host",
+            ":0/../../host",
+            ":0.",
+            ":0.1.2",
+        ] {
+            assert!(display_socket(value).is_err(), "{value}");
+        }
+    }
 
     #[test]
     fn distro_java_config_exposes_only_resolved_files() {

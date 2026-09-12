@@ -2,14 +2,15 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
-if (process.platform !== "darwin" || !["arm64", "x64"].includes(process.arch)) {
-  throw new Error("This first LWJGL probe supports macOS arm64/x64 only.");
+if (!["darwin", "linux"].includes(process.platform) || !["arm64", "x64"].includes(process.arch)) {
+  throw new Error("The LWJGL probe supports macOS/Linux arm64/x64 only.");
 }
 const manifest = JSON.parse(
   await readFile(new URL("./lwjgl-artifacts.json", import.meta.url), "utf8"),
 );
-const classifier = process.arch === "arm64" ? "natives-macos-arm64" : "natives-macos";
-const directory = new URL(`./.cache/lwjgl-${process.arch}/`, import.meta.url);
+const os = process.platform === "darwin" ? "macos" : "linux";
+const classifier = `natives-${os}${process.arch === "arm64" ? "-arm64" : ""}`;
+const directory = new URL(`./.cache/lwjgl-${os}-${process.arch}/`, import.meta.url);
 await mkdir(directory, { recursive: true });
 for (const artifact of manifest.artifacts) {
   if (artifact.file.includes("-natives-") && !artifact.file.endsWith(`-${classifier}.jar`))

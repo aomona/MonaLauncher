@@ -1,0 +1,9 @@
+# Lab-only namespace eligibility, following Ubuntu's flatpak profile pattern.
+# This is NOT the file/network confinement policy; bubblewrap supplies those.
+# Install the trusted lab executable here as root before loading this profile.
+abi <abi/4.0>,
+include <tunables/global>
+
+profile monalauncher-sandbox-lab /usr/local/libexec/monalauncher-sandbox-lab flags=(unconfined) {
+  userns,
+}

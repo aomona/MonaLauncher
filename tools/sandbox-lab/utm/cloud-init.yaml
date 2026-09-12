@@ -1,0 +1,44 @@
+#cloud-config
+# Dedicated disposable lab guest; do not use this account policy in production.
+users:
+  - name: mona
+    gecos: MonaLauncher Sandbox Lab
+    groups: [sudo, audio, video, render]
+    shell: /bin/bash
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    lock_passwd: true
+ssh_pwauth: false
+disable_root: true
+growpart:
+  mode: auto
+  devices: ["/"]
+resize_rootfs: true
+write_files:
+  - path: /var/lib/monalauncher/gdm.conf
+    content: |
+      [daemon]
+      AutomaticLoginEnable=true
+      AutomaticLogin=mona
+      WaylandEnable=false
+  - path: /usr/local/sbin/setup-monalauncher-desktop
+    permissions: "0755"
+    content: |
+      #!/bin/sh
+      set -eu
+      export DEBIAN_FRONTEND=noninteractive
+      apt-get update
+      apt-get install -y qemu-guest-agent
+      systemctl start qemu-guest-agent
+      apt-get install -y ubuntu-desktop-minimal linux-generic spice-vdagent \
+        build-essential rustup openjdk-21-jdk bubblewrap mesa-utils \
+        xdotool pulseaudio-utils libopenal1
+      install -m 644 /var/lib/monalauncher/gdm.conf /etc/gdm3/custom.conf
+      printf 'network:\n  version: 2\n  renderer: NetworkManager\n' > /etc/netplan/99-monalauncher-desktop.yaml
+      chmod 600 /etc/netplan/99-monalauncher-desktop.yaml
+      systemctl mask systemd-networkd-wait-online.service
+      systemctl mask spice-vdagentd.service spice-vdagentd.socket
+      systemctl set-default graphical.target
+      touch /var/lib/monalauncher-desktop-ready
+runcmd:
+  - /usr/local/sbin/setup-monalauncher-desktop
+  - [sh, -c, "test -f /var/lib/monalauncher-desktop-ready && reboot"]

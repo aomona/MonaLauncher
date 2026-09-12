@@ -1,0 +1,8 @@
+version: 2
+ethernets:
+  lab:
+    match:
+      macaddress: "06:e1:86:aa:22:60"
+    dhcp4: true
+    dhcp6: false
+    optional: true

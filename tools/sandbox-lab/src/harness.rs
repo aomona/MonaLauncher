@@ -231,7 +231,7 @@ pub fn run(args: &[String]) -> Result<()> {
             "memory / CPU / process limits",
             "Minecraft / mods",
             "audio / keyboard / mouse",
-            "Linux seccomp and desktop permissions",
+            "Linux seccomp / Wayland / X11 cross-client access / desktop service mediation",
             "Windows AppContainer in this run",
         ],
     };
@@ -288,8 +288,11 @@ pub fn run(args: &[String]) -> Result<()> {
                 Command::new(&java)
             };
             let mut cmd = clean(cmd, root);
-            cmd.arg("-XstartOnFirstThread")
-                .arg("-XX:-UsePerfData")
+            if cfg!(target_os = "macos") {
+                cmd.arg("-XstartOnFirstThread");
+            }
+            backend::gui_environment(&mut cmd)?;
+            cmd.arg("-XX:-UsePerfData")
                 .arg(format!("-Djava.io.tmpdir={}", root.join("game").display()))
                 .arg(format!(
                     "-Dorg.lwjgl.system.SharedLibraryExtractPath={}",
@@ -409,8 +412,8 @@ fn lwjgl_classpath(root: &Path) -> Result<std::ffi::OsString> {
 }
 
 fn prepare_lwjgl(root: &Path, java_home: &Path, sources: &Path, jars: &Path) -> Result<()> {
-    if std::env::consts::OS != "macos" {
-        return Err("LWJGL lab currently supports macOS only".into());
+    if !matches!(std::env::consts::OS, "macos" | "linux") {
+        return Err("LWJGL lab supports macOS and Linux only".into());
     }
     fs::create_dir(root.join("runtime/lwjgl"))?;
     for entry in fs::read_dir(jars)? {
