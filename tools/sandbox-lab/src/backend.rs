@@ -71,6 +71,11 @@ pub fn command(root: &Path, java: &Path, program: &Path, gui: bool) -> Result<Co
             ] {
                 cmd.arg("--ro-bind").arg(&path).arg(&path);
             }
+            // Debian/Ubuntu JDK packages symlink these files into /etc. Bind
+            // only their resolved files, not /etc or the entire config tree.
+            for path in external_java_config_files(java)? {
+                cmd.arg("--ro-bind").arg(&path).arg(&path);
+            }
             cmd.arg("--bind")
                 .arg(root.join("game"))
                 .arg(root.join("game"));
@@ -81,5 +86,52 @@ pub fn command(root: &Path, java: &Path, program: &Path, gui: bool) -> Result<Co
             Ok(cmd)
         }
         _ => Err("unsupported lab backend".into()),
+    }
+}
+
+fn external_java_config_files(java: &Path) -> Result<Vec<PathBuf>> {
+    let mut files = Vec::new();
+    for relative in ["conf/security/java.security", "conf/net.properties"] {
+        let resolved = std::fs::canonicalize(java.join(relative))?;
+        if !resolved.is_file() {
+            return Err(format!(
+                "Java configuration is not a regular file: {}",
+                resolved.display()
+            )
+            .into());
+        }
+        if !resolved.starts_with(java) && !files.contains(&resolved) {
+            files.push(resolved);
+        }
+    }
+    Ok(files)
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn distro_java_config_exposes_only_resolved_files() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("mlab-jdk-{}-{nonce}", std::process::id()));
+        std::fs::create_dir(&root).unwrap();
+        let root = std::fs::canonicalize(root).unwrap();
+        let java = root.join("java");
+        std::fs::create_dir_all(java.join("conf/security")).unwrap();
+        let external = root.join("java.security");
+        std::fs::write(&external, "fixture").unwrap();
+        std::fs::write(java.join("conf/net.properties"), "fixture").unwrap();
+        std::os::unix::fs::symlink(&external, java.join("conf/security/java.security")).unwrap();
+        assert_eq!(
+            external_java_config_files(&java).unwrap(),
+            vec![external.clone()]
+        );
+        std::fs::remove_file(external).unwrap();
+        assert!(external_java_config_files(&java).is_err());
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

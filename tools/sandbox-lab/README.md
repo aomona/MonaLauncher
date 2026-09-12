@@ -39,7 +39,9 @@ cargo run --manifest-path tools/sandbox-lab/Cargo.toml --locked -- \
   --report tools/sandbox-lab/reports/linux-headless.json
 ```
 
-`bwrap`と非特権user namespaceを利用できるホストが必要。利用できなければ失敗として扱い、ホストのsysctlやAppArmor設定を自動変更したり、隔離なしで代替したりしない。Linuxの実行結果は今回のMacでの検証には含まれない。
+`bwrap`と非特権user namespaceを利用できるホストが必要。利用できなければ失敗として扱い、ホストのsysctlやAppArmor設定を自動変更したり、隔離なしで代替したりしない。[OrbStack上のUbuntu ARM64での実行結果と再実行手順](results/2026-09-12-linux-orbstack.md)を保存済み。
+
+Debian/UbuntuのOpenJDKでは`conf/security/java.security`や`conf/net.properties`がJDK外へのsymlinkになっている。Linuxバックエンドはこの2ファイルの実体を解決し、JDK外の場合にそのファイルだけを読み取り専用で公開する。`/etc`全体やJava設定ディレクトリ全体は公開しない。
 
 ### Windows: 既存の検証を維持
 
@@ -84,9 +86,9 @@ Windowsの共通fixtureへの接続は次段階。既存のCI・起動実装を�
 
 ## 初回結果と次の作業
 
-[2026-09-12の実機結果](results/2026-09-12-macos.md)を参照。
+[macOS実機結果](results/2026-09-12-macos.md)と[OrbStack Linuxゲストの結果](results/2026-09-12-linux-orbstack.md)を参照。
 
-1. Linux実機で同じヘッドレスfixtureを実行し、カーネル・ディストリビューションと失敗理由を記録する。
+1. 標準カーネル・AppArmorなどの制約が有効なLinux環境でも同じfixtureを実行する。OrbStack上での合格を全ディストリビューションの保証にはしない。
 2. Flatpakの実装を参照し、Linuxのseccomp、Wayland/X11、DRI、音声、D-Busの必要な制約を実装・検証する。
 3. macOSの実機検証を入力・音声・Minecraftへ広げる。現在残っているGUI関連の拒否を、必要な操作と対応付ける。
 4. Windowsの既存AppContainerへ共通fixtureを接続する。
