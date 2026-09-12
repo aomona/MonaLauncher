@@ -1,0 +1,20 @@
+
+; Added only for the explicit LWJGL probe. Headless tests run again under this
+; expanded profile; their results remain separate in the report.
+(allow mach-lookup
+    (global-name "com.apple.windowserver.active")
+    (global-name "com.apple.CARenderServer")
+    (global-name "com.apple.cvmsServ")
+    (global-name "com.apple.coreservices.launchservicesd")
+    (global-name "com.apple.lsd.mapdb")
+    (global-name "com.apple.FontObjectsServer")
+    (global-name "com.apple.fonts")
+    (global-name "com.apple.system.notification_center")
+    (global-name "com.apple.system.logger")
+    (global-name "com.apple.logd")
+    (global-name "com.apple.bsd.dirhelper"))
+(allow iokit-open
+    (iokit-user-client-class "AGXDeviceUserClient")
+    (iokit-user-client-class "IOGPUGLDrawableUserClient")
+    (iokit-user-client-class "IOGPUSurfaceMTL")
+    (iokit-user-client-class "IOSurfaceRootUserClient"))

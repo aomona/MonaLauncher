@@ -1,0 +1,24 @@
+; Experimental Minecraft compatibility profile, not a production policy.
+; Paths are canonicalized by the trusted harness and passed as parameters.
+(version 1)
+(deny default)
+(allow process-fork)
+(allow process-exec (subpath (param "RUNTIME")) (subpath (param "JAVA_HOME")))
+(allow process-info* (target same-sandbox))
+(allow signal (target same-sandbox))
+(allow sysctl-read)
+(allow file-read-metadata)
+(allow file-read* (literal "/"))
+(allow file-read*
+    (subpath "/System/Library")
+    (subpath "/System/Cryptexes")
+    (subpath "/usr/lib")
+    (subpath "/private/var/db/timezone")
+    (subpath (param "JAVA_HOME"))
+    (subpath (param "RUNTIME"))
+    (subpath (param "SHARED"))
+    (subpath (param "INSTANCE")))
+(allow file-read* file-write* (subpath (param "GAME")))
+(allow file-read* file-write* (literal "/dev/null"))
+(allow file-read* (literal "/dev/random") (literal "/dev/urandom"))
+; IP networking and host Unix sockets receive no grant.

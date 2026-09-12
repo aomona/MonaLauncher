@@ -1,0 +1,50 @@
+{
+  "version": "3.3.3",
+  "artifacts": [
+    {
+      "file": "lwjgl-3.3.3.jar",
+      "url": "https://repo.maven.apache.org/maven2/org/lwjgl/lwjgl/3.3.3/lwjgl-3.3.3.jar",
+      "sha256": "dc9c7b2d48e8396d68895f8902ffa01e46253de44dfe927533ff09457ebfeec4"
+    },
+    {
+      "file": "lwjgl-3.3.3-natives-macos-arm64.jar",
+      "url": "https://repo.maven.apache.org/maven2/org/lwjgl/lwjgl/3.3.3/lwjgl-3.3.3-natives-macos-arm64.jar",
+      "sha256": "50ac9ca09e59f051dcacf4dc0b2145e9e916e6ab14633b75694231bfe59314a8"
+    },
+    {
+      "file": "lwjgl-3.3.3-natives-macos.jar",
+      "url": "https://repo.maven.apache.org/maven2/org/lwjgl/lwjgl/3.3.3/lwjgl-3.3.3-natives-macos.jar",
+      "sha256": "0294ee4e2dd7ef6befaffafc0bb99a2a89b76070b5cd8302f3d75624b6786d03"
+    },
+    {
+      "file": "lwjgl-glfw-3.3.3.jar",
+      "url": "https://repo.maven.apache.org/maven2/org/lwjgl/lwjgl-glfw/3.3.3/lwjgl-glfw-3.3.3.jar",
+      "sha256": "bedc757fd2b1b255146db26b74b9cbd1fcf5644b89b47b104fa721c741604259"
+    },
+    {
+      "file": "lwjgl-glfw-3.3.3-natives-macos-arm64.jar",
+      "url": "https://repo.maven.apache.org/maven2/org/lwjgl/lwjgl-glfw/3.3.3/lwjgl-glfw-3.3.3-natives-macos-arm64.jar",
+      "sha256": "b9451d67bc17c906fb8282a5522f258b022f30569e0b62da001d590a17b45e19"
+    },
+    {
+      "file": "lwjgl-glfw-3.3.3-natives-macos.jar",
+      "url": "https://repo.maven.apache.org/maven2/org/lwjgl/lwjgl-glfw/3.3.3/lwjgl-glfw-3.3.3-natives-macos.jar",
+      "sha256": "a89b55362aec9e5a3bbd1364601bb85b147db6bae68891ca9a232d6cfb2d55ec"
+    },
+    {
+      "file": "lwjgl-opengl-3.3.3.jar",
+      "url": "https://repo.maven.apache.org/maven2/org/lwjgl/lwjgl-opengl/3.3.3/lwjgl-opengl-3.3.3.jar",
+      "sha256": "5062da750e5f7ec89e27e8b67b7d40fa8c4b16890159e35f828116ce6c8eca1e"
+    },
+    {
+      "file": "lwjgl-opengl-3.3.3-natives-macos-arm64.jar",
+      "url": "https://repo.maven.apache.org/maven2/org/lwjgl/lwjgl-opengl/3.3.3/lwjgl-opengl-3.3.3-natives-macos-arm64.jar",
+      "sha256": "f1b3f1de83f973abae3a4bc32db5b229ae5d55cc80dbbc5f7c841812fe20b5fe"
+    },
+    {
+      "file": "lwjgl-opengl-3.3.3-natives-macos.jar",
+      "url": "https://repo.maven.apache.org/maven2/org/lwjgl/lwjgl-opengl/3.3.3/lwjgl-opengl-3.3.3-natives-macos.jar",
+      "sha256": "4c1073d0e5ae99966d0ef1d6a7795758476d247d930fdc5ec1865e38cb847cce"
+    }
+  ]
+}
