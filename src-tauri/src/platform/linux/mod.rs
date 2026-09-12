@@ -14,7 +14,7 @@ use std::process::{Child, Command, ExitStatus, Output, Stdio};
 /// Only the selected display service is exposed, alongside local PulseAudio.
 pub struct Desktop {
     display: DisplayConnection,
-    pulse: PathBuf,
+    pulse: Option<PathBuf>,
 }
 #[derive(Debug)]
 enum DisplayConnection {
@@ -35,6 +35,9 @@ impl Desktop {
         }
     }
     pub fn detect() -> io::Result<Self> {
+        Self::detect_with_audio(true)
+    }
+    pub fn detect_with_audio(audio_output: bool) -> io::Result<Self> {
         if std::env::var_os("WAYLAND_SOCKET").is_some() {
             return Err(io::Error::other(
                 "inherited WAYLAND_SOCKET is unsupported; use a named Wayland socket",
@@ -74,15 +77,22 @@ impl Desktop {
                 authority: fs::canonicalize(authority)?,
             }
         };
-        let pulse = match std::env::var("PULSE_SERVER") {
-            Ok(server) => PathBuf::from(server.strip_prefix("unix:").ok_or_else(|| {
-                io::Error::other("sandbox audio requires a local unix: PULSE_SERVER")
-            })?),
-            Err(_) => runtime
-                .ok_or_else(|| io::Error::other("XDG_RUNTIME_DIR is required for desktop audio"))?
-                .join("pulse/native"),
+        let pulse = if audio_output {
+            let pulse = match std::env::var("PULSE_SERVER") {
+                Ok(server) => PathBuf::from(server.strip_prefix("unix:").ok_or_else(|| {
+                    io::Error::other("sandbox audio requires a local unix: PULSE_SERVER")
+                })?),
+                Err(_) => runtime
+                    .ok_or_else(|| {
+                        io::Error::other("XDG_RUNTIME_DIR is required for desktop audio")
+                    })?
+                    .join("pulse/native"),
+            };
+            require_socket(&pulse)?;
+            Some(pulse)
+        } else {
+            None
         };
-        require_socket(&pulse)?;
         Ok(Self { display, pulse })
     }
 }
@@ -194,7 +204,10 @@ pub fn prepare(
         ));
     }
     let filter_path = resources.launch.join("seccomp.bpf");
-    fs::write(&filter_path, seccomp::program()?)?;
+    fs::write(
+        &filter_path,
+        seccomp::program(policy.network == crate::sandbox::NetworkAccess::Internet)?,
+    )?;
     let filter = File::open(filter_path)?;
     let fd = filter.as_raw_fd();
     let mut command = Command::new(bwrap);
@@ -207,6 +220,19 @@ pub fn prepare(
         "--cap-drop",
         "ALL",
     ]);
+    if policy.network == crate::sandbox::NetworkAccess::Internet {
+        command.arg("--share-net");
+        for path in [
+            "/etc/resolv.conf",
+            "/etc/hosts",
+            "/etc/nsswitch.conf",
+            "/etc/ssl/certs",
+        ] {
+            if Path::new(path).exists() {
+                command.args(["--ro-bind", path, path]);
+            }
+        }
+    }
     for path in [
         "/usr",
         "/bin",
@@ -279,16 +305,28 @@ pub fn prepare(
                     .env("XDG_SESSION_TYPE", "wayland");
             }
         }
-        command
-            .arg("--ro-bind")
-            .arg(&desktop.pulse)
-            .arg("/run/mona/pulse");
-        let config = resources.launch.join("pulse-client.conf");
-        fs::write(&config, "enable-shm=no\nautospawn=no\n")?;
-        command
-            .env("PULSE_SERVER", "unix:/run/mona/pulse")
-            .env("PULSE_CLIENTCONFIG", config)
-            .env("ALSOFT_DRIVERS", "pulse");
+        if policy.desktop.audio_output {
+            command
+                .arg("--ro-bind")
+                .arg(
+                    desktop
+                        .pulse
+                        .as_ref()
+                        .ok_or_else(|| io::Error::other("audio socket was not selected"))?,
+                )
+                .arg("/run/mona/pulse");
+            let config = resources.launch.join("pulse-client.conf");
+            fs::write(&config, "enable-shm=no\nautospawn=no\n")?;
+            command
+                .env("PULSE_SERVER", "unix:/run/mona/pulse")
+                .env("PULSE_CLIENTCONFIG", config)
+                .env("ALSOFT_DRIVERS", "pulse");
+        } else {
+            // No server socket, autospawn or ALSA device; keep ordinary audio separate from narration.
+            command
+                .env("PULSE_SERVER", "unix:/run/mona/audio-disabled")
+                .env("ALSOFT_DRIVERS", "pulse");
+        }
         let mut gpu_metadata = graphics::Metadata::default();
         if let Ok(entries) = fs::read_dir("/dev/dri") {
             for entry in entries {
@@ -410,7 +448,7 @@ mod tests {
     }
     #[test]
     fn seccomp_has_complete_instructions() {
-        let bytes = seccomp::program().unwrap();
+        let bytes = seccomp::program(false).unwrap();
         assert_eq!(bytes.len() % 8, 0);
         assert!(bytes.len() / 8 < 4096);
     }

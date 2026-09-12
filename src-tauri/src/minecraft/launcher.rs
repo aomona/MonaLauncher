@@ -623,7 +623,7 @@ fn spawn_sandboxed(
     policy: &crate::sandbox::SandboxPolicy,
 ) -> Result<SpawnedMinecraft, MinecraftLaunchError> {
     let java = fs::canonicalize(&instance.java_path)?;
-    let desktop = crate::platform::linux::Desktop::detect()?;
+    let desktop = crate::platform::linux::Desktop::detect_with_audio(policy.desktop.audio_output)?;
     let arguments = linux_display_arguments(&instance.version_id, desktop.protocol(), arguments);
     let command = crate::platform::linux::prepare(&java, policy, Some(&desktop))?;
     let mut child = command.spawn(&arguments, sandbox.launch_root.clone())?;

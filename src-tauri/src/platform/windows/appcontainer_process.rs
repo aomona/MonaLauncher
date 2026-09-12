@@ -16,13 +16,18 @@ use windows::Win32::Foundation::{
     CloseHandle, SetHandleInformation, ERROR_INSUFFICIENT_BUFFER, HANDLE, HANDLE_FLAG_INHERIT,
     STILL_ACTIVE, WAIT_OBJECT_0,
 };
-use windows::Win32::Security::{SECURITY_ATTRIBUTES, SECURITY_CAPABILITIES};
+use windows::Win32::Foundation::{LocalFree, HLOCAL};
+use windows::Win32::Security::Authorization::ConvertStringSidToSidW;
+use windows::Win32::Security::{
+    PSID, SECURITY_ATTRIBUTES, SECURITY_CAPABILITIES, SID_AND_ATTRIBUTES,
+};
 use windows::Win32::System::JobObjects::{
     AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
     SetInformationJobObject, TerminateJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
     JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
 };
 use windows::Win32::System::Pipes::CreatePipe;
+use windows::Win32::System::SystemServices::SE_GROUP_ENABLED;
 use windows::Win32::System::Threading::{
     CreateProcessW, DeleteProcThreadAttributeList, GetExitCodeProcess,
     InitializeProcThreadAttributeList, ResumeThread, TerminateProcess, UpdateProcThreadAttribute,
@@ -32,7 +37,7 @@ use windows::Win32::System::Threading::{
     STARTF_USESTDHANDLES, STARTUPINFOEXW,
 };
 
-use super::appcontainer_profile::{derive_appcontainer_sid, AppContainerProfileError, OwnedSid};
+use super::appcontainer_profile::{derive_appcontainer_sid, AppContainerProfileError};
 use super::cursor_broker::CursorBroker;
 use super::process_token::{process_token_info, ProcessTokenError, ProcessTokenInfo};
 use super::sandbox_drive::SandboxDrive;
@@ -201,11 +206,17 @@ pub(crate) fn launch_with_policy(
     current_directory: &Path,
     policy: &crate::sandbox::SandboxPolicy,
 ) -> Result<SpawnedAppContainerProcess, AppContainerProcessError> {
-    // The low-level launcher supplies no capabilities. Reject any network request it cannot honor.
+    // Validate the shared policy before assigning explicit network capabilities.
     policy
         .compile(crate::sandbox::Backend::AppContainer)
         .map_err(AppContainerProcessError::Policy)?;
-    launch_in_appcontainer(profile_name, executable, arguments, current_directory)
+    launch_with_network(
+        profile_name,
+        executable,
+        arguments,
+        current_directory,
+        policy.network == crate::sandbox::NetworkAccess::Internet,
+    )
 }
 
 pub fn launch_in_appcontainer(
@@ -214,6 +225,22 @@ pub fn launch_in_appcontainer(
     arguments: &[OsString],
     current_directory: &Path,
 ) -> Result<SpawnedAppContainerProcess, AppContainerProcessError> {
+    launch_with_network(
+        profile_name,
+        executable,
+        arguments,
+        current_directory,
+        false,
+    )
+}
+
+fn launch_with_network(
+    profile_name: &str,
+    executable: &Path,
+    arguments: &[OsString],
+    current_directory: &Path,
+    network: bool,
+) -> Result<SpawnedAppContainerProcess, AppContainerProcessError> {
     if executable.as_os_str().is_empty() {
         return Err(AppContainerProcessError::EmptyExecutablePath);
     }
@@ -221,7 +248,31 @@ pub fn launch_in_appcontainer(
     let app_container_sid = derive_appcontainer_sid(profile_name)?;
     let job = kill_on_close_job()?;
     let attribute_list = AttributeList::new(2)?;
-    let security_capabilities = security_capabilities(&app_container_sid);
+    let network_sids = if network {
+        ["S-1-15-3-1", "S-1-15-3-2", "S-1-15-3-3"]
+            .into_iter()
+            .map(LocalSid::parse)
+            .collect::<Result<Vec<_>, _>>()?
+    } else {
+        vec![]
+    };
+    let mut capabilities: Vec<_> = network_sids
+        .iter()
+        .map(|sid| SID_AND_ATTRIBUTES {
+            Sid: sid.0,
+            Attributes: SE_GROUP_ENABLED as u32,
+        })
+        .collect();
+    let security_capabilities = SECURITY_CAPABILITIES {
+        AppContainerSid: app_container_sid.as_raw(),
+        Capabilities: if capabilities.is_empty() {
+            std::ptr::null_mut()
+        } else {
+            capabilities.as_mut_ptr()
+        },
+        CapabilityCount: capabilities.len() as u32,
+        Reserved: 0,
+    };
 
     // SAFETY: all pointers remain valid until CreateProcessW returns.
     unsafe {
@@ -466,12 +517,25 @@ fn appcontainer_environment_variable_allowed(name: &OsStr) -> bool {
     )
 }
 
-fn security_capabilities(app_container_sid: &OwnedSid) -> SECURITY_CAPABILITIES {
-    SECURITY_CAPABILITIES {
-        AppContainerSid: app_container_sid.as_raw(),
-        Capabilities: std::ptr::null_mut(),
-        CapabilityCount: 0,
-        Reserved: 0,
+// ConvertStringSidToSidW allocations require LocalFree (not FreeSid).
+struct LocalSid(PSID);
+impl LocalSid {
+    fn parse(value: &str) -> Result<Self, WindowsError> {
+        let text: Vec<u16> = value.encode_utf16().chain([0]).collect();
+        let mut sid = PSID::default();
+        // SAFETY: text is NUL-terminated; sid is a valid output pointer.
+        unsafe {
+            ConvertStringSidToSidW(PCWSTR(text.as_ptr()), &mut sid)?;
+        }
+        Ok(Self(sid))
+    }
+}
+impl Drop for LocalSid {
+    fn drop(&mut self) {
+        // SAFETY: this object exclusively owns the allocation returned by conversion.
+        unsafe {
+            let _ = LocalFree(Some(HLOCAL(self.0 .0)));
+        }
     }
 }
 

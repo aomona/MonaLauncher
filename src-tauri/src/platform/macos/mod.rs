@@ -69,6 +69,14 @@ pub fn command(java: &Path, policy: &SandboxPolicy) -> io::Result<Command> {
             .ok_or_else(|| io::Error::other("Seatbelt requires UTF-8 paths"))?;
         command.arg("-D").arg(format!("{key}={value}"));
     }
+    for (index, path) in policy.readonly_game_directories().iter().enumerate() {
+        let value = path
+            .to_str()
+            .ok_or_else(|| io::Error::other("Seatbelt requires UTF-8 paths"))?;
+        command
+            .arg("-D")
+            .arg(format!("GAME_READONLY_{index}={value}"));
+    }
     command.arg("-p").arg(profile).arg(java);
     command
         .env_clear()
@@ -96,6 +104,74 @@ pub fn spawn(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn network_and_desktop_service_permissions_are_enforced() {
+        let root =
+            std::env::temp_dir().join(format!("mona-service-permissions-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let root = fs::canonicalize(root).unwrap();
+        for path in [
+            "java",
+            "versions/one",
+            "libraries",
+            "assets",
+            "game",
+            "launch/tmp",
+        ] {
+            fs::create_dir_all(root.join(path)).unwrap();
+        }
+        let source = root.join("java/probe.c");
+        let executable = root.join("java/probe");
+        fs::write(&source, include_str!("permissions_probe.c")).unwrap();
+        assert!(Command::new("/usr/bin/clang")
+            .arg(&source)
+            .args(["-lsandbox", "-o"])
+            .arg(&executable)
+            .status()
+            .unwrap()
+            .success());
+        let mut policy = SandboxPolicy::minecraft(crate::sandbox::SandboxResources {
+            data_root: root.clone(),
+            runtimes_root: root.clone(),
+            versions_root: root.join("versions"),
+            instance_root: root.clone(),
+            java_home: root.join("java"),
+            libraries: root.join("libraries"),
+            assets: root.join("assets"),
+            version: root.join("versions/one"),
+            game: root.join("game"),
+            launch: root.join("launch"),
+            temp: root.join("launch/tmp"),
+        })
+        .unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        for enabled in [false, true] {
+            policy.network = if enabled {
+                crate::sandbox::NetworkAccess::Internet
+            } else {
+                crate::sandbox::NetworkAccess::Denied
+            };
+            policy.desktop.audio_output = enabled;
+            policy.desktop.microphone = enabled;
+            policy.desktop.clipboard = enabled;
+            let output = command(&executable, &policy)
+                .unwrap()
+                .arg(listener.local_addr().unwrap().port().to_string())
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+            for key in ["network", "audio", "clipboard", "microphone_policy"] {
+                assert_eq!(result[key], i32::from(enabled), "{key}: {result}");
+            }
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn seatbelt_confines_files_and_inherits_into_children() {
@@ -148,6 +224,7 @@ mod tests {
         assert!(!root.join("libraries/new").exists());
         assert!(!root.join("other/new").exists());
         let read_only = policy
+            .clone()
             .with_file_access(Resource::Game, crate::sandbox::FileAccess::ReadOnly)
             .unwrap();
         let output = command(Path::new("/bin/sh"), &read_only)
@@ -165,6 +242,36 @@ mod tests {
             "read-only game policy was not enforced"
         );
         assert!(!root.join("game/blocked").exists());
+        fs::remove_file(root.join("game/escape")).unwrap();
+        let granular = policy
+            .with_readonly_game_directories(&[crate::sandbox::GameDirectory::Worlds])
+            .unwrap();
+        fs::write(root.join("game/saves/existing"), "protected").unwrap();
+        let output = command(Path::new("/bin/sh"), &granular)
+            .unwrap()
+            .args([
+                "-c",
+                r#"
+            set -eu
+            printf allowed > "$1/game/other"
+            if (printf denied > "$1/game/saves/new"); then exit 20; fi
+            if (printf denied > "$1/game/saves/existing"); then exit 21; fi
+            if /bin/mv "$1/game/saves" "$1/game/renamed"; then exit 22; fi
+        "#,
+                "probe",
+            ])
+            .arg(&root)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            fs::read(root.join("game/saves/existing")).unwrap(),
+            b"protected"
+        );
         fs::remove_dir_all(root).unwrap();
     }
 }

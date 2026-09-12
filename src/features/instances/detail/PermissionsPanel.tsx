@@ -1,4 +1,5 @@
 import { useId, useState } from "react";
+import { permissionGroups, unavailableReason } from "./permissionDefinitions";
 import type { Launcher } from "../../../app/useLauncher";
 import { Button } from "../../../components/Button";
 import { ErrorMessage } from "../../../components/ErrorMessage";
@@ -15,20 +16,6 @@ type Model = Pick<
   | "permissionSupportError"
   | "refreshPermissionSupport"
 >;
-const permissions = [
-  {
-    key: "gameWrite",
-    label: "ゲームデータへの書き込み",
-    description:
-      "このインスタンスのワールド・設定・ログなどを保存します。無効にすると保存できず、ゲームが起動しない場合もあります。",
-  },
-  {
-    key: "narrator",
-    label: "ナレーター",
-    description:
-      "ゲームとModからのテキスト読み上げを許可します。通常の効果音や音楽には影響しません。",
-  },
-] as const;
 
 export function PermissionsPanel({
   launcher: l,
@@ -45,6 +32,7 @@ export function PermissionsPanel({
   const instance = l.selected!;
   const disabled =
     Boolean(l.busy) ||
+    saving !== null ||
     l.isRunning ||
     l.modOperationActive ||
     !instance.sandboxed ||
@@ -83,52 +71,106 @@ export function PermissionsPanel({
       {l.permissionSupport && !l.permissionSupport.editable && (
         <p className="mt-3 text-small">このOSの権限設定はまだ未対応です。</p>
       )}
-      {permissions.map(({ key, label, description }) => (
-        <div key={key} className="setting-row flex-col shell:flex-row">
-          <div className="min-w-0 flex-1">
-            <label id={`${id}-${key}-label`} htmlFor={`${id}-${key}`} className="text-navigation">
-              {label}
-            </label>
-            <p id={`${id}-${key}-description`} className="mt-1 text-small text-text-secondary">
-              {description}
-            </p>
-            {failed?.key === key && (
-              <div className="mt-2 flex flex-wrap items-center gap-2 text-small">
-                <span>保存できなかったため、元の設定を維持しています。</span>
-                <Button disabled={disabled} onClick={() => void save(key, failed.value)}>
-                  再試行
-                </Button>
+      {permissionGroups.map((group) => (
+        <section key={group.label} aria-label={group.label} className="mt-6">
+          <h4 className="text-navigation">{group.label}</h4>
+          {group.items.map((item) => {
+            const { key, label, description } = item;
+            const unavailable = unavailableReason(item, l.permissionSupport);
+            const Label = unavailable ? "span" : "label";
+            const incompatible =
+              unavailable &&
+              l.permissionSupport?.editable &&
+              (key === "audioOutput" ? !instance.permissions[key] : instance.permissions[key]);
+            const dependency =
+              item.file && !instance.permissions.gameWrite
+                ? "ゲーム全体の書き込みがOFFのため、読み取り専用です。"
+                : key === "microphone" &&
+                    !instance.permissions.audioOutput &&
+                    !instance.permissions.microphone
+                  ? "通常音声をONにすると変更できます。"
+                  : key === "audioOutput" && instance.permissions.microphone
+                    ? "通常音声をOFFにするには、先にマイクをOFFにしてください。"
+                    : null;
+            return (
+              <div key={key} className="setting-row flex-col shell:flex-row">
+                <div className="min-w-0 flex-1">
+                  <Label
+                    id={`${id}-${key}-label`}
+                    htmlFor={unavailable ? undefined : `${id}-${key}`}
+                    className="text-navigation"
+                  >
+                    {label}
+                  </Label>
+                  <p
+                    id={`${id}-${key}-description`}
+                    className="mt-1 text-small text-text-secondary"
+                  >
+                    {description}
+                    {dependency && <span className="block mt-1">{dependency}</span>}
+                    {unavailable && <span className="block mt-1">{unavailable}</span>}
+                  </p>
+                  {incompatible && (
+                    <div className="mt-2 text-small">
+                      <p>別のOSの設定が残っているため、このままでは起動できません。</p>
+                      <Button
+                        disabled={disabled}
+                        onClick={() => void save(key, key === "audioOutput")}
+                      >
+                        {key === "audioOutput"
+                          ? "通常音声を許可に戻す"
+                          : `${label}の追加許可を解除`}
+                      </Button>
+                    </div>
+                  )}
+                  {failed?.key === key && (
+                    <div
+                      id={`${id}-${key}-error`}
+                      className="mt-2 flex flex-wrap items-center gap-2 text-small"
+                    >
+                      <span>保存できなかったため、元の設定を維持しています。</span>
+                      <Button disabled={disabled} onClick={() => void save(key, failed.value)}>
+                        再試行
+                      </Button>
+                    </div>
+                  )}
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <span className="text-small" aria-hidden="true">
+                    {unavailable
+                      ? "個別制御未対応"
+                      : item.file && !instance.permissions.gameWrite
+                        ? "読み取り専用"
+                        : instance.permissions[key]
+                          ? "許可"
+                          : "不許可"}
+                  </span>
+                  {!unavailable && (
+                    <Switch
+                      id={`${id}-${key}`}
+                      aria-labelledby={`${id}-${key}-label`}
+                      aria-describedby={`${id}-${key}-description${failed?.key === key ? ` ${id}-${key}-error` : ""}`}
+                      aria-invalid={failed?.key === key || undefined}
+                      checked={instance.permissions[key]}
+                      disabled={disabled || Boolean(dependency)}
+                      onCheckedChange={(value) => void save(key, value)}
+                    />
+                  )}
+                </div>
               </div>
-            )}
-          </div>
-          <div className="flex shrink-0 items-center gap-2">
-            <span className="text-small" aria-hidden="true">
-              {instance.permissions[key] ? "許可" : "不許可"}
-            </span>
-            <Switch
-              id={`${id}-${key}`}
-              aria-labelledby={`${id}-${key}-label`}
-              aria-describedby={`${id}-${key}-description`}
-              checked={instance.permissions[key]}
-              disabled={disabled}
-              onCheckedChange={(value) => void save(key, value)}
-            />
-          </div>
-        </div>
+            );
+          })}
+        </section>
       ))}
       <h3 className="mt-8 text-section-title">固定の権限</h3>
       <p className="mt-2 text-small text-text-secondary">以下は現在変更できません。</p>
       <dl className="mt-2">
         <div className="setting-row">
-          <dt>ゲームのネットワーク通信</dt>
-          <dd className="text-small">不許可</dd>
-        </div>
-        <div className="setting-row">
           <dt>Java・ライブラリ・アセット</dt>
           <dd className="text-small">読み取り専用</dd>
         </div>
         <div className="setting-row">
-          <dt>画面・キーボード・マウス・通常音声</dt>
+          <dt>画面・キーボード・マウス</dt>
           <dd className="text-small">許可</dd>
         </div>
       </dl>

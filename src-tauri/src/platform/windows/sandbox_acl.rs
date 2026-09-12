@@ -112,6 +112,10 @@ pub fn grant_policy_access(
     let plan = policy
         .compile(Backend::AppContainer)
         .map_err(|error| SandboxAclError::Policy(error.to_string()))?;
+    // Never recurse ACL changes through game-controlled junctions or symlinks.
+    crate::sandbox::game_files::validate_tree(&policy.resources().game)
+        .map_err(|e| SandboxAclError::Policy(e.to_string()))?;
+    update_deny(&policy.resources().game, appcontainer_sid, None, true)?;
     for path in &plan.traverse {
         grant(path, appcontainer_sid, "RX", false)?;
     }
@@ -134,6 +138,56 @@ pub fn grant_policy_access(
                 set_integrity_level(&file.path, "L")?;
             }
         }
+    }
+    if !policy.readonly_game_directories().is_empty() {
+        // Parent DELETE_CHILD must not allow replacement of a protected directory.
+        update_deny(
+            &policy.resources().game,
+            appcontainer_sid,
+            Some("(DC)"),
+            false,
+        )?;
+        for path in policy.readonly_game_directories() {
+            update_deny(
+                path,
+                appcontainer_sid,
+                Some("(OI)(CI)(WD,AD,WEA,WA,DE,DC,WDAC,WO)"),
+                true,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn update_deny(
+    path: &Path,
+    sid: &str,
+    rights: Option<&str>,
+    recursive: bool,
+) -> Result<(), SandboxAclError> {
+    let mut command = Command::new("icacls.exe");
+    command.arg(path);
+    if let Some(rights) = rights {
+        command.arg("/deny").arg(format!("*{sid}:{rights}"));
+    } else {
+        command.arg("/remove:d").arg(format!("*{sid}"));
+    }
+    if recursive {
+        command.arg("/T");
+    }
+    let output = command
+        .args(["/L", "/Q"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()?;
+    if !output.status.success() {
+        return Err(SandboxAclError::GrantFailed {
+            path: path.to_owned(),
+            details: format!(
+                "{}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            ),
+        });
     }
     Ok(())
 }

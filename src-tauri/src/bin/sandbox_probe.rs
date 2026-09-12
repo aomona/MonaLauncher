@@ -66,12 +66,22 @@ struct AclProbeResult {
     fabric_profile_writable: bool,
     mod_registry_writable: bool,
     game_writable: bool,
+    game_areas: Vec<GameAreaProbe>,
     launch_directory_writable: bool,
     shared_file_readable: bool,
     shared_file_writable: bool,
     java_readable: bool,
     java_writable: bool,
     other_manifest_readable: bool,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct GameAreaProbe {
+    name: String,
+    readable: bool,
+    writable: bool,
+    creatable: bool,
+    renamable: bool,
 }
 
 #[cfg(windows)]
@@ -191,62 +201,95 @@ fn run_acl_probe_in(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     // below must replace it, including on existing metadata files, rather than merely adding a
     // narrower ACE alongside it.
     grant_legacy_instance_access(&paths.instance(instance_id), &profile.sid)?;
-    let policy = monalauncher_lib::minecraft::sandbox_policy::policy_for_instance(
-        &paths,
-        &instance,
-        &launch_directory,
-    )?;
-    grant_policy_access(&policy, &profile.sid)?;
-    lock_sandbox_launch_directory(&launch_directory, &profile.sid)?;
+    for name in [
+        "saves",
+        "screenshots",
+        "resourcepacks",
+        "shaderpacks",
+        "mods",
+        "config",
+        "logs",
+    ] {
+        let path = paths.instance_game_directory(instance_id).join(name);
+        fs::create_dir_all(&path)?;
+        fs::write(path.join("fixture"), b"fixture")?;
+    }
+    for (game_write, areas_write) in [(true, true), (true, false), (true, true), (false, true)] {
+        let mut instance = instance.clone();
+        instance.permissions.game_write = game_write;
+        instance.permissions.worlds_write = areas_write;
+        instance.permissions.screenshots_write = areas_write;
+        instance.permissions.resource_packs_write = areas_write;
+        instance.permissions.shader_packs_write = areas_write;
+        instance.permissions.mods_write = areas_write;
+        instance.permissions.config_write = areas_write;
+        instance.permissions.logs_write = areas_write;
+        let policy = monalauncher_lib::minecraft::sandbox_policy::policy_for_instance(
+            &paths,
+            &instance,
+            &launch_directory,
+        )?;
+        grant_policy_access(&policy, &profile.sid)?;
+        lock_sandbox_launch_directory(&launch_directory, &profile.sid)?;
 
-    let executable = std::env::current_exe()?;
-    let drive = SandboxDrive::create(root)?;
-    let alias_root = drive.root().to_owned();
-    let alias_launch_directory = alias_root.join("instances/acl-test/sandbox-launches/probe");
-    let arguments = [
-        OsString::from("--acl-child"),
-        alias_root.as_os_str().to_owned(),
-        OsString::from(instance_id),
-        OsString::from(other_instance_id),
-        alias_launch_directory.as_os_str().to_owned(),
-    ];
-    let mut child = launch_in_appcontainer(
-        &profile_name,
-        &executable,
-        &arguments,
-        executable.parent().unwrap_or_else(|| Path::new(".")),
-    )?;
-    child.retain_sandbox_drive(drive);
-    let mut stdout = child
-        .take_stdout()
-        .ok_or("ACL probe stdout is unavailable")?;
-    let mut stderr = child
-        .take_stderr()
-        .ok_or("ACL probe stderr is unavailable")?;
-    let status = child.wait()?;
-    let mut stdout_text = String::new();
-    let mut stderr_text = String::new();
-    stdout.read_to_string(&mut stdout_text)?;
-    stderr.read_to_string(&mut stderr_text)?;
-    if !status.success() || !stderr_text.trim().is_empty() {
-        return Err(format!("ACL probe child failed ({status}): {}", stderr_text.trim()).into());
+        let executable = std::env::current_exe()?;
+        let drive = SandboxDrive::create(root)?;
+        let alias_root = drive.root().to_owned();
+        let alias_launch_directory = alias_root.join("instances/acl-test/sandbox-launches/probe");
+        let arguments = [
+            OsString::from("--acl-child"),
+            alias_root.as_os_str().to_owned(),
+            OsString::from(instance_id),
+            OsString::from(other_instance_id),
+            alias_launch_directory.as_os_str().to_owned(),
+        ];
+        let mut child = launch_in_appcontainer(
+            &profile_name,
+            &executable,
+            &arguments,
+            executable.parent().unwrap_or_else(|| Path::new(".")),
+        )?;
+        child.retain_sandbox_drive(drive);
+        let mut stdout = child
+            .take_stdout()
+            .ok_or("ACL probe stdout is unavailable")?;
+        let mut stderr = child
+            .take_stderr()
+            .ok_or("ACL probe stderr is unavailable")?;
+        let status = child.wait()?;
+        let mut stdout_text = String::new();
+        let mut stderr_text = String::new();
+        stdout.read_to_string(&mut stdout_text)?;
+        stderr.read_to_string(&mut stderr_text)?;
+        if !status.success() || !stderr_text.trim().is_empty() {
+            return Err(
+                format!("ACL probe child failed ({status}): {}", stderr_text.trim()).into(),
+            );
+        }
+        let report: AclProbeResult = serde_json::from_str(stdout_text.trim())?;
+        let expected = report.manifest_readable
+            && !report.manifest_writable
+            && !report.fabric_profile_writable
+            && !report.mod_registry_writable
+            && report.game_writable == game_write
+            && report.game_areas.len() == 7
+            && report.game_areas.iter().all(|a| {
+                a.readable
+                    && a.writable == (game_write && areas_write)
+                    && a.creatable == (game_write && areas_write)
+                    && a.renamable == (game_write && areas_write)
+            })
+            && report.launch_directory_writable
+            && report.shared_file_readable
+            && !report.shared_file_writable
+            && report.java_readable
+            && !report.java_writable
+            && !report.other_manifest_readable;
+        if !expected {
+            return Err(format!("ACL least-privilege invariant failed: {report:?}").into());
+        }
+        println!("{}", serde_json::to_string_pretty(&report)?);
     }
-    let report: AclProbeResult = serde_json::from_str(stdout_text.trim())?;
-    let expected = report.manifest_readable
-        && !report.manifest_writable
-        && !report.fabric_profile_writable
-        && !report.mod_registry_writable
-        && report.game_writable
-        && report.launch_directory_writable
-        && report.shared_file_readable
-        && !report.shared_file_writable
-        && report.java_readable
-        && !report.java_writable
-        && !report.other_manifest_readable;
-    if !expected {
-        return Err(format!("ACL least-privilege invariant failed: {report:?}").into());
-    }
-    println!("{}", serde_json::to_string_pretty(&report)?);
     Ok(())
 }
 
@@ -293,6 +336,35 @@ fn run_acl_child() -> Result<(), Box<dyn std::error::Error>> {
         manifest_writable: can_write_existing(&paths.instance_manifest(&instance_id)),
         fabric_profile_writable: can_write_existing(&paths.instance_fabric_profile(&instance_id)),
         mod_registry_writable: can_write_existing(&paths.instance_mod_registry(&instance_id)),
+        game_areas: [
+            "saves",
+            "screenshots",
+            "resourcepacks",
+            "shaderpacks",
+            "mods",
+            "config",
+            "logs",
+        ]
+        .into_iter()
+        .map(|name| {
+            let path = paths.instance_game_directory(&instance_id).join(name);
+            let readable = fs::read(path.join("fixture")).is_ok();
+            let writable = can_write_existing(&path.join("fixture"));
+            let creatable = fs::write(path.join("new"), b"fixture").is_ok();
+            let moved = path.with_file_name(format!("{name}-moved"));
+            let renamable = fs::rename(&path, &moved).is_ok();
+            if renamable {
+                fs::rename(&moved, &path).expect("restore fixture directory");
+            }
+            GameAreaProbe {
+                name: name.into(),
+                readable,
+                writable,
+                creatable,
+                renamable,
+            }
+        })
+        .collect(),
         game_writable: fs::write(
             paths
                 .instance_game_directory(&instance_id)

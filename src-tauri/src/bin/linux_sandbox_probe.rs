@@ -172,6 +172,90 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         println!("POLICY PASS game_write={writable}: {result}");
     }
+    fs::remove_file(resources.game.join("escape"))?;
+    let restricted = policy.clone().with_readonly_game_directories(&[
+        GameDirectory::Worlds,
+        GameDirectory::Screenshots,
+        GameDirectory::ResourcePacks,
+        GameDirectory::ShaderPacks,
+        GameDirectory::Mods,
+        GameDirectory::Config,
+        GameDirectory::Logs,
+    ])?;
+    for path in restricted.readonly_game_directories() {
+        fs::write(path.join("existing"), "protected")?;
+    }
+    let file_script = r#"
+import pathlib,sys
+root=pathlib.Path(sys.argv[1])
+(root/'unrestricted').write_text('allowed')
+for name in ['saves','screenshots','resourcepacks','shaderpacks','mods','config','logs']:
+    path=root/name
+    assert (path/'existing').read_text()=='protected'
+    for target in [path/'new',path/'existing']:
+        try: target.write_text('denied')
+        except OSError: pass
+        else: raise AssertionError(str(target))
+    try: path.rename(root/(name+'-escaped'))
+    except OSError: pass
+    else: raise AssertionError('directory rename bypass')
+print('GRANULAR FILE PASS: seven directories readable, writes and renames denied; other writes allowed')
+"#;
+    let output = prepare(
+        std::path::Path::new("/usr/bin/python3"),
+        &restricted,
+        desktop.as_ref(),
+    )?
+    .output(&[
+        "-c".into(),
+        file_script.into(),
+        resources.game.as_os_str().to_owned(),
+    ])?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).into_owned().into());
+    }
+    print!("{}", String::from_utf8_lossy(&output.stdout));
+    for enabled in [false, true] {
+        let mut network_policy = policy.clone();
+        network_policy.network = if enabled {
+            NetworkAccess::Internet
+        } else {
+            NetworkAccess::Denied
+        };
+        network_policy.desktop.audio_output = enabled;
+        let script = r#"
+import socket,sys
+expected=sys.argv[2]=='true'
+def connects(family,address):
+    try:
+        with socket.socket(family) as s:
+            s.settimeout(2); s.connect(address)
+            return True
+    except OSError: return False
+assert connects(socket.AF_INET,('127.0.0.1',int(sys.argv[1]))) == expected
+try: socket.socket(socket.AF_NETLINK)
+except OSError: pass
+else: raise AssertionError('netlink exposed')
+if sys.argv[3]=='true': assert connects(socket.AF_UNIX,'/run/mona/pulse') == expected
+print('NETWORK/AUDIO PASS enabled='+str(expected))
+"#;
+        let output = prepare(
+            std::path::Path::new("/usr/bin/python3"),
+            &network_policy,
+            desktop.as_ref(),
+        )?
+        .output(&[
+            "-c".into(),
+            script.into(),
+            tcp.local_addr()?.port().to_string().into(),
+            enabled.to_string().into(),
+            desktop.is_some().to_string().into(),
+        ])?;
+        if !output.status.success() {
+            return Err(String::from_utf8_lossy(&output.stderr).into_owned().into());
+        }
+        print!("{}", String::from_utf8_lossy(&output.stdout));
+    }
     // A detached descendant must die with the owned namespace supervisor.
     let args = vec![OsString::from("-c"), OsString::from(
         "import os,time; p=os.fork(); os.setsid() if p==0 else None; print('ready',flush=True); time.sleep(120)"

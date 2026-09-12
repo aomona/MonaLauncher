@@ -19,7 +19,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let mut args = std::env::args().skip(1);
     let root = args.next().ok_or(
-        "usage: linux_minecraft_smoke DATA_ROOT [SECONDS] [VERSION] [narrator-on|narrator-off]",
+        "usage: linux_minecraft_smoke DATA_ROOT [SECONDS] [VERSION] [narrator-on|narrator-off] [audio-on|audio-off]",
     )?;
     let seconds: u64 = args.next().map(|s| s.parse()).transpose()?.unwrap_or(60);
     let version = args.next().unwrap_or_else(|| "26.2".into());
@@ -27,6 +27,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         None | Some("narrator-on") => true,
         Some("narrator-off") => false,
         _ => return Err("invalid narrator setting".into()),
+    };
+    let audio_enabled = match args.next().as_deref() {
+        None | Some("audio-on") => true,
+        Some("audio-off") => false,
+        _ => return Err("invalid audio setting".into()),
     };
     if !(10..=600).contains(&seconds)
         || args.next().is_some()
@@ -38,7 +43,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         return Err("invalid arguments".into());
     }
-    let wayland = monalauncher_lib::probe::Desktop::detect()?.protocol()
+    let wayland = monalauncher_lib::probe::Desktop::detect_with_audio(audio_enabled)?.protocol()
         == monalauncher_lib::sandbox::LinuxDisplayProtocol::Wayland;
     let paths = MinecraftPaths::new(PathBuf::from(root));
     let id = format!("linux-demo-{}", version.replace('.', "-"));
@@ -64,6 +69,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         InstancePermissions {
             game_write: true,
             narrator: narrator_enabled,
+            audio_output: audio_enabled,
+            ..InstancePermissions::default()
         },
     )?;
     let game = paths.instance_game_directory(&id);
@@ -161,12 +168,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let narrator_protocol = protocol_seen.load(Ordering::Relaxed);
     println!(
         "OBSERVATION {}",
-        serde_json::json!({"display_protocol":if wayland {"wayland"} else {"x11"}, "window_viewable":if wayland {None} else {Some(window_seen)}, "graphics_initialized":graphics.load(Ordering::Relaxed), "sound_engine":sound_started, "pulse_java_stream":audio_stream_seen, "narrator_enabled":narrator_enabled, "narrator_protocol":narrator_protocol, "speech_started":speech_counts.0, "speech_completed":speech_counts.1})
+        serde_json::json!({"display_protocol":if wayland {"wayland"} else {"x11"}, "window_viewable":if wayland {None} else {Some(window_seen)}, "graphics_initialized":graphics.load(Ordering::Relaxed), "audio_enabled":audio_enabled, "sound_engine":sound_started, "pulse_java_stream":audio_stream_seen, "narrator_enabled":narrator_enabled, "narrator_protocol":narrator_protocol, "speech_started":speech_counts.0, "speech_completed":speech_counts.1})
     );
     if (!wayland && !window_seen)
         || (wayland && !graphics.load(Ordering::Relaxed))
-        || !sound_started
-        || !audio_stream_seen
+        || (audio_enabled && (!sound_started || !audio_stream_seen))
+        || (!audio_enabled && audio_stream_seen)
     {
         return Err("desktop/sound observations incomplete".into());
     }

@@ -1,5 +1,7 @@
 //! OS-independent permission requests and explicit backend compatibility differences.
+pub mod game_files;
 pub mod seatbelt;
+pub use game_files::GameDirectory;
 #[cfg(test)]
 mod tests;
 use std::fmt;
@@ -161,6 +163,8 @@ pub enum NetworkAccess {
 pub struct DesktopPermissions {
     pub window_and_input: bool,
     pub audio_output: bool,
+    pub microphone: bool,
+    pub clipboard: bool,
 }
 
 /// This preset is defined once. Backends may not silently grant unsupported requests.
@@ -168,6 +172,7 @@ pub struct DesktopPermissions {
 pub struct SandboxPolicy {
     resources: SandboxResources,
     files: Vec<(Resource, FileAccess)>,
+    game_readonly: Vec<PathBuf>,
     pub network: NetworkAccess,
     pub desktop: DesktopPermissions,
     pub narrator: bool,
@@ -238,10 +243,13 @@ impl SandboxPolicy {
                 (Launch, ReadOnly),
                 (Temp, ReadWrite),
             ],
+            game_readonly: vec![],
             network: NetworkAccess::Denied,
             desktop: DesktopPermissions {
                 window_and_input: true,
                 audio_output: true,
+                microphone: false,
+                clipboard: false,
             },
             narrator: true,
             // Explicitly preserve the existing AppContainer compatibility contract for this preset.
@@ -277,15 +285,48 @@ impl SandboxPolicy {
         Ok(self)
     }
 
+    pub fn with_readonly_game_directories(
+        mut self,
+        directories: &[GameDirectory],
+    ) -> Result<Self, PolicyError> {
+        if !directories.is_empty() {
+            game_files::validate_tree(&self.resources.game)?;
+        }
+        for directory in directories {
+            let path = self.resources.game.join(directory.name());
+            std::fs::create_dir_all(&path).map_err(|e| PolicyError(e.to_string()))?;
+            if std::fs::canonicalize(&path).map_err(|e| PolicyError(e.to_string()))? != path {
+                return Err(PolicyError("game directory is an alias".into()));
+            }
+            if !self.game_readonly.contains(&path) {
+                self.game_readonly.push(path);
+            }
+        }
+        Ok(self)
+    }
+    pub fn readonly_game_directories(&self) -> &[PathBuf] {
+        &self.game_readonly
+    }
+
     pub fn compile(&self, backend: Backend) -> Result<CompiledPolicy, PolicyError> {
-        if self.network != NetworkAccess::Denied {
+        if self.desktop.microphone && !self.desktop.audio_output {
             return Err(PolicyError(
-                "sandbox network access is not supported".into(),
+                "microphone access requires the shared audio service to remain enabled".into(),
             ));
         }
-        if !self.desktop.window_and_input || !self.desktop.audio_output {
+        if !self.desktop.window_and_input {
             return Err(PolicyError(
-                "this backend currently supports only the Minecraft desktop/audio bundle".into(),
+                "display/input separation is unsupported".into(),
+            ));
+        }
+        if backend == Backend::AppContainer && !self.desktop.audio_output {
+            return Err(PolicyError(
+                "AppContainer does not support disabling playback independently".into(),
+            ));
+        }
+        if backend != Backend::Seatbelt && (self.desktop.microphone || self.desktop.clipboard) {
+            return Err(PolicyError(
+                "independent microphone/clipboard grants are unsupported on this backend".into(),
             ));
         }
         let mut plan = CompiledPolicy {
@@ -302,6 +343,11 @@ impl SandboxPolicy {
             exceptions: vec![],
             narrator: self.narrator,
         };
+        plan.files
+            .extend(self.game_readonly.iter().map(|path| FileGrant {
+                path: path.clone(),
+                access: FileAccess::ReadOnly,
+            }));
         if backend == Backend::Bubblewrap {
             if !self.allow_linux_desktop_compatibility {
                 return Err(PolicyError(
@@ -312,8 +358,11 @@ impl SandboxPolicy {
             plan.exceptions.extend([
                 BackendException::LinuxSystemRuntimeRead,
                 BackendException::LinuxX11PeerAccess,
-                BackendException::LinuxPulseAudioServiceAccess,
             ]);
+            if self.desktop.audio_output {
+                plan.exceptions
+                    .push(BackendException::LinuxPulseAudioServiceAccess);
+            }
         }
         if backend == Backend::AppContainer {
             if !self.allow_windows_compatibility {

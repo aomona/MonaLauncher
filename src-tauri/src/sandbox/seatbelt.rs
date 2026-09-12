@@ -14,5 +14,22 @@ pub fn render(policy: &SandboxPolicy) -> Result<String, PolicyError> {
             resource.parameter()
         ));
     }
+    for (index, _) in policy.readonly_game_directories().iter().enumerate() {
+        profile.push_str(&format!(
+            "\n(deny file-write* (subpath (param \"GAME_READONLY_{index}\")))\n"
+        ));
+    }
+    if policy.network == super::NetworkAccess::Internet {
+        profile.push_str(include_str!("../platform/macos/network.sb"));
+    }
+    if policy.desktop.audio_output || policy.desktop.microphone {
+        profile.push_str(include_str!("../platform/macos/audio.sb"));
+    }
+    if policy.desktop.microphone {
+        profile.push_str("\n(allow device-microphone)\n");
+    }
+    if policy.desktop.clipboard {
+        profile.push_str("\n(allow mach-lookup (global-name \"com.apple.pasteboard.1\"))\n");
+    }
     Ok(profile)
 }

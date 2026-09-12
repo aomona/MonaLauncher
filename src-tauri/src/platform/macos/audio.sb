@@ -1,0 +1,8 @@
+; OpenAL playback uses CoreAudio's HAL and its AudioIO shared-memory buffers.
+(allow mach-lookup (global-name "com.apple.audio.audiohald"))
+(allow ipc-posix-shm-read* ipc-posix-shm-write-data
+    (ipc-posix-name-regex #"^AudioIO"))
+
+; Desktop window ordering and audio component discovery.
+(allow mach-lookup
+    (global-name "com.apple.audio.AudioComponentRegistrar"))

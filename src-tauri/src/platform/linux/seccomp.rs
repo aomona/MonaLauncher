@@ -9,7 +9,7 @@ const ALLOW: u32 = 0x7fff0000;
 const KILL: u32 = 0x80000000;
 const ERRNO: u32 = 0x00050000;
 
-pub fn program() -> io::Result<Vec<u8>> {
+pub fn program(network: bool) -> io::Result<Vec<u8>> {
     let arch = if cfg!(target_arch = "x86_64") {
         0xc000003e
     } else if cfg!(target_arch = "aarch64") {
@@ -81,9 +81,16 @@ pub fn program() -> io::Result<Vec<u8>> {
     emit(RET, 0, 0, ERRNO | libc::EPERM as u32);
     emit(LOAD, 0, 0, 0);
     for syscall in [libc::SYS_socket, libc::SYS_socketpair] {
-        emit(JEQ, 0, 3, syscall as u32);
+        let families = if network {
+            vec![libc::AF_UNIX, libc::AF_INET, libc::AF_INET6]
+        } else {
+            vec![libc::AF_UNIX]
+        };
+        emit(JEQ, 0, (families.len() + 2) as u8, syscall as u32);
         emit(LOAD, 0, 0, 16);
-        emit(JEQ, 1, 0, libc::AF_UNIX as u32);
+        for (index, family) in families.iter().enumerate() {
+            emit(JEQ, (families.len() - index) as u8, 0, *family as u32);
+        }
         emit(RET, 0, 0, ERRNO | libc::EAFNOSUPPORT as u32);
         emit(LOAD, 0, 0, 0);
     }
@@ -101,7 +108,10 @@ pub fn program() -> io::Result<Vec<u8>> {
 mod tests {
     use super::*;
     fn evaluate(nr: u32, arch: u32, arg0: u32, arg1: u32) -> u32 {
-        let code = program().unwrap();
+        evaluate_with_network(false, nr, arch, arg0, arg1)
+    }
+    fn evaluate_with_network(network: bool, nr: u32, arch: u32, arg0: u32, arg1: u32) -> u32 {
+        let code = program(network).unwrap();
         let mut pc = 0;
         let mut accumulator = 0;
         for _ in 0..code.len() / 8 {
@@ -132,6 +142,30 @@ mod tests {
             pc += 1;
         }
         panic!("filter did not return")
+    }
+    #[test]
+    fn network_grant_allows_ip_but_keeps_other_socket_families_denied() {
+        let arch = if cfg!(target_arch = "aarch64") {
+            0xc00000b7
+        } else {
+            0xc000003e
+        };
+        for family in [libc::AF_UNIX, libc::AF_INET, libc::AF_INET6] {
+            assert_eq!(
+                evaluate_with_network(true, libc::SYS_socket as u32, arch, family as u32, 0),
+                ALLOW
+            );
+        }
+        assert_eq!(
+            evaluate_with_network(
+                true,
+                libc::SYS_socket as u32,
+                arch,
+                libc::AF_NETLINK as u32,
+                0
+            ),
+            ERRNO | libc::EAFNOSUPPORT as u32
+        );
     }
     #[test]
     fn filter_allows_jvm_threads_and_unix_ipc_but_denies_escape_primitives() {

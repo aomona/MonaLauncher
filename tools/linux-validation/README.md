@@ -84,3 +84,9 @@ Minecraft 26.2's inspected GLX implementation selects X11 by default. For this e
 
 - [Flatpak Wayland integration](https://github.com/flatpak/flatpak/blob/main/common/flatpak-run-wayland.c): socket and optional security-context handling; the latter is not implemented here.
 - [libdrm device discovery](https://gitlab.freedesktop.org/mesa/drm/-/blob/main/xf86drm.c): GPU bus/PCI identification via sysfs.
+
+## Granular permissions
+
+The [cross-platform permission report](granular-permissions-2026-09-12.md) records file categories, network, audio, microphone and clipboard support. The production boundary probe now tests all seven protected directories, rename attempts, network OFF/ON and (with `--wayland`) PulseAudio OFF/ON. Network ON still rejects AF_NETLINK.
+
+`linux_minecraft_smoke` accepts an optional final `audio-off` argument to verify that a running game cannot create a PulseAudio stream while narration remains independently permitted. Repeat with `audio-on` to restore the dedicated demo instance. These probes change only the dedicated test instance's saved permissions.

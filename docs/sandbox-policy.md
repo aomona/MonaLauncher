@@ -1,6 +1,6 @@
 # 共通サンドボックスポリシー
 
-Minecraftの権限指定は `src-tauri/src/sandbox/` にまとめる。`minecraft/sandbox_policy.rs` が検証済みインスタンスからリソースの実パスを解決し、Windows・macOS・Linuxの起動処理へ同じ `SandboxPolicy` を渡す。InstanceのPermissionsタブからゲームデータ書き込み・ナレーターを設定できる。任意のパスやOS固有の追加許可を受け取るAPIは設けていない。対象はゲームプロセス全体であり、個々のModを識別した権限制御ではない。
+Minecraftの権限指定は `src-tauri/src/sandbox/` にまとめる。`minecraft/sandbox_policy.rs` が検証済みインスタンスからリソースの実パスを解決し、Windows・macOS・Linuxの起動処理へ同じ `SandboxPolicy` を渡す。InstanceのPermissionsタブからゲーム全体/用途別の書き込み、通信、対応OSでの通常音声・マイク・クリップボード、ナレーターを設定できる。任意のパスやOS固有の追加許可を受け取るAPIは設けていない。対象はゲームプロセス全体であり、個々のModを識別した権限制御ではない。
 
 ## 指定と適用
 
@@ -17,10 +17,10 @@ Minecraftの権限指定は `src-tauri/src/sandbox/` にまとめる。`minecraf
 実パスは正規化してから確認し、書き込み先とコード領域の重なり、gameとlaunchの重なり、所有ディレクトリ外への参照を拒否する。読み取り専用は内容の変更を許可しない指定であり、ネイティブコードのロードを禁止する指定ではない。Windowsでは従来と同じRXへ変換する。
 
 - **Seatbelt**: OSの互換ルールと、共通ポリシーから生成したファイル許可を合成する。実パスは `sandbox-exec -D` の値として渡し、ルール文字列へ埋め込まない。
-- **AppContainer**: 共通ポリシーをファイルACL・継承しない通過用ACLへ変換する。親の読み取り許可を先に適用し、gameや起動領域の変更許可と整合性レベルを適用する。プロセス作成前にもポリシーを検査し、ネットワーク等のCapabilityは従来どおりゼロにする。
+- **AppContainer**: 共通ポリシーをファイルACL・継承しない通過用ACLへ変換する。親の読み取り許可を先に適用し、gameや起動領域の変更許可と整合性レベルを適用する。プロセス作成前にもポリシーを検査し、通信OFF時はCapabilityをゼロにし、ON時は明示したネットワークCapabilityだけを追加する。
 - **ナレーター**: 同じポリシーからJava側の有効状態とホストのブローカー起動を制御する。無効時はJavaが読み上げ要求を出さず、ホストにもブローカーを作らない。
 
-`with_file_access` はgame/tmpを読み取り専用へ縮小できる。共有コード等への書き込み追加、通信許可、画面・入力・通常音声を個別に禁止する指定は、現在の変換では未対応として拒否する。要求を無視した起動や、非サンドボックス起動へのフォールバックはしない。
+`with_file_access` はgame/tmpを読み取り専用へ縮小できる。共有コード等への書き込み追加、画面と入力の個別禁止、各OSで未対応の音声・マイク・クリップボード設定は拒否する。要求を無視した起動や、非サンドボックス起動へのフォールバックはしない。
 
 ## 明示したOS差分
 
@@ -37,7 +37,7 @@ Windowsのtmpは変更可能なlaunchの子なので、tmpだけを読み取り�
 
 共通化はOSの保証を同一にするものではない。Seatbeltにはシステム領域の読み取り・広いメタデータ参照・列挙したMach/IOKitサービスがある。WindowsにはOSがAppContainerへ公開する資源や既知フォルダーがある。子の終了はWindowsがJob Object、macOSがプロセスグループで、ランチャー異常終了時やグループ離脱時の保証も異なる。これらを同等の隔離と扱わない。
 
-Linuxは `Backend::Bubblewrap` へ変換する。`platform/linux` が新しいuser/PID/network/IPC/mount namespace、ファイルのbind mount、seccompを構成する。`--unshare-user` と `--disable-userns` を明示し、追加のnamespace作成も拒否する。seccompはネイティブABIのみを許可し、IPv4/IPv6などAF_UNIX以外のsocket、ptrace、mount、BPF、keyring等を拒否する。clone3はENOSYSを返し、JVMの通常のthread作成はcloneへフォールバックできる。フィルターのFD以外はゲームへ追加継承せず、stdinは閉じる。起動失敗を通常起動へフォールバックしない。
+Linuxは `Backend::Bubblewrap` へ変換する。`platform/linux` が新しいuser/PID/network/IPC/mount namespace、ファイルのbind mount、seccompを構成する。`--unshare-user` と `--disable-userns` を明示し、追加のnamespace作成も拒否する。seccompはネイティブABIのみを許可し、通信OFF時はAF_UNIX以外のsocketを拒否する。ON時はホストnetwork namespaceを共有してAF_INET/AF_INET6とDNS/CA設定の読み取りを追加し、AF_NETLINK等は拒否を維持する。ptrace、mount、BPF、keyring等も常に拒否する。clone3はENOSYSを返し、JVMの通常のthread作成はcloneへフォールバックできる。フィルターのFD以外はゲームへ追加継承せず、stdinは閉じる。起動失敗を通常起動へフォールバックしない。
 
 Linuxの `allow_linux_desktop_compatibility = true` は以下を明示的に受け入れる。falseならLinuxデスクトップ起動を拒否する。
 
@@ -86,3 +86,26 @@ Windowsでは既存CIの `cargo run --locked --bin sandbox_probe -- --acl` と `
 `policy_for_instance` は保存した設定を共通ポリシーへ適用する。ゲーム領域のReadOnly指定とナレーターブローカーの無効化はWindows/macOS/Linuxの変換に渡す。UIはOSの対応状況をバックエンドから取得し、対応状況が不明な間も変更できない。書き込み無効はログや設定の保存も止めるため、バージョンによってゲームが起動しない可能性がある。
 
 追加検証: 既存設定の移行、厳格な入力検査、実ファイルへの保存と再読込、改名後の保持、別インスタンスの分離、保存値から各OSのポリシーへの変換を確認。Windows ACL実適用は引き続きWindowsホストでの確認が必要。
+
+## 細分化した権限
+
+共通データの既定値は、従来のゲーム書き込み・通常音声・ナレーターを維持し、network/microphone/clipboardはfalse。追加したフォルダー設定の既定値trueは、既存のゲーム全体設定を広げない。ゲーム全体OFFが最優先になる。
+
+| 設定                           | Windows                                            | macOS                                | Linux                                          |
+| ------------------------------ | -------------------------------------------------- | ------------------------------------ | ---------------------------------------------- |
+| 全体・用途別のファイル書き込み | AppContainer SIDのACL/deny ACE                     | Seatbeltの書き込み拒否               | 子ディレクトリのread-only bind                 |
+| 通信ON                         | Internet client/server・private network capability | TCP/UDP・DNSサービスの許可           | host network namespace + IPv4/IPv6 syscall許可 |
+| 通常音声OFF                    | 独立遮断は未対応                                   | CoreAudioのMach/共有メモリ許可を外す | PulseAudioソケットを公開しない                 |
+| マイクON                       | 個別変更未対応・capabilityなし                     | device-microphoneを許可。TCCは別途   | 音声サービスからの独立制御未対応               |
+| クリップボードON               | 独立制御未対応                                     | pasteboardサービスへの接続を許可     | 画面接続からの独立制御未対応                   |
+| ナレーター                     | 共通の認証済みブローカー設定                       | 同左                                 | 同左                                           |
+
+用途別の対象は `saves/screenshots/resourcepacks/shaderpacks/mods/config/logs` だけ。ゲーム/Modを用途ごとに識別するものではなく、OFFでもそのデータの読み取りや別フォルダーへのコピーは可能。`options.txt` や独自の保存先は全体の書き込み設定に従う。読み取り専用にするとゲームやModの起動・保存が失敗する場合がある。
+
+細分化時はゲームツリーのシンボリックリンク・reparse point・既存hardlinkを拒否する。Windowsの再帰ACL更新でも同じ検査を行い、対象SIDの以前のdenyだけを消して再適用する。保護ディレクトリには書き込み/削除/ACL変更拒否、親には非継承のDELETE_CHILD拒否を設定する。ランチャー操作の直前に別のホストプロセスが同時にファイル構造を書き換える状況まで保証するものではない。
+
+通信ONはインターネットとLANへの送受信をまとめた許可で、宛先・Mod・ポートのフィルターではない。Windowsのloopback制限は自動解除しない。macOSはDNS用のmDNSResponder接続、LinuxはDNS/CA設定を公開する。通信OFFへ戻した次の起動ではこれらの追加許可を付けない。
+
+macOSのマイクは通常音声と同じCoreAudioサービスを必要とするため、音声OFF/マイクONは拒否する。マイクのOSプライバシー許可や実録音は別。Linuxは通常音声ONで録音を含むPulseAudioサービス全体へ接続できる。クリップボードについてもWindows/Linuxで偽の拒否状態を表示せず、未対応であることを表示する。
+
+別OSから持ち込まれた非対応の設定を黙って広げない。保存APIは新しい非対応要求を拒否し、既存の非対応設定の保持・縮小を認める。起動時はポリシー全体を再検証し、非対応の設定が残っていればエラーにする。実施結果は[権限細分化の検証記録](../tools/linux-validation/granular-permissions-2026-09-12.md)を参照。

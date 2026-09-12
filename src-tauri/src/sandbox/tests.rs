@@ -102,10 +102,13 @@ fn unsupported_requests_fail_closed_on_each_backend() {
     ] {
         let mut policy = fixture.policy();
         policy.network = NetworkAccess::Internet;
-        assert!(policy.compile(backend).is_err());
+        assert!(policy.compile(backend).is_ok());
         let mut policy = fixture.policy();
         policy.desktop.audio_output = false;
-        assert!(policy.compile(backend).is_err());
+        assert_eq!(
+            policy.compile(backend).is_err(),
+            backend == Backend::AppContainer
+        );
         let mut policy = fixture.policy();
         policy.desktop.window_and_input = false;
         assert!(policy.compile(backend).is_err());
@@ -224,4 +227,62 @@ fn resolves_aliases_before_checking_writable_boundaries() {
     std::os::unix::fs::symlink(&resources.java_home, &link).unwrap();
     resources.game = link;
     assert!(SandboxPolicy::minecraft(resources).is_err());
+}
+
+#[test]
+fn granular_files_and_service_requests_are_translated_without_widening_other_paths() {
+    let fixture = Fixture::new();
+    let mut policy = fixture
+        .policy()
+        .with_readonly_game_directories(&[GameDirectory::Worlds, GameDirectory::Mods])
+        .unwrap();
+    for backend in [
+        Backend::AppContainer,
+        Backend::Seatbelt,
+        Backend::Bubblewrap,
+    ] {
+        let plan = policy.compile(backend).unwrap();
+        assert!(plan
+            .files
+            .iter()
+            .any(|p| p.path == policy.resources().game && p.access == FileAccess::ReadWrite));
+        for name in ["saves", "mods"] {
+            assert!(plan
+                .files
+                .iter()
+                .any(|p| p.path == policy.resources().game.join(name)
+                    && p.access == FileAccess::ReadOnly));
+        }
+    }
+    policy.desktop.audio_output = false;
+    let profile = seatbelt::render(&policy).unwrap();
+    assert!(!profile.contains("com.apple.audio.audiohald"));
+    assert!(!profile.contains("com.apple.pasteboard.1"));
+    policy.desktop.audio_output = true;
+    policy.desktop.microphone = true;
+    policy.desktop.clipboard = true;
+    let profile = seatbelt::render(&policy).unwrap();
+    assert!(profile.contains("(allow device-microphone)"));
+    assert!(profile.contains("com.apple.pasteboard.1"));
+    assert!(policy.compile(Backend::AppContainer).is_err());
+    assert!(policy.compile(Backend::Bubblewrap).is_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn granular_permissions_reject_preexisting_aliases() {
+    let fixture = Fixture::new();
+    let game = &fixture.policy().resources().game.clone();
+    std::fs::write(game.join("original"), "fixture").unwrap();
+    std::fs::hard_link(game.join("original"), game.join("alias")).unwrap();
+    assert!(fixture
+        .policy()
+        .with_readonly_game_directories(&[GameDirectory::Worlds])
+        .is_err());
+    std::fs::remove_file(game.join("alias")).unwrap();
+    std::os::unix::fs::symlink(game.join("original"), game.join("alias")).unwrap();
+    assert!(fixture
+        .policy()
+        .with_readonly_game_directories(&[GameDirectory::Worlds])
+        .is_err());
 }

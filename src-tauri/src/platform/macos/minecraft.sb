@@ -43,13 +43,5 @@
 ; No blanket Mach lookup or user cache access is granted.
 (allow mach-lookup (xpc-service-name "com.apple.MTLCompilerService"))
 
-; OpenAL playback uses CoreAudio's HAL and its AudioIO shared-memory buffers.
-; Microphone access remains denied by default.
-(allow mach-lookup (global-name "com.apple.audio.audiohald"))
-(allow ipc-posix-shm-read* ipc-posix-shm-write-data
-    (ipc-posix-name-regex #"^AudioIO"))
-
-; Desktop window ordering and audio component discovery.
-(allow mach-lookup
-    (global-name "com.apple.windowmanager.server")
-    (global-name "com.apple.audio.AudioComponentRegistrar"))
+; Audio and clipboard service grants are generated from the common policy.
+(allow mach-lookup (global-name "com.apple.windowmanager.server"))

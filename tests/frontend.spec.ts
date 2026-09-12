@@ -1,12 +1,14 @@
 import { test, expect, type Page } from "@playwright/test";
+import type { InstancePermissions } from "../src/domain/launcher";
 
 async function mockDesktop(
   page: Page,
   count = 2,
   platform: "windows" | "macos" | "linux" | "unsupported" = "windows",
+  initialPermissions: Partial<InstancePermissions> = {},
 ) {
   await page.addInitScript(
-    ({ count, platform }) => {
+    ({ count, platform, initialPermissions }) => {
       const callbacks: Record<number, (data: unknown) => void> = {};
       const handlers: Record<string, number[]> = {};
       let counter = 0;
@@ -18,7 +20,21 @@ async function mockDesktop(
           javaPath: "C:\\Java\\bin\\java.exe",
           gameDirectory: "C:\\Minecraft\\Survival",
           sandboxed: true,
-          permissions: { gameWrite: true, narrator: true },
+          permissions: {
+            gameWrite: true,
+            narrator: true,
+            network: false,
+            audioOutput: true,
+            microphone: false,
+            clipboard: false,
+            worldsWrite: true,
+            screenshotsWrite: true,
+            resourcePacksWrite: true,
+            shaderPacksWrite: true,
+            modsWrite: true,
+            configWrite: true,
+            logsWrite: true,
+          },
           demo: false,
           modLoader: { type: "fabric", version: "0.16.0" },
         },
@@ -29,11 +45,26 @@ async function mockDesktop(
           javaPath: "C:\\Java\\bin\\java.exe",
           gameDirectory: "C:\\Minecraft\\Creative",
           sandboxed: true,
-          permissions: { gameWrite: true, narrator: true },
+          permissions: {
+            gameWrite: true,
+            narrator: true,
+            network: false,
+            audioOutput: true,
+            microphone: false,
+            clipboard: false,
+            worldsWrite: true,
+            screenshotsWrite: true,
+            resourcePacksWrite: true,
+            shaderPacksWrite: true,
+            modsWrite: true,
+            configWrite: true,
+            logsWrite: true,
+          },
           demo: false,
           modLoader: { type: "vanilla" },
         },
       ];
+      Object.assign(instances[0].permissions, initialPermissions);
       for (let i = 2; i < count; i++)
         instances.push({ ...instances[0], id: `fixture-${i}`, name: `Instance ${i}` });
       const state = {
@@ -113,7 +144,13 @@ async function mockDesktop(
                   });
                 return { hits: [], offset: 0, limit: 20, totalHits: 0 };
               case "minecraft_permission_support":
-                return { platform, editable: platform !== "unsupported" };
+                return {
+                  platform,
+                  editable: platform !== "unsupported",
+                  audioOutput: platform === "macos" || platform === "linux",
+                  microphone: platform === "macos",
+                  clipboard: platform === "macos",
+                };
               case "update_minecraft_permissions": {
                 if (state.delayPermissions)
                   await new Promise<void>((resolve) => {
@@ -172,7 +209,7 @@ async function mockDesktop(
         },
       });
     },
-    { count, platform },
+    { count, platform, initialPermissions },
   );
   await page.goto("/");
 }
@@ -1007,4 +1044,86 @@ test("toast stack expands, dismisses with motion, and honors reduced motion", as
   await page.mouse.move(swipeBounds.x + 240, swipeBounds.y + 20, { steps: 8 });
   await page.mouse.up();
   await expect(page.locator(".toast")).toHaveCount(countBeforeSwipe - 1);
+});
+
+for (const platform of ["windows", "macos", "linux"] as const) {
+  test(`${platform} granular permissions save independently and expose only supported controls`, async ({
+    page,
+  }) => {
+    await mockDesktop(page, 2, platform);
+    await openSurvival(page);
+    await page.getByRole("tab", { name: "Permissions", exact: true }).click();
+    const worlds = page.getByRole("switch", { name: "ワールドの保存", exact: true });
+    await worlds.click();
+    await expect(worlds).not.toBeChecked();
+    await expect(
+      page.getByRole("switch", { name: "Modファイルの変更", exact: true }),
+    ).toBeChecked();
+    const network = page.getByRole("switch", { name: "ネットワーク通信", exact: true });
+    await expect(network).not.toBeChecked();
+    await network.click();
+    await expect(network).toBeChecked();
+    await page.getByRole("tab", { name: "Overview", exact: true }).click();
+    await page.getByRole("tab", { name: "Permissions", exact: true }).click();
+    await expect(worlds).not.toBeChecked();
+    await expect(network).toBeChecked();
+    await page.getByRole("switch", { name: "ゲームデータへの書き込み", exact: true }).click();
+    await expect(worlds).toBeDisabled();
+    await expect(network).toBeEnabled();
+    const audio = page.getByRole("switch", { name: "通常音声", exact: true });
+    const microphone = page.getByRole("switch", { name: "マイク", exact: true });
+    const clipboard = page.getByRole("switch", { name: "クリップボード", exact: true });
+    if (platform === "windows") {
+      await expect(audio).toHaveCount(0);
+    } else {
+      await expect(audio).toBeChecked();
+      await audio.click();
+      await expect(audio).not.toBeChecked();
+      await expect(page.getByRole("switch", { name: "ナレーター", exact: true })).toBeChecked();
+    }
+    if (platform === "macos") {
+      await expect(microphone).toBeDisabled();
+      await audio.click();
+      await microphone.click();
+      await expect(microphone).toBeChecked();
+      await expect(audio).toBeDisabled();
+      await clipboard.click();
+      await expect(clipboard).toBeChecked();
+    } else {
+      await expect(microphone).toHaveCount(0);
+      await expect(clipboard).toHaveCount(0);
+    }
+  });
+}
+
+test("permissions imported from another OS can be reduced without silently widening access", async ({
+  page,
+}) => {
+  await mockDesktop(page, 2, "windows", { microphone: true, clipboard: true, audioOutput: false });
+  await openSurvival(page);
+  await page.getByRole("tab", { name: "Permissions", exact: true }).click();
+  await page.getByRole("button", { name: "マイクの追加許可を解除", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "マイクの追加許可を解除", exact: true }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "クリップボードの追加許可を解除", exact: true }).click();
+  await page.getByRole("button", { name: "通常音声を許可に戻す", exact: true }).click();
+  await expect(
+    page.getByText("別のOSの設定が残っているため、このままでは起動できません。"),
+  ).toHaveCount(0);
+});
+
+test("an invalid imported microphone setting can be disabled without enabling audio", async ({
+  page,
+}) => {
+  await mockDesktop(page, 2, "macos", { microphone: true, audioOutput: false });
+  await openSurvival(page);
+  await page.getByRole("tab", { name: "Permissions", exact: true }).click();
+  const microphone = page.getByRole("switch", { name: "マイク", exact: true });
+  const audio = page.getByRole("switch", { name: "通常音声", exact: true });
+  await microphone.click();
+  await expect(microphone).not.toBeChecked();
+  await expect(microphone).toBeDisabled();
+  await expect(audio).not.toBeChecked();
+  await expect(audio).toBeEnabled();
 });

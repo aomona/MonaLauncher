@@ -1239,6 +1239,7 @@ mod tests {
         let changed = InstancePermissions {
             game_write: false,
             narrator: false,
+            ..InstancePermissions::default()
         };
         save_permissions(&paths, "trusted", changed).unwrap();
         // Reloading and another metadata edit must retain the persisted permission choices.
@@ -1294,7 +1295,8 @@ mod tests {
             "trusted",
             InstancePermissions {
                 game_write: false,
-                narrator: false
+                narrator: false,
+                ..InstancePermissions::default()
             }
         )
         .is_err());

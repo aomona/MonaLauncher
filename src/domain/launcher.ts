@@ -1,11 +1,25 @@
 export type InstancePermissions = {
   gameWrite: boolean;
   narrator: boolean;
+  network: boolean;
+  audioOutput: boolean;
+  microphone: boolean;
+  clipboard: boolean;
+  worldsWrite: boolean;
+  screenshotsWrite: boolean;
+  resourcePacksWrite: boolean;
+  shaderPacksWrite: boolean;
+  modsWrite: boolean;
+  configWrite: boolean;
+  logsWrite: boolean;
 };
 
 export type PermissionSupport = {
   platform: "windows" | "macos" | "linux" | "unsupported";
   editable: boolean;
+  audioOutput: boolean;
+  microphone: boolean;
+  clipboard: boolean;
 };
 
 export type MinecraftInstance = {
