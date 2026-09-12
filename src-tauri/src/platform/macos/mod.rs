@@ -1,4 +1,5 @@
 //! Experimental Seatbelt backend. No unsandboxed fallback is permitted.
+pub(crate) mod narrator;
 use std::ffi::OsString;
 use std::fs;
 use std::io;

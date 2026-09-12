@@ -7,8 +7,11 @@ fn main() {
     println!("cargo:rerun-if-changed=java/cursor-agent");
     println!("cargo:rerun-if-changed=java/cursor-agent-smoke");
     println!("cargo:rerun-if-env-changed=MONALAUNCHER_MICROSOFT_CLIENT_ID");
-    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
+    let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    if matches!(target_os.as_str(), "windows" | "macos") {
         build_narrator_bridge();
+    }
+    if target_os == "windows" {
         build_cursor_agent();
     }
     tauri_build::build()

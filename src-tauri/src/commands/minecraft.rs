@@ -676,9 +676,9 @@ fn spawn_stdout_reader<R>(
 ) where
     R: std::io::Read + Send + 'static,
 {
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos"))]
     {
-        use crate::platform::windows::narrator_broker::NarratorBroker;
+        use crate::platform::narrator_broker::NarratorBroker;
 
         let narrator_broker = narrator_token.and_then(|token| match NarratorBroker::start(token) {
             Ok(broker) => Some(broker),
@@ -694,12 +694,18 @@ fn spawn_stdout_reader<R>(
         });
         std::thread::spawn(move || {
             read_lines(reader, |line| {
+                #[cfg(not(windows))]
+                let cursor_protocol = false;
+                #[cfg(windows)]
                 let cursor_protocol = cursor_broker
                     .as_ref()
                     .is_some_and(|broker| broker.handle_line(&line));
                 let narrator_protocol = narrator_broker
                     .as_ref()
                     .is_some_and(|broker| broker.handle_line(&line));
+                // Suppress protocol secrets even if native speech initialization failed.
+                let narrator_protocol =
+                    narrator_protocol || line.contains("MONALAUNCHER_NARRATOR\t");
                 if !cursor_protocol && !narrator_protocol {
                     emit_log(&app, &instance_id, "stdout", &line);
                 }
@@ -707,7 +713,7 @@ fn spawn_stdout_reader<R>(
         });
     }
 
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         let _ = narrator_token;
         spawn_log_reader(app, instance_id, "stdout", reader);

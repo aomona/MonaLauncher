@@ -3,6 +3,11 @@ mod commands;
 pub mod minecraft;
 mod platform;
 
+#[cfg(target_os = "macos")]
+pub mod probe {
+    pub use crate::platform::narrator_broker::NarratorBroker;
+}
+
 use tauri::Manager;
 
 #[cfg(windows)]

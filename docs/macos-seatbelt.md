@@ -8,7 +8,7 @@
 pnpm tauri dev
 ```
 
-このマシンには`macOS Seatbelt Demo`（Minecraft 1.21.8、Vanilla、デモ）をアプリのデータ領域に作成済み。ランチャーのPlayから起動できる。新規インストール時はデモのVanilla 1.21.8を選ぶ。Microsoft認証と製品版は今回検証していない。
+このマシンには検証用のデモ（Minecraft 1.21.8 / 26.2、Vanilla）をアプリのデータ領域に作成済み。ランチャーのPlayから起動できる。26.2については、ユーザーからランチャー経由のゲームプレイと通常音声が正常との確認を得ている。Microsoft認証の接続・保存先の検証は[README](../README.md#microsoft認証の開発設定)を参照。
 
 インストーラはAdoptiumのmacOS/ホストCPU向けJDKを取得し、SHA-256を照合して管理領域へ配置する。macOSの`Contents/Home/bin/java`とtar.gz展開に対応した。アーカイブのリンク・特殊ファイル・展開サイズ超過は拒否する。MinecraftのOSルールには`osx`を使い、クラスパスはコロンで区切る。
 
@@ -33,6 +33,23 @@ cargo run --manifest-path src-tauri/Cargo.toml --locked --bin minecraft_smoke --
 
 Machサービスを経由するアクセスは、直接のファイル/ソケット制限とは別の監査が必要。Windows Job Objectと同等の、ランチャー異常終了時やプロセスグループを離脱した子の強制終了は未実装。これらを含む完成した安全性の証明ではない。
 
+## ナレーター
+
+Windowsと共通のJavaブリッジをMinecraftのクラスパスの先頭に置き、読み上げ要求を既存のstdoutパイプでランチャーへ渡す。WindowsはSAPI、macOSはAVSpeechSynthesizerで再生する。macOSはシステム既定の音声を使い、Minecraftから指定される音量・割り込み・停止に対応する。ゲーム内のアクセシビリティ設定でナレーターを有効にして使う。Seatbeltへの音声合成用権限追加はない。
+
+共通ブローカーは起動ごとの256ビットトークンを照合し、UTF-8本文4KiB、毎秒8要求、待機8件を上限とする。直近の同一発話を抑制し、不正なBase64・UTF-8・非有限音量を拒否する。macOSの音声合成キューにも上限を設け、CLEARで待機を破棄し、ゲームのstdoutが閉じると再生を停止する。プロトコル行はランチャーの画面ログへ出さない。トークンはゲーム自身も参照できるため、同じゲーム内の悪意あるModを識別する仕組みではない。
+
+ビルド時はWindowsと同様に`javac`と`jar`が必要。利用者の環境ではJavaブリッジとネイティブ音声処理をビルド済みアプリに同梱する。
+
+```sh
+MONALAUNCHER_EXPECT_NARRATOR=1 cargo run --manifest-path src-tauri/Cargo.toml --locked --bin minecraft_smoke -- "$HOME/Library/Application Support/me.aomona.monalauncher/minecraft" 30 26.2
+cargo run --manifest-path src-tauri/Cargo.toml --locked --example macos_narrator_smoke
+```
+
+最初のコマンドは専用デモを起動し、Minecraftからの読み上げに対するOSの開始・完了コールバックも必須とする。後者は短い音声を出し、再生完了・CLEARによる待機破棄・割り込みを検証する。2026-09-12に26.2の実ゲームで開始・完了コールバック各1回、画面表示、通常音声エンジン初期化、終了処理を確認し、ユーザーからテスト音声が聞こえたとの確認も得た。検証CLIではGUIアプリに相当するメインイベントループを処理する必要がある。WindowsのSAPI実機検証は今回行っていない。
+
+停止・割り込みの実機テストも成功。macOSは早い段階の停止で`didCancel`を省略したり`didFinish`を返すため、停止はAPIの成功と`isSpeaking == false`を確認する。共通プロトコルの検証を含むRustテストは73件成功、対象ライブラリ・検証コマンドのClippyも警告なしで成功した。
+
 ## 2026-09-12の実機検証
 
 環境はApple Silicon macOS（Darwin 25.1.0）、Temurin JDK 21.0.12.1+1 ARM64、Minecraft 1.21.8、LWJGL 3.3.3+5。管理下JDKのパッケージSHA-256は`3623232f33a9c3baadf304480b2535f9a3cba8a58d42ecbb438ba267315d9998`。
@@ -44,7 +61,7 @@ Machサービスを経由するアクセスは、直接のファイル/ソケッ
 5. 音声は`audiohald`だけでは初期化できず、`AudioComponentRegistrar`の追加でOpenALの既定出力デバイス初期化と`Sound engine started`を確認した。
 6. 改善した検証コマンドで、実表示・音声初期化・停止をまとめて確認。OS上で表示中であるウィンドウだけを撮影してタイトル画面を再確認した。ゲームのアクティブ化、クリック、キー入力は行っていない。
 
-初期版では音声初期化が拒否されたが、修正後は既定出力デバイスで音声エンジンの開始を確認した。実際の音の聴取、マイク、ナレーター、ゲーム内入力、ワールド生成、保存、MOD、製品版、別のmacOS/Intel Macは未検証。外部サービスの名前解決失敗ログも残る。ネットワークを許可して解消する変更はしていない。
+初期版では音声初期化が拒否されたが、修正後は既定出力デバイスで音声エンジンの開始を確認した。その後ユーザーが26.2のゲームプレイ・通常音声、ナレーターのテスト音声を確認した。マイク、MOD、別のmacOS/Intel Macは未検証。外部サービスの名前解決失敗ログも残る。ネットワークを許可して解消する変更はしていない。
 
 確認コマンド:
 
@@ -54,9 +71,11 @@ Machサービスを経由するアクセスは、直接のファイル/ソケッ
 - `pnpm test:ui`: 17件成功。TauriをモックしたUIテストであり、実UIのPlayボタン操作やMicrosoft認証の証拠ではない。
 - `pnpm tauri build --debug --bundles app`: macOSアプリのビルド成功。
 
-実ゲームの起動検証は`minecraft_smoke`から共通バックエンドを呼んだもの。UIを通した起動・停止の一連の操作は別途確認が必要。
+エージェントの実ゲーム検証は`minecraft_smoke`から共通バックエンドを呼んだもの。ユーザーによるランチャー経由のプレイ確認とは区別して記録する。
 
 ## 実装参考
+
+- [Apple AVSpeechSynthesizer](https://developer.apple.com/documentation/avfaudio/avspeechsynthesizer): ランチャー内での読み上げと再生コールバック。
 
 - [Adoptium API cookbook](https://github.com/adoptium/api.adoptium.net/blob/main/docs/cookbook.adoc): OS/CPU別ランタイム取得。
 - [ChromiumのGPU用Seatbeltプロファイル](https://chromium.googlesource.com/chromium/src/+/main/sandbox/policy/mac/gpu.sb): MetalコンパイラのXPCサービス指定。今回の追加はローカルの拒否ログとクラッシュスタックでも裏付けた。

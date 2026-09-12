@@ -2,6 +2,7 @@
 #[cfg(target_os = "macos")]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     use monalauncher_lib::minecraft::{installer, launcher, paths::MinecraftPaths, runtime};
+    use monalauncher_lib::probe::NarratorBroker;
     use std::io::Write;
     use std::path::PathBuf;
     use std::process::{Command, Stdio};
@@ -13,21 +14,36 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);
     let root = args
         .next()
-        .ok_or("usage: minecraft_smoke DATA_ROOT [SECONDS]")?;
+        .ok_or("usage: minecraft_smoke DATA_ROOT [SECONDS] [VERSION]")?;
     let seconds: u64 = args.next().map(|s| s.parse()).transpose()?.unwrap_or(90);
+    let version = args.next().unwrap_or_else(|| "1.21.8".to_owned());
     if !(10..=600).contains(&seconds) || args.next().is_some() {
         return Err("invalid arguments".into());
     }
+    if version.is_empty()
+        || version.len() > 20
+        || !version
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
+    {
+        return Err("invalid smoke version".into());
+    }
     let paths = MinecraftPaths::new(PathBuf::from(root));
-    let id = "macos-seatbelt-demo";
+    let fixture = if version == "1.21.8" {
+        "macos-seatbelt-demo".to_owned()
+    } else {
+        format!("macos-demo-{}", version.replace('.', "-"))
+    };
+    let id = fixture.as_str();
     if !paths.instance_manifest(id).exists() {
-        let java = runtime::install_java_21_runtime(&paths, |p| eprintln!("{}", p.message))?;
+        let major = installer::version_java_major(&version)?;
+        let java = runtime::install_java_runtime(&paths, major, |p| eprintln!("{}", p.message))?;
         installer::install_sandbox_demo_instance(
             &paths,
             id,
-            "macOS Seatbelt Demo",
+            &format!("macOS Seatbelt Demo {version}"),
             &java,
-            "1.21.8",
+            &version,
             |p| {
                 if p.completed == p.total || p.completed % 250 == 0 {
                     eprintln!("{} {}/{} {}", p.stage, p.completed, p.total, p.message);
@@ -44,11 +60,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )?;
     }
     let mut spawned = launcher::spawn_instance(&paths, id, None)?;
+    let narrator = Arc::new(NarratorBroker::start(
+        spawned
+            .narrator_token
+            .take()
+            .ok_or("missing narrator token")?,
+    )?);
+    let stdout_narrator = Arc::clone(&narrator);
+    let expect_narrator = std::env::var_os("MONALAUNCHER_EXPECT_NARRATOR").is_some();
     eprintln!("Seatbelt Minecraft PID {}", spawned.child.id());
     let sound_started = Arc::new(AtomicBool::new(false));
     let sound_observer = Arc::clone(&sound_started);
     let stdout = std::thread::spawn(move || {
         launcher::read_lines(spawned.stdout, |line| {
+            if stdout_narrator.handle_line(&line) {
+                return;
+            }
             if line.ends_with("]: Sound engine started") {
                 sound_observer.store(true, Ordering::Relaxed);
             }
@@ -65,6 +92,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if started.elapsed() >= Duration::from_secs(seconds) {
             break;
         }
+        // The GUI app already runs the main event loop; the CLI must service speech callbacks too.
+        objc2_foundation::NSRunLoop::currentRunLoop().runUntilDate(
+            &objc2_foundation::NSDate::dateWithTimeIntervalSinceNow(0.01),
+        );
         std::thread::sleep(Duration::from_millis(250));
     }
     // A captured window buffer can contain pixels even when macOS never displays the window.
@@ -94,11 +125,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     spawned.child.wait()?;
     stdout.join().map_err(|_| "stdout reader failed")?;
     stderr.join().map_err(|_| "stderr reader failed")?;
+    let (speech_started, speech_completed) = narrator.playback_counts();
+    eprintln!(
+        "Narrator playback callbacks: started={speech_started}, completed={speech_completed}"
+    );
     if !window.status.success() {
         return Err("Minecraft window is not on screen (or visibility inspection failed)".into());
     }
     if !sound_started.load(Ordering::Relaxed) {
         return Err("Minecraft sound engine did not initialize".into());
+    }
+    if expect_narrator && (speech_started == 0 || speech_completed == 0) {
+        return Err("Minecraft narrator did not complete native speech playback".into());
     }
     eprintln!("SMOKE PASS: window on screen, sound engine initialized, process stopped.");
     Ok(())

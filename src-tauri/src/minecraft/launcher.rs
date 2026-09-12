@@ -378,6 +378,16 @@ pub fn spawn_instance(
                 .map(OsString::from),
         );
     }
+    #[cfg(any(windows, target_os = "macos"))]
+    if sandbox.is_some() {
+        arguments.push(OsString::from(format!(
+            "-Dmonalauncher.narrator.token={}",
+            sandbox_narrator_token
+        )));
+        if std::env::var_os("MONALAUNCHER_EXPECT_NARRATOR").is_some() {
+            arguments.push(OsString::from("-Dmonalauncher.narrator.smoke=true"));
+        }
+    }
     #[cfg(windows)]
     if sandbox.is_some() {
         // JNA cannot safely unpack through a SUBST alias in an AppContainer. The trusted launcher
@@ -388,10 +398,6 @@ pub fn spawn_instance(
         )));
         arguments.push(OsString::from("-Djna.nounpack=true"));
         arguments.push(OsString::from(format!(
-            "-Dmonalauncher.narrator.token={}",
-            sandbox_narrator_token
-        )));
-        arguments.push(OsString::from(format!(
             "-agentpath:{}={}",
             cursor_agent
                 .as_ref()
@@ -399,9 +405,6 @@ pub fn spawn_instance(
                 .display(),
             sandbox_narrator_token
         )));
-        if std::env::var_os("MONALAUNCHER_EXPECT_NARRATOR").is_some() {
-            arguments.push(OsString::from("-Dmonalauncher.narrator.smoke=true"));
-        }
     }
     #[cfg(target_os = "macos")]
     {
@@ -500,7 +503,7 @@ fn spawn_sandboxed(
     sandbox: &mut SandboxLayout,
     arguments: &[OsString],
     game_directory: &Path,
-    _narrator_token: &str,
+    narrator_token: &str,
 ) -> Result<SpawnedMinecraft, MinecraftLaunchError> {
     let java = fs::canonicalize(&instance.java_path)?;
     let java_home = java
@@ -531,7 +534,7 @@ fn spawn_sandboxed(
         stdout: Box::new(stdout),
         stderr: Box::new(stderr),
         sandboxed: true,
-        narrator_token: None,
+        narrator_token: Some(narrator_token.to_owned()),
     })
 }
 
@@ -713,7 +716,7 @@ fn sandbox_alias(
     Ok(sandbox.virtual_root.join(relative))
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 fn prepare_narrator_bridge(
     sandbox: &Option<SandboxLayout>,
 ) -> Result<Option<PathBuf>, MinecraftLaunchError> {
@@ -743,7 +746,7 @@ fn prepare_cursor_agent(
     Ok(Some(sandbox_alias(layout, &physical)?))
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 fn prepare_narrator_bridge(
     _sandbox: &Option<SandboxLayout>,
 ) -> Result<Option<PathBuf>, MinecraftLaunchError> {
