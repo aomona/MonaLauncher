@@ -82,8 +82,9 @@ async function mockDesktop(page: Page, count = 2) {
               return { name: "TestPlayer", uuid: "test-profile" };
             case "list_minecraft_versions":
               return {
-                latest: { release: "1.21.1", snapshot: "24w01a" },
+                latest: { release: "26.2", snapshot: "24w01a" },
                 versions: [
+                  { id: "26.2", versionType: "release", releaseTime: "2026-09-01" },
                   { id: "1.21.1", versionType: "release", releaseTime: "2024-08-08" },
                   { id: "24w01a", versionType: "snapshot", releaseTime: "2024-01-01" },
                   { id: "a1.2.6", versionType: "old_alpha", releaseTime: "2010-12-03" },
@@ -122,10 +123,14 @@ async function mockDesktop(page: Page, count = 2) {
               );
               return;
             case "install_sandbox_instance": {
+              // Match the backend contract so UI tests cannot accept an unusable ID.
+              if (!/^[a-zA-Z0-9_-]{1,41}$/.test(String(args.instanceId)))
+                throw new Error("Invalid instance ID: expected 1–41 safe characters");
               const item = {
                 ...instances[0],
                 id: String(args.instanceId),
                 name: String(args.name),
+                versionId: String(args.versionId),
               };
               instances.push(item);
               return item;
@@ -231,9 +236,18 @@ test("force quit waits for process status and deletion requires exact name", asy
 test("creation opens Overview and logs redact credentials", async ({ page }) => {
   await mockDesktop(page);
   await page.getByRole("button", { name: "Add instance" }).click();
-  await page.getByRole("textbox", { name: "Name", exact: true }).fill("New world");
+  await page.getByRole("textbox", { name: "Name", exact: true }).fill("26");
+  await expect(page.getByRole("combobox", { name: "Minecraft version", exact: true })).toHaveValue(
+    "26.2",
+  );
   await page.getByRole("button", { name: "Create", exact: true }).click();
-  await expect(page.getByRole("dialog", { name: "New world", exact: true })).toBeVisible();
+  const created = page.getByRole("dialog", { name: "26", exact: true });
+  await expect(created).toBeVisible();
+  await expect(created.getByRole("tab", { name: "Overview", exact: true })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(created).toContainText("26.2");
   await page.keyboard.press("Escape");
   await openSurvival(page);
   await page.getByRole("tab", { name: "Log", exact: true }).click();

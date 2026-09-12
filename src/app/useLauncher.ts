@@ -72,7 +72,8 @@ export function useLauncher() {
     : 0;
 
   const openCreator = () => {
-    setInstanceId(`instance-${crypto.randomUUID()}`);
+    // The backend allows 41 characters: 9 for the prefix and 32 UUID hex digits.
+    setInstanceId(`instance-${crypto.randomUUID().replace(/-/g, "")}`);
     setCreatorError(null);
     setProgress(null);
     setShowCreator(true);
