@@ -2,6 +2,8 @@
 
 既存のTauri起動コマンドから、macOSでは`/usr/bin/sandbox-exec`経由でMinecraftを開始する。Windowsは従来のAppContainerを使う。隔離を外した通常起動へのフォールバックは設けない。Linuxのランチャー組み込みは今回の対象外。
 
+権限指定はWindows/macOS共通の[サンドボックスポリシー](sandbox-policy.md)を使う。`minecraft.sb`にはOSの互換ルールを置き、インスタンスごとのファイル許可は共通ポリシーから生成する。
+
 ## 試し方
 
 ```sh

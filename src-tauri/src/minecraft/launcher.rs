@@ -276,6 +276,10 @@ pub fn spawn_instance(
         source_client_jar
     };
 
+    let launch_root = &sandbox.as_ref().expect("sandbox prepared").launch_root;
+    fs::create_dir_all(launch_root.join("tmp"))?;
+    let policy = super::sandbox_policy::policy_for_instance(paths, &instance, launch_root)
+        .map_err(|error| MinecraftLaunchError::Sandbox(error.to_string()))?;
     let narrator_bridge = prepare_narrator_bridge(&sandbox)?;
     #[cfg(windows)]
     let cursor_agent = prepare_cursor_agent(&sandbox)?;
@@ -381,6 +385,10 @@ pub fn spawn_instance(
     #[cfg(any(windows, target_os = "macos"))]
     if sandbox.is_some() {
         arguments.push(OsString::from(format!(
+            "-Dmonalauncher.narrator.enabled={}",
+            policy.narrator
+        )));
+        arguments.push(OsString::from(format!(
             "-Dmonalauncher.narrator.token={}",
             sandbox_narrator_token
         )));
@@ -464,6 +472,7 @@ pub fn spawn_instance(
         &arguments,
         &game_directory,
         sandbox_narrator_token,
+        &policy,
     )
 }
 
@@ -498,29 +507,16 @@ fn prepare_sandbox_layout(
 
 #[cfg(target_os = "macos")]
 fn spawn_sandboxed(
-    paths: &MinecraftPaths,
+    _paths: &MinecraftPaths,
     instance: &InstanceManifest,
     sandbox: &mut SandboxLayout,
     arguments: &[OsString],
-    game_directory: &Path,
+    _game_directory: &Path,
     narrator_token: &str,
+    policy: &crate::sandbox::SandboxPolicy,
 ) -> Result<SpawnedMinecraft, MinecraftLaunchError> {
     let java = fs::canonicalize(&instance.java_path)?;
-    let java_home = java
-        .parent()
-        .and_then(Path::parent)
-        .ok_or_else(|| MinecraftLaunchError::Sandbox("invalid Java home".to_owned()))?;
-    let temp = sandbox.launch_root.join("tmp");
-    let grants = [
-        ("JAVA_HOME", java_home.to_owned()),
-        ("LAUNCH", sandbox.launch_root.clone()),
-        ("LIBRARIES", paths.libraries()),
-        ("ASSETS", paths.assets()),
-        ("VERSION", paths.version_directory(&instance.version_id)),
-        ("GAME", game_directory.to_owned()),
-        ("TEMP", temp.clone()),
-    ];
-    let command = crate::platform::macos::command(&java, &grants, game_directory, &temp)?;
+    let command = crate::platform::macos::command(&java, policy)?;
     let mut child = crate::platform::macos::spawn(command, arguments, sandbox.launch_root.clone())?;
     sandbox.cleanup_on_drop = false; // The process now owns cleanup, including pipe setup failures.
     let stdout = child
@@ -534,28 +530,34 @@ fn spawn_sandboxed(
         stdout: Box::new(stdout),
         stderr: Box::new(stderr),
         sandboxed: true,
-        narrator_token: Some(narrator_token.to_owned()),
+        narrator_token: policy.narrator.then(|| narrator_token.to_owned()),
     })
 }
 
 #[cfg(windows)]
 fn spawn_sandboxed(
-    paths: &MinecraftPaths,
+    _paths: &MinecraftPaths,
     instance: &InstanceManifest,
     sandbox: &mut SandboxLayout,
     arguments: &[OsString],
     game_directory: &Path,
     narrator_token: &str,
+    policy: &crate::sandbox::SandboxPolicy,
 ) -> Result<SpawnedMinecraft, MinecraftLaunchError> {
-    use crate::platform::windows::appcontainer_process::launch_in_appcontainer;
-    use crate::platform::windows::sandbox_acl::grant_minecraft_access;
+    use crate::platform::windows::appcontainer_process::launch_with_policy;
+    use crate::platform::windows::sandbox_acl::grant_policy_access;
 
-    grant_minecraft_access(paths, instance, &sandbox.sid)
+    grant_policy_access(policy, &sandbox.sid)
         .map_err(|error| MinecraftLaunchError::Sandbox(error.to_string()))?;
     let java_path = sandbox_alias(sandbox, Path::new(&instance.java_path))?;
-    let mut child =
-        launch_in_appcontainer(&sandbox.profile_name, &java_path, arguments, game_directory)
-            .map_err(|error| MinecraftLaunchError::Sandbox(error.to_string()))?;
+    let mut child = launch_with_policy(
+        &sandbox.profile_name,
+        &java_path,
+        arguments,
+        game_directory,
+        policy,
+    )
+    .map_err(|error| MinecraftLaunchError::Sandbox(error.to_string()))?;
     if !child.token_info.is_app_container {
         let _ = child.kill();
         return Err(MinecraftLaunchError::SandboxedProcessNotIsolated);
@@ -594,7 +596,7 @@ fn spawn_sandboxed(
         stdout: Box::new(stdout),
         stderr: Box::new(stderr),
         sandboxed: true,
-        narrator_token: Some(narrator_token.to_owned()),
+        narrator_token: policy.narrator.then(|| narrator_token.to_owned()),
         cursor_broker: Some(cursor_broker),
     })
 }
@@ -607,6 +609,7 @@ fn spawn_sandboxed(
     _arguments: &[OsString],
     _game_directory: &Path,
     _narrator_token: &str,
+    _policy: &crate::sandbox::SandboxPolicy,
 ) -> Result<SpawnedMinecraft, MinecraftLaunchError> {
     Err(MinecraftLaunchError::Sandbox(
         "AppContainer is only available on Windows".to_owned(),
@@ -644,11 +647,6 @@ fn prepare_sandbox_layout(
         .as_nanos();
     let launch_root = launches.join(format!("{}-{nonce}", std::process::id()));
     fs::create_dir(&launch_root)?;
-    crate::platform::windows::sandbox_acl::lock_sandbox_launch_directory(
-        &launch_root,
-        &profile.sid,
-    )
-    .map_err(|error| MinecraftLaunchError::Sandbox(error.to_string()))?;
     Ok(Some(SandboxLayout {
         profile_name,
         sid: profile.sid,

@@ -8,3 +8,4 @@ pub mod modrinth;
 pub mod modrinth_installer;
 pub mod paths;
 pub mod runtime;
+pub mod sandbox_policy;

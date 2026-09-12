@@ -138,6 +138,7 @@ impl Drop for SpawnedAppContainerProcess {
 
 #[derive(Debug)]
 pub enum AppContainerProcessError {
+    Policy(crate::sandbox::PolicyError),
     EmptyExecutablePath,
     InteriorNullCharacter,
     MissingLocalAppData,
@@ -150,6 +151,7 @@ pub enum AppContainerProcessError {
 impl fmt::Display for AppContainerProcessError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Policy(error) => write!(formatter, "unsupported sandbox policy: {error}"),
             Self::EmptyExecutablePath => write!(formatter, "executable path must not be empty"),
             Self::InteriorNullCharacter => {
                 write!(
@@ -190,6 +192,20 @@ impl From<WindowsError> for AppContainerProcessError {
     fn from(error: WindowsError) -> Self {
         Self::Windows(error)
     }
+}
+
+pub(crate) fn launch_with_policy(
+    profile_name: &str,
+    executable: &Path,
+    arguments: &[OsString],
+    current_directory: &Path,
+    policy: &crate::sandbox::SandboxPolicy,
+) -> Result<SpawnedAppContainerProcess, AppContainerProcessError> {
+    // The low-level launcher supplies no capabilities. Reject any network request it cannot honor.
+    policy
+        .compile(crate::sandbox::Backend::AppContainer)
+        .map_err(AppContainerProcessError::Policy)?;
+    launch_in_appcontainer(profile_name, executable, arguments, current_directory)
 }
 
 pub fn launch_in_appcontainer(

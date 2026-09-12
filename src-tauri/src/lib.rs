@@ -2,6 +2,7 @@ mod auth;
 mod commands;
 pub mod minecraft;
 mod platform;
+pub mod sandbox;
 
 #[cfg(target_os = "macos")]
 pub mod probe {
@@ -24,7 +25,7 @@ pub mod probe {
         current_process_token_info, ProcessTokenError, ProcessTokenInfo,
     };
     pub use crate::platform::windows::sandbox_acl::{
-        grant_minecraft_access, lock_sandbox_launch_directory,
+        grant_policy_access, lock_sandbox_launch_directory,
     };
     pub use crate::platform::windows::sandbox_drive::SandboxDrive;
 }

@@ -13,18 +13,12 @@
     (subpath "/System/Library")
     (subpath "/System/Cryptexes")
     (subpath "/usr/lib")
-    (subpath "/private/var/db/timezone")
-    (subpath (param "JAVA_HOME"))
-    (subpath (param "LAUNCH"))
-    (subpath (param "LIBRARIES"))
-    (subpath (param "ASSETS"))
-    (subpath (param "VERSION")))
-(allow file-read* file-write* (subpath (param "GAME")))
+    (subpath "/private/var/db/timezone"))
 (allow file-read* file-write* (literal "/dev/null"))
 (allow file-read* (literal "/dev/random") (literal "/dev/urandom"))
 ; IP networking and host Unix sockets receive no grant.
 
-(allow file-read* file-write* (subpath (param "TEMP")))
+; Application file permissions are generated from the common policy.
 
 ; Desktop services required by the Minecraft window and OpenGL renderer.
 (allow mach-lookup

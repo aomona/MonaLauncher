@@ -1,17 +1,16 @@
 use std::error::Error;
 use std::fmt;
-use std::fs;
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::minecraft::model::InstanceManifest;
-use crate::minecraft::paths::MinecraftPaths;
+use crate::sandbox::{Backend, FileAccess, SandboxPolicy};
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 #[derive(Debug)]
 pub enum SandboxAclError {
+    Policy(String),
     MissingPath(PathBuf),
     InvalidJavaPath(PathBuf),
     GrantFailed { path: PathBuf, details: String },
@@ -23,6 +22,7 @@ pub enum SandboxAclError {
 impl fmt::Display for SandboxAclError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Policy(error) => write!(formatter, "unsupported sandbox policy: {error}"),
             Self::MissingPath(path) => {
                 write!(
                     formatter,
@@ -104,68 +104,37 @@ impl From<std::io::Error> for SandboxAclError {
     }
 }
 
-/// Minecraftに必要な場所だけをAppContainer SIDへ公開する。
-///
-/// 設定・起動メタデータは読み取り専用に保ち、ゲームが変更できるのは `game` と
-/// 起動ごとの作業ディレクトリだけにする。`grant:r` を使うことで、旧バージョンが
-/// インスタンス全体へ付けた変更権限も起動時に縮小される。
-pub fn grant_minecraft_access(
-    paths: &MinecraftPaths,
-    instance: &InstanceManifest,
+/// Apply the compiled common policy; compatibility additions are explicit in its plan.
+pub fn grant_policy_access(
+    policy: &SandboxPolicy,
     appcontainer_sid: &str,
 ) -> Result<(), SandboxAclError> {
-    let java_path = fs::canonicalize(Path::new(&instance.java_path))
-        .map_err(|_| SandboxAclError::InvalidJavaPath(PathBuf::from(&instance.java_path)))?;
-    let runtimes = fs::canonicalize(paths.runtimes())
-        .map_err(|_| SandboxAclError::InvalidJavaPath(java_path.clone()))?;
-    if !java_path.starts_with(&runtimes)
-        || !java_path
-            .file_name()
-            .is_some_and(|name| name.eq_ignore_ascii_case("java.exe"))
-    {
-        return Err(SandboxAclError::InvalidJavaPath(java_path));
+    let plan = policy
+        .compile(Backend::AppContainer)
+        .map_err(|error| SandboxAclError::Policy(error.to_string()))?;
+    for path in &plan.traverse {
+        grant(path, appcontainer_sid, "RX", false)?;
     }
-    let java_root = java_path
-        .parent()
-        .and_then(Path::parent)
-        .ok_or_else(|| SandboxAclError::InvalidJavaPath(java_path.to_owned()))?;
-
-    // Traverse-only roots are deliberately non-inheriting: an instance must not be able to read
-    // another instance's settings merely because all data lives below the same Minecraft root.
-    for traverse_path in [
-        paths.root(),
-        paths.instances().as_path(),
-        paths.runtimes().as_path(),
-    ] {
-        grant(traverse_path, appcontainer_sid, "RX", false)?;
-    }
-    let mut java_ancestor = java_root.parent();
-    while let Some(ancestor) = java_ancestor {
-        if ancestor == paths.runtimes() {
-            break;
+    // Apply parent read-only grants first, then explicit writable children. This also replaces
+    // the broad inherited instance grants from older launcher versions.
+    for access in [FileAccess::ReadOnly, FileAccess::ReadWrite] {
+        for file in plan.files.iter().filter(|file| file.access == access) {
+            if file.path == policy.resources().launch {
+                lock_sandbox_launch_directory(&file.path, appcontainer_sid)?;
+                continue;
+            }
+            let permission = match access {
+                FileAccess::ReadOnly => "RX",
+                FileAccess::ReadWrite => "M",
+            };
+            grant(&file.path, appcontainer_sid, permission, true)?;
+            if file.path == policy.resources().instance_root {
+                set_integrity_level(&file.path, "M")?;
+            } else if access == FileAccess::ReadWrite {
+                set_integrity_level(&file.path, "L")?;
+            }
         }
-        if ancestor.starts_with(&runtimes) {
-            grant(ancestor, appcontainer_sid, "RX", false)?;
-        }
-        java_ancestor = ancestor.parent();
     }
-
-    for read_execute_path in [
-        java_root,
-        paths.assets().as_path(),
-        paths.libraries().as_path(),
-        paths.versions().as_path(),
-    ] {
-        grant(read_execute_path, appcontainer_sid, "RX", true)?;
-    }
-
-    let instance_directory = paths.instance(&instance.id);
-    let game_directory = paths.instance_game_directory(&instance.id);
-    grant(&instance_directory, appcontainer_sid, "RX", true)?;
-    set_integrity_level(&instance_directory, "M")?;
-    grant(&game_directory, appcontainer_sid, "M", true)?;
-    set_integrity_level(&game_directory, "L")?;
-
     Ok(())
 }
 

@@ -25,7 +25,7 @@ use monalauncher_lib::minecraft::model::{InstanceManifest, ModLoader};
 use monalauncher_lib::minecraft::paths::MinecraftPaths;
 #[cfg(windows)]
 use monalauncher_lib::probe::{
-    current_process_token_info, ensure_appcontainer_profile, grant_minecraft_access,
+    current_process_token_info, ensure_appcontainer_profile, grant_policy_access,
     launch_in_appcontainer, launch_probe_in_appcontainer, lock_sandbox_launch_directory,
     profile_name_for_instance, SandboxDrive,
 };
@@ -149,7 +149,7 @@ fn run_acl_probe_in(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     for directory in [
         paths.assets(),
         paths.libraries(),
-        paths.versions(),
+        paths.version_directory("1.21.8"),
         paths.instance_game_directory(instance_id),
         paths.instance(other_instance_id),
         java.parent().ok_or("Java path has no parent")?.to_owned(),
@@ -182,7 +182,7 @@ fn run_acl_probe_in(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
         br#"{"id":"acl-other"}"#,
     )?;
     let launch_directory = paths.instance(instance_id).join("sandbox-launches/probe");
-    fs::create_dir_all(&launch_directory)?;
+    fs::create_dir_all(launch_directory.join("tmp"))?;
 
     let profile_name = profile_name_for_instance(instance_id)?;
     let profile = ensure_appcontainer_profile(&profile_name)?;
@@ -190,7 +190,12 @@ fn run_acl_probe_in(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     // below must replace it, including on existing metadata files, rather than merely adding a
     // narrower ACE alongside it.
     grant_legacy_instance_access(&paths.instance(instance_id), &profile.sid)?;
-    grant_minecraft_access(&paths, &instance, &profile.sid)?;
+    let policy = monalauncher_lib::minecraft::sandbox_policy::policy_for_instance(
+        &paths,
+        &instance,
+        &launch_directory,
+    )?;
+    grant_policy_access(&policy, &profile.sid)?;
     lock_sandbox_launch_directory(&launch_directory, &profile.sid)?;
 
     let executable = std::env::current_exe()?;

@@ -4,6 +4,7 @@ use std::process::Command;
 
 fn main() {
     println!("cargo:rerun-if-changed=java/narrator-bridge");
+    println!("cargo:rerun-if-changed=java/narrator-bridge-smoke");
     println!("cargo:rerun-if-changed=java/cursor-agent");
     println!("cargo:rerun-if-changed=java/cursor-agent-smoke");
     println!("cargo:rerun-if-env-changed=MONALAUNCHER_MICROSOFT_CLIENT_ID");
@@ -116,4 +117,23 @@ fn build_narrator_bridge() {
         .status()
         .expect("jar is required to package the narrator bridge");
     assert!(jar.success(), "jar failed to package the narrator bridge");
+    let javac = Command::new("javac")
+        .args(["--release", "8", "-cp"])
+        .arg(&jar_path)
+        .arg("-d")
+        .arg(&classes)
+        .arg("java/narrator-bridge-smoke/NarratorPolicySmoke.java")
+        .status()
+        .expect("javac is required for the narrator policy smoke test");
+    assert!(javac.success(), "narrator policy smoke compilation failed");
+    let classpath = env::join_paths([&jar_path, &classes]).expect("valid Java classpath");
+    for enabled in ["true", "false"] {
+        let result = Command::new("java")
+            .arg("-cp")
+            .arg(&classpath)
+            .args(["NarratorPolicySmoke", enabled])
+            .status()
+            .expect("java is required for the narrator policy smoke test");
+        assert!(result.success(), "narrator policy smoke failed ({enabled})");
+    }
 }
