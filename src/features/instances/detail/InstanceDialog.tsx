@@ -50,11 +50,12 @@ export function InstanceDialog({
   const body = useRef<HTMLDivElement>(null);
   const [toasts] = useState(createToastManager);
   const notifySaved = (title: string) => {
-    toasts.notify({ id: "instance-save", title, type: "success", priority: "low", timeout: 5000 });
+    toasts.close("instance-save-error");
+    toasts.notify({ title, type: "success", priority: "low", timeout: 5000 });
   };
   const notifySaveError = () => {
     toasts.notify({
-      id: "instance-save",
+      id: "instance-save-error",
       title: "保存できませんでした",
       type: "error",
       priority: "high",

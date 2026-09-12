@@ -199,6 +199,7 @@
     --mona-controls-icon-stroke-width: 0.125rem;
     --mona-controls-checkbox-visual-size: 1rem;
     --mona-controls-checkbox-hit-target: 2rem;
+    --mona-controls-toast-width: 17.5rem;
     --mona-controls-switch-width: 2.25rem;
     --mona-controls-switch-height: 1.25rem;
     --mona-controls-switch-thumb: 1rem;
@@ -218,6 +219,8 @@
     --mona-motion-menu: 180ms;
     --mona-motion-modal: 220ms;
     --mona-motion-group-collapse: 180ms;
+    --mona-motion-toast: 500ms;
+    --mona-motion-toast-easing: cubic-bezier(0.22, 1, 0.36, 1);
     --mona-motion-tooltip-delay: 500ms;
     --mona-motion-hover-easing: cubic-bezier(0.2, 0, 0, 1);
     --mona-motion-modal-easing: cubic-bezier(0.16, 1, 0.3, 1);

@@ -1,15 +1,18 @@
+import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { createToastManager, ToastProvider, ToastViewport } from "../../src/components/Toast";
 
 /** Browser-only fixture; never imported by the application. */
-export function mountToasts() {
+export function mountToasts(limit = 4) {
   const container = document.createElement("div");
   document.body.append(container);
   const manager = createToastManager();
-  createRoot(container).render(
-    <ToastProvider toastManager={manager} timeout={0} limit={4}>
-      <ToastViewport />
-    </ToastProvider>,
+  flushSync(() =>
+    createRoot(container).render(
+      <ToastProvider toastManager={manager} timeout={0} limit={limit}>
+        <ToastViewport />
+      </ToastProvider>,
+    ),
   );
   return () => {
     manager.notify({ title: "通常の通知" });

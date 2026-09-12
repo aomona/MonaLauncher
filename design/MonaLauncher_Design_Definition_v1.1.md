@@ -347,7 +347,7 @@ Section heading18px/600、設定項目間に必要なSeparator。外周Cardは�
 
 Inputのblurだけで保存しない。単一行のEnterはApplyと同じにできるが、日本語IME変換確定中は実行しない。Apply/Cancelは編集中だけその項目の下に現れる。ゲーム起動用FooterにSaveボタンを混ぜない。
 
-保存中はSaving…。Instanceの表示名・Permissionsの保存成功は、アプリ画面全体の右下のToastで通知する。Toastは5秒で自動終了し、Hover/Focus中は停止する。連続した保存成功は1件にまとめ、閉じるボタンを用意する。それ以外は完了時に同じ場所で短くSavedを表示する。失敗時はDraftを残し、原因とRetryを近傍へ表示する。保存が失敗した値を保存済みとして扱わない。切替型Controlの保存失敗は最後の確定値へ戻し、失敗と再試行の導線を表示する。
+保存中はSaving…。Instanceの表示名・Permissionsの保存成功は、アプリ画面全体の右下のToastで通知する。Toastは5秒で自動終了し、Hover/Focus中は停止する。保存成功を最大3件まで重ね、閉じるボタンを用意する。それ以外は完了時に同じ場所で短くSavedを表示する。失敗時はDraftを残し、原因とRetryを近傍へ表示する。保存が失敗した値を保存済みとして扱わない。切替型Controlの保存失敗は最後の確定値へ戻し、失敗と再試行の導線を表示する。
 
 ### 10.3 未保存の変更
 
@@ -428,6 +428,8 @@ ButtonはSpinner＋ラベル、Page/List初回読込は実形状に近いSkeleto
 SkeletonはNeutralなShimmer。周期1400ms、連続した演出は最大4秒で静止する。長い待機を装飾で隠さず、状態文字を添える。ShimmerのGradientはLoading専用であり、通常のCard背景等へ流用しない。
 
 ### Toast
+
+通常時は新しい通知を手前にして最大3件をstackする。幅280px（狭幅では画面幅−32px）、背後は8pxずつ見せて0.9/0.8倍へ縮小する。Hover/Focusで自然な高さと8px間隔へ展開する。出現・退出・並び替えは500msのease-out、Contentの透過と高さは150ms。スワイプ方向へ退出でき、Reduced motionでは位置関係を保ったままアニメーションを停止する。
 
 右下、最大3件。通常成功通知を大量に出さない。コピー完了・設定保存は原則操作した場所で伝える。Instanceの表示名・Permissionsの保存成功は画面全体の右下のToastで伝える。失敗をToastだけに置き、消えたら原因が分からなくなる設計にしない。
 

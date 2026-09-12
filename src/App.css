@@ -153,11 +153,80 @@
     @apply flex flex-wrap items-start justify-between gap-4 border-b border-border-subtle py-4;
   }
   .toast-viewport {
-    @apply pointer-events-none fixed right-4 bottom-4 z-50 flex flex-col gap-2;
-    max-width: calc(100vw - 2 * var(--spacing-4));
+    @apply pointer-events-none fixed right-4 bottom-4 z-50;
+    width: min(var(--mona-controls-toast-width), calc(100vw - 2 * var(--spacing-4)));
+    height: var(--toast-frontmost-height, 0px);
   }
   .toast {
-    @apply pointer-events-auto flex items-center gap-2 rounded-control border border-border-subtle bg-background-floating py-1 pl-3 pr-1 text-text-body shadow-floating;
+    @apply design-focus pointer-events-auto absolute right-0 bottom-0 w-full rounded-control border border-border-subtle bg-background-floating text-text-body shadow-floating;
+    --toast-gap: var(--spacing-2);
+    --toast-peek: var(--spacing-2);
+    --toast-scale: max(0, 1 - var(--toast-index) * 0.1);
+    --toast-shrink: calc(1 - var(--toast-scale));
+    --toast-stack-height: var(--toast-frontmost-height, var(--toast-height));
+    --toast-expanded-y: calc(
+      -1 * var(--toast-offset-y) - var(--toast-index) * var(--toast-gap) +
+        var(--toast-swipe-movement-y)
+    );
+    z-index: calc(100 - var(--toast-index));
+    height: var(--toast-stack-height);
+    transform-origin: bottom center;
+    transform: translateX(var(--toast-swipe-movement-x))
+      translateY(
+        calc(
+          var(--toast-swipe-movement-y) - var(--toast-index) * var(--toast-peek) -
+            var(--toast-shrink) * var(--toast-stack-height)
+        )
+      )
+      scale(var(--toast-scale));
+    transition:
+      transform var(--mona-motion-toast) var(--mona-motion-toast-easing),
+      opacity var(--mona-motion-toast),
+      height var(--mona-motion-hover);
+  }
+  .toast[data-expanded] {
+    height: var(--toast-height);
+    transform: translateX(var(--toast-swipe-movement-x)) translateY(var(--toast-expanded-y));
+  }
+  .toast[data-swiping] {
+    transition: none;
+  }
+  .toast[data-starting-style],
+  .toast[data-ending-style] {
+    opacity: 0;
+    transform: translateY(150%);
+  }
+  .toast[data-ending-style][data-swipe-direction="up"] {
+    transform: translateY(calc(var(--toast-swipe-movement-y) - 150%));
+  }
+  .toast[data-ending-style][data-swipe-direction="left"] {
+    transform: translateX(calc(var(--toast-swipe-movement-x) - 150%))
+      translateY(var(--toast-expanded-y));
+  }
+  .toast[data-ending-style][data-swipe-direction="right"] {
+    transform: translateX(calc(var(--toast-swipe-movement-x) + 150%))
+      translateY(var(--toast-expanded-y));
+  }
+  .toast[data-ending-style][data-swipe-direction="down"] {
+    transform: translateY(calc(var(--toast-swipe-movement-y) + 150%));
+  }
+  .toast::after {
+    content: "";
+    position: absolute;
+    top: 100%;
+    left: 0;
+    width: 100%;
+    height: calc(var(--toast-gap) + var(--mona-controls-border-width));
+  }
+  .toast-content {
+    @apply flex min-w-0 items-center gap-2 overflow-hidden py-1 pl-3 pr-1;
+    transition: opacity var(--mona-motion-hover) var(--mona-motion-toast-easing);
+  }
+  .toast-content[data-behind] {
+    opacity: 0;
+  }
+  .toast-content[data-expanded] {
+    opacity: 1;
   }
   .toast[data-type="success"] {
     @apply border-success-foreground/20 bg-success-background text-success-foreground;
@@ -175,7 +244,8 @@
   }
   .toast[data-limited],
   .toast[data-ending-style] {
-    display: none;
+    opacity: 0;
+    pointer-events: none;
   }
   .switch {
     @apply design-focus inline-flex shrink-0 cursor-pointer items-center justify-center rounded-control;

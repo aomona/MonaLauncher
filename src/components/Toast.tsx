@@ -22,18 +22,23 @@ export function ToastViewport() {
       {toasts.map((toast) => {
         const Icon = toneIcons[toast.type as ToastTone] ?? Info;
         return (
-          <Toast.Root key={toast.id} toast={toast} className="toast">
-            <Icon className="shrink-0" size={16} aria-hidden="true" />
-            <Toast.Content className="min-w-0 flex-1">
-              <Toast.Title className="text-small wrap-anywhere" />
+          <Toast.Root
+            key={toast.id}
+            toast={toast}
+            className="toast"
+            swipeDirection={["up", "down", "left", "right"]}
+          >
+            <Toast.Content className="toast-content">
+              <Icon className="shrink-0" size={16} aria-hidden="true" />
+              <Toast.Title className="min-w-0 flex-1 text-small wrap-anywhere" />
+              <Toast.Close
+                render={
+                  <Button tone="ghost" className="toast-close shrink-0" aria-label="通知を閉じる" />
+                }
+              >
+                <X size={16} aria-hidden="true" />
+              </Toast.Close>
             </Toast.Content>
-            <Toast.Close
-              render={
-                <Button tone="ghost" className="toast-close shrink-0" aria-label="通知を閉じる" />
-              }
-            >
-              <X size={16} aria-hidden="true" />
-            </Toast.Close>
           </Toast.Root>
         );
       })}

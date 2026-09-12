@@ -637,11 +637,17 @@ test("permissions persist per instance and failed saves retain the confirmed val
   await page.keyboard.press("Space");
   await expect(game).not.toBeChecked();
   await expect(narrator).toBeChecked();
-  const toast = page.locator(".toast");
+  const toast = page.locator(".toast:not([data-ending-style])");
   await expect(toast).toHaveText("権限を保存しました");
   await expect(page.getByRole("tabpanel").getByText("Saved", { exact: true })).toHaveCount(0);
-  const toastBounds = (await toast.boundingBox())!;
   const viewport = page.viewportSize()!;
+  await expect
+    .poll(async () => {
+      const bounds = (await toast.boundingBox())!;
+      return Math.round(bounds.y + bounds.height);
+    })
+    .toBe(viewport.height - 16);
+  const toastBounds = (await toast.boundingBox())!;
   expect(toastBounds.x + toastBounds.width).toBeCloseTo(viewport.width - 16, 0);
   expect(toastBounds.y + toastBounds.height).toBeCloseTo(viewport.height - 16, 0);
   expect(toastBounds.height).toBeLessThanOrEqual(44);
@@ -651,7 +657,7 @@ test("permissions persist per instance and failed saves retain the confirmed val
   await page.getByRole("button", { name: "通知を閉じる", exact: true }).focus();
   await page.keyboard.press("Space");
   await expect(toast).toHaveCount(0);
-  await expect(page.getByRole("dialog")).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "Survival", exact: true })).toBeVisible();
   await page.evaluate(() => {
     (window as any).__test.failPermissions = true;
   });
@@ -803,6 +809,9 @@ test("toast tones stay compact at the window corner in light and dark themes", a
   });
   const toasts = page.locator(".toast");
   await expect(toasts).toHaveCount(4);
+  await toasts.first().hover();
+  await expect(toasts.first()).toHaveAttribute("data-expanded", "");
+  await expect.poll(() => toasts.first().evaluate((el) => el.getAnimations().length)).toBe(0);
   for (const theme of ["light", "dark"]) {
     await page.evaluate((theme) => {
       document.documentElement.dataset.theme = theme;
@@ -832,4 +841,77 @@ test("toast tones stay compact at the window corner in light and dark themes", a
   await page.setViewportSize({ width: 320, height: 640 });
   await expect(page.locator(".toast-viewport")).toBeInViewport({ ratio: 1 });
   await page.screenshot({ path: testInfo.outputPath("toast-tones-narrow.png") });
+});
+
+test("toast stack expands, dismisses with motion, and honors reduced motion", async ({
+  page,
+}, testInfo) => {
+  await page.goto("/");
+  await page.evaluate(async () => {
+    const path = "/tests/fixtures/toasts.tsx";
+    const fixture = await import(path);
+    const show = fixture.mountToasts(3);
+    await new Promise(requestAnimationFrame);
+    show();
+  });
+  const visible = page.locator(".toast:not([data-limited]):not([data-ending-style])");
+  await expect(visible).toHaveCount(3);
+  await expect
+    .poll(() =>
+      page.locator(".toast").evaluateAll((els) => els.flatMap((el) => el.getAnimations()).length),
+    )
+    .toBe(0);
+  const stacked = await visible.evaluateAll((els) =>
+    els.map((el) => ({
+      top: el.getBoundingClientRect().top,
+      height: el.getBoundingClientRect().height,
+    })),
+  );
+  expect(stacked[0].top - stacked[1].top).toBeCloseTo(8, 0);
+  expect(stacked[1].height / stacked[0].height).toBeCloseTo(0.9, 1);
+  await expect(visible.nth(1).locator(".toast-content")).toHaveCSS("opacity", "0");
+  await expect(page.locator(".toast[data-limited]")).toHaveCSS("opacity", "0");
+  await page.screenshot({ path: testInfo.outputPath("toast-stack-collapsed.png") });
+  await visible.first().hover();
+  await expect(visible.first()).toHaveAttribute("data-expanded", "");
+  await expect
+    .poll(() => visible.nth(1).evaluate((el) => el.getAnimations().length))
+    .toBeGreaterThan(0);
+  await expect
+    .poll(() => visible.evaluateAll((els) => els.flatMap((el) => el.getAnimations()).length))
+    .toBe(0);
+  const expanded = await visible.evaluateAll((els) =>
+    els.map((el) => ({
+      top: el.getBoundingClientRect().top,
+      bottom: el.getBoundingClientRect().bottom,
+    })),
+  );
+  expect(expanded[0].top - expanded[1].bottom).toBeCloseTo(8, 0);
+  await expect(visible.nth(1).locator(".toast-content")).toHaveCSS("opacity", "1");
+  await page.screenshot({ path: testInfo.outputPath("toast-stack-expanded.png") });
+  const front = visible.first();
+  const title = await front.textContent();
+  await front.getByRole("button", { name: "通知を閉じる", exact: true }).click();
+  const ending = page.locator(".toast[data-ending-style]").filter({ hasText: title! });
+  await expect(ending).toHaveCount(1);
+  await expect.poll(() => ending.evaluate((el) => el.getAnimations().length)).toBeGreaterThan(0);
+  await expect(ending).toHaveCount(0);
+  await page.getByRole("heading", { name: "Home", exact: true }).hover();
+  await expect(visible.first()).not.toHaveAttribute("data-expanded", "");
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.getByRole("button", { name: "Home", exact: true }).focus();
+  await page.keyboard.press("Tab");
+  await visible.first().focus();
+  await expect(visible.first()).toHaveAttribute("data-expanded", "");
+  await expect(visible.first()).toHaveCSS("transition-duration", "0s");
+  await expect
+    .poll(() => visible.evaluateAll((els) => els.flatMap((el) => el.getAnimations()).length))
+    .toBe(0);
+  const countBeforeSwipe = await page.locator(".toast").count();
+  const swipeBounds = (await visible.first().boundingBox())!;
+  await page.mouse.move(swipeBounds.x + 40, swipeBounds.y + 20);
+  await page.mouse.down();
+  await page.mouse.move(swipeBounds.x + 240, swipeBounds.y + 20, { steps: 8 });
+  await page.mouse.up();
+  await expect(page.locator(".toast")).toHaveCount(countBeforeSwipe - 1);
 });
