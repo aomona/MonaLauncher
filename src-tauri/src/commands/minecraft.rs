@@ -26,6 +26,7 @@ use crate::minecraft::{
         ModInstallProgress, ModInstallResult, ModRemovalResult,
     },
     paths::MinecraftPaths,
+    permissions::{permission_support, save_permissions, InstancePermissions, PermissionSupport},
     runtime::install_java_runtime,
 };
 
@@ -258,6 +259,22 @@ pub fn rename_minecraft_instance(
 ) -> Result<InstanceManifest, String> {
     let _operation = reserve_instance_operation(&state, &instance_id, true)?;
     rename_instance(&minecraft_paths(&app)?, &instance_id, &name).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn minecraft_permission_support() -> PermissionSupport {
+    permission_support()
+}
+
+#[tauri::command]
+pub fn update_minecraft_permissions(
+    app: AppHandle,
+    state: State<'_, MinecraftRuntimeState>,
+    instance_id: String,
+    permissions: InstancePermissions,
+) -> Result<InstanceManifest, String> {
+    let _operation = reserve_instance_operation(&state, &instance_id, false)?;
+    save_permissions(&minecraft_paths(&app)?, &instance_id, permissions)
 }
 
 #[tauri::command]

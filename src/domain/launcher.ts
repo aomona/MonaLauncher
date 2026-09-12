@@ -1,3 +1,13 @@
+export type InstancePermissions = {
+  gameWrite: boolean;
+  narrator: boolean;
+};
+
+export type PermissionSupport = {
+  platform: "windows" | "macos" | "unsupported";
+  editable: boolean;
+};
+
 export type MinecraftInstance = {
   id: string;
   name: string;
@@ -6,6 +16,7 @@ export type MinecraftInstance = {
   gameDirectory: string;
   demo: boolean;
   sandboxed: boolean;
+  permissions: InstancePermissions;
   modLoader:
     | {
         type: "vanilla";

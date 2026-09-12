@@ -174,6 +174,8 @@ pub struct InstanceManifest {
     pub sandboxed: bool,
     #[serde(default)]
     pub mod_loader: ModLoader,
+    #[serde(default)]
+    pub permissions: super::permissions::InstancePermissions,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -301,6 +303,10 @@ mod tests {
         .unwrap();
 
         assert_eq!(instance.mod_loader, ModLoader::Vanilla);
+        assert_eq!(
+            instance.permissions,
+            super::super::permissions::InstancePermissions::default()
+        );
     }
 
     #[test]

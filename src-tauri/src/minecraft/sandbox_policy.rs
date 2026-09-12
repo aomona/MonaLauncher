@@ -29,7 +29,7 @@ pub fn policy_for_instance(
         .parent()
         .and_then(Path::parent)
         .ok_or_else(|| PolicyError("Java home is missing".into()))?;
-    SandboxPolicy::minecraft(SandboxResources {
+    let policy = SandboxPolicy::minecraft(SandboxResources {
         data_root: paths.root().to_owned(),
         runtimes_root: runtimes,
         versions_root: paths.versions(),
@@ -41,5 +41,6 @@ pub fn policy_for_instance(
         game: paths.instance_game_directory(&instance.id),
         launch: launch.to_owned(),
         temp: launch.join("tmp"),
-    })
+    })?;
+    instance.permissions.apply(policy)
 }

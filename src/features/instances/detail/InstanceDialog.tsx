@@ -12,6 +12,7 @@ import { LogPanel } from "../log/LogPanel";
 import { InstanceActionConfirmation, type InstanceAction } from "./InstanceActionConfirmation";
 import { InstanceLaunchControls } from "./InstanceLaunchControls";
 import { InstanceSettingsPanel } from "./InstanceSettingsPanel";
+import { PermissionsPanel } from "./PermissionsPanel";
 import { OverviewPanel } from "./OverviewPanel";
 import { UnsavedChangesDialog } from "./UnsavedChangesDialog";
 import { useInstanceEditor } from "./useInstanceEditor";
@@ -26,6 +27,7 @@ const instanceTabs = [
   "Worlds",
   "Servers",
   "Screenshots",
+  "Permissions",
   "Settings",
 ];
 export function InstanceDialog({
@@ -84,6 +86,7 @@ export function InstanceDialog({
         {tab === "Log" && <LogPanel entries={l.visibleLogs} />}
         {tab === "Version" && <VersionPanel instance={instance} />}
         {tab === "Mods" && <ModsPanel launcher={l} />}
+        {tab === "Permissions" && <PermissionsPanel launcher={l} />}
         {tab === "Settings" && (
           <InstanceSettingsPanel
             launcher={l}

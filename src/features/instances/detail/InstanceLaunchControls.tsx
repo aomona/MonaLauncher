@@ -34,9 +34,11 @@ export function InstanceLaunchControls({
           ? "Stopping Minecraft…"
           : l.busy === "diagnose"
             ? "ファイルを検証しています…"
-            : l.isRunning
-              ? "Running"
-              : ""));
+            : l.busy === "permissions"
+              ? "権限を保存しています…"
+              : l.isRunning
+                ? "Running"
+                : ""));
   return (
     <>
       <output className="footer-status min-w-0 flex-1">

@@ -102,7 +102,7 @@ grid grid-cols-1 gap-4 @gallery-2:grid-cols-2 @gallery-3:grid-cols-3 @gallery-4:
 | Shell          | Sidebar240px、Main左揃え32px、900px未満はDrawerと16px。標準OSタイトルバー。4章                        |
 | Home           | Now Playing → Recent Instances → Screenshots → News。Heroや統計Cardを追加しない。6章                  |
 | Instances      | Row64px以上、Icon40px、Action常設、Separator。Group内Sort、Group間移動にはMenu代替を用意。7章         |
-| Instance Modal | 周囲32px/狭幅16px、最大幅1200px、Header/Tabs/Footer固定、本文だけScroll。全10Tabへキーボード到達。8章 |
+| Instance Modal | 周囲32px/狭幅16px、最大幅1200px、Header/Tabs/Footer固定、本文だけScroll。全11Tabへキーボード到達。8章 |
 | Modal / 編集   | Escは1イベント1レイヤー、Focusを閉じ込めて戻す。未保存Draftの保存/破棄ガード。9〜10章                 |
 | 処理           | Modal FooterとSidebarは同じ実状態を参照。閉じても処理取消にしない。架空の%や成功を表示しない。8・13章 |
 | Settings       | Select/Switchは保存結果を反映、入力はDraftとApply。失敗時Draftを残す。10章                            |
@@ -124,10 +124,16 @@ Tailwindの設定方式は [公式Themeドキュメント](https://tailwindcss.c
 
 - `pnpm check`: トークン同期、utility生成、書式、lint、型、production build。
 - `pnpm test:ui`: Playwright / Chromium。テスト専用のTauri IPCモックで、実際のReact画面を操作する。モックを本番アプリへ組み込まない。
-- 画面: 1440×900、1024×640、実効幅320px、文字200%、Light/Dark保存、OS High contrast、Reduced motion、狭幅Drawer、10個のTabのキーボード到達、200件の一覧と検索。
+- 画面: 1440×900、1024×640、実効幅320px、文字200%、Light/Dark保存、OS High contrast、Reduced motion、狭幅Drawer、11個のTabのキーボード到達、200件の一覧と検索。
 - 操作: Draftの保存失敗と維持、Escで1レイヤーだけ閉じる、作成後Overview、Mod検索への到達、名前一致による削除、強制終了失敗のRunning保持、終了通知までStopping維持、ログの資格情報マスキング。
 - 未検証: Windows/AppContainerでの実ゲーム起動、実Microsoft認証、実Modダウンロード、スクリーンリーダー。IPCモックの成功をこれらの実機検証の代わりにしない。
 
 初回のブラウザーテスト前に `pnpm exec playwright install chromium` を実行する。実データを持たない通常ブラウザーではプレビュー説明とEmpty stateを表示し、ゲーム操作を有効化しない。
 
 コンポーネントの責務と配置は [フロントエンドアーキテクチャ](../docs/frontend-architecture.md) に従う。機能固有の部品は `src/features/` 内に配置する。
+
+## Permissionsタブ（2026-09-12）
+
+Instance ModalにPermissionsを追加。ゲームデータ書き込み・ナレーターのSwitchは保存結果を反映し、次回起動の共通ポリシーに接続する。保存失敗時は確定値と再試行を残し、保存中は重複操作を防ぐ。固定権限は表示のみ。原本8.2・18章のTab数を更新し、寸法・色は既存トークンを再利用したためJSONの値は変更していない。
+
+Playwrightでは11タブへのキーボード到達、インスタンス別の保存・失敗と再試行・保存中のタブ移動/閉じる操作・実行中と未対応OSの編集禁止を確認。PermissionsのLight/Dark、1440×900・1024×640・実効幅320px、200%文字とHigh contrast/Reduced motionも確認した。IPCモックの保存テストと、Rustの実ファイル保存/ポリシー変換テストを区別する。

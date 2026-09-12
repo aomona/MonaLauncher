@@ -53,6 +53,8 @@ pub fn run() {
             commands::minecraft::list_minecraft_versions,
             commands::minecraft::remove_modrinth_mod,
             commands::minecraft::rename_minecraft_instance,
+            commands::minecraft::minecraft_permission_support,
+            commands::minecraft::update_minecraft_permissions,
             commands::minecraft::repair_minecraft_instance,
             commands::minecraft::search_modrinth_mods,
             commands::minecraft::stop_minecraft_instance,

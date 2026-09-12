@@ -152,6 +152,55 @@
   .setting-row {
     @apply flex flex-wrap items-start justify-between gap-4 border-b border-border-subtle py-4;
   }
+  .switch {
+    @apply design-focus inline-flex shrink-0 cursor-pointer items-center justify-center rounded-control;
+    min-height: var(--mona-controls-switch-hit-height);
+    width: var(--mona-controls-switch-width);
+  }
+  .switch-track {
+    @apply flex items-center rounded-full border border-border-control bg-control-background;
+    width: var(--mona-controls-switch-width);
+    height: var(--mona-controls-switch-height);
+    padding-inline: calc(
+      (var(--mona-controls-switch-height) - var(--mona-controls-switch-thumb)) / 2 -
+        var(--mona-controls-border-width)
+    );
+  }
+  .switch-thumb {
+    @apply block shrink-0 rounded-full bg-text-body;
+    width: var(--mona-controls-switch-thumb);
+    height: var(--mona-controls-switch-thumb);
+  }
+  .switch[data-checked] .switch-track {
+    @apply justify-end border-primary-background bg-primary-background;
+  }
+  .switch[data-checked] .switch-thumb {
+    @apply bg-primary-foreground;
+  }
+  .switch[data-disabled] {
+    cursor: not-allowed;
+  }
+  .switch[data-disabled] .switch-track {
+    @apply border-disabled-border bg-disabled-background;
+  }
+  .switch[data-disabled] .switch-thumb {
+    @apply bg-disabled-foreground;
+  }
+  @media (forced-colors: active) {
+    .switch-track {
+      border-color: ButtonText;
+    }
+    .switch-thumb {
+      background: ButtonText;
+    }
+    .switch[data-checked] .switch-track {
+      background: Highlight;
+      border-color: Highlight;
+    }
+    .switch[data-checked] .switch-thumb {
+      background: HighlightText;
+    }
+  }
   .progress {
     display: block;
     width: 100%;

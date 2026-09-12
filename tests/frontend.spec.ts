@@ -1,147 +1,173 @@
 import { test, expect, type Page } from "@playwright/test";
 
-async function mockDesktop(page: Page, count = 2) {
-  await page.addInitScript((count) => {
-    const callbacks: Record<number, (data: unknown) => void> = {};
-    const handlers: Record<string, number[]> = {};
-    let counter = 0;
-    const instances = [
-      {
-        id: "survival",
-        name: "Survival",
-        versionId: "1.21.1",
-        javaPath: "C:\\Java\\bin\\java.exe",
-        gameDirectory: "C:\\Minecraft\\Survival",
-        sandboxed: true,
-        demo: false,
-        modLoader: { type: "fabric", version: "0.16.0" },
-      },
-      {
-        id: "creative",
-        name: "とても長い日本語のインスタンス名で折り返しと操作ボタンへの到達性を確認する環境",
-        versionId: "1.20.4",
-        javaPath: "C:\\Java\\bin\\java.exe",
-        gameDirectory: "C:\\Minecraft\\Creative",
-        sandboxed: true,
-        demo: false,
-        modLoader: { type: "vanilla" },
-      },
-    ];
-    for (let i = 2; i < count; i++)
-      instances.push({ ...instances[0], id: `fixture-${i}`, name: `Instance ${i}` });
-    const state = {
-      calls: [] as string[],
-      failRename: false,
-      failStop: false,
-      delayModSearch: false,
-      rejectSearch: null as (() => void) | null,
-      emit: (event: string, payload: unknown) => {
-        for (const id of handlers[event] ?? []) callbacks[id]?.({ event, payload, id });
-      },
-    };
-    Object.assign(window, {
-      isTauri: true,
-      __test: state,
-      __TAURI_EVENT_PLUGIN_INTERNALS__: { unregisterListener: () => {} },
-      __TAURI_INTERNALS__: {
-        transformCallback: (fn: (data: unknown) => void) => {
-          callbacks[++counter] = fn;
-          return counter;
+async function mockDesktop(
+  page: Page,
+  count = 2,
+  platform: "windows" | "macos" | "unsupported" = "windows",
+) {
+  await page.addInitScript(
+    ({ count, platform }) => {
+      const callbacks: Record<number, (data: unknown) => void> = {};
+      const handlers: Record<string, number[]> = {};
+      let counter = 0;
+      const instances = [
+        {
+          id: "survival",
+          name: "Survival",
+          versionId: "1.21.1",
+          javaPath: "C:\\Java\\bin\\java.exe",
+          gameDirectory: "C:\\Minecraft\\Survival",
+          sandboxed: true,
+          permissions: { gameWrite: true, narrator: true },
+          demo: false,
+          modLoader: { type: "fabric", version: "0.16.0" },
         },
-        unregisterCallback: (id: number) => {
-          delete callbacks[id];
+        {
+          id: "creative",
+          name: "とても長い日本語のインスタンス名で折り返しと操作ボタンへの到達性を確認する環境",
+          versionId: "1.20.4",
+          javaPath: "C:\\Java\\bin\\java.exe",
+          gameDirectory: "C:\\Minecraft\\Creative",
+          sandboxed: true,
+          permissions: { gameWrite: true, narrator: true },
+          demo: false,
+          modLoader: { type: "vanilla" },
         },
-        invoke: async (command: string, args: Record<string, string | number>) => {
-          state.calls.push(command);
-          switch (command) {
-            case "plugin:event|listen":
-              (handlers[args.event] ??= []).push(Number(args.handler));
-              return args.handler;
-            case "plugin:event|unlisten":
-              for (const key in handlers)
-                handlers[key] = handlers[key].filter((id) => id !== args.eventId);
-              return;
-            case "list_minecraft_instances":
-              return [...instances];
-            case "microsoft_auth_status":
-              return { configured: true, authorized: false };
-            case "begin_microsoft_sign_in":
-              return {
-                sessionId: "test-session",
-                userCode: "TEST-CODE",
-                verificationUri: "https://www.microsoft.com/link",
-                expiresIn: 900,
-                interval: 0.01,
-              };
-            case "plugin:opener|open_url":
-            case "sign_out_microsoft":
-              return;
-            case "poll_microsoft_sign_in":
-              return { status: "authorized", retryAfter: null };
-            case "refresh_minecraft_account":
-              return { name: "TestPlayer", uuid: "test-profile" };
-            case "list_minecraft_versions":
-              return {
-                latest: { release: "26.2", snapshot: "24w01a" },
-                versions: [
-                  { id: "26.2", versionType: "release", releaseTime: "2026-09-01" },
-                  { id: "1.21.1", versionType: "release", releaseTime: "2024-08-08" },
-                  { id: "24w01a", versionType: "snapshot", releaseTime: "2024-01-01" },
-                  { id: "a1.2.6", versionType: "old_alpha", releaseTime: "2010-12-03" },
-                ],
-              };
-            case "list_fabric_loader_versions":
-              return [{ version: "0.16.0", stable: true }];
-            case "list_instance_mods":
-              return [];
-            case "search_modrinth_mods":
-              if (state.delayModSearch)
-                return new Promise((_resolve, reject) => {
-                  state.rejectSearch = () => reject(new Error("以前の検索のエラー"));
+      ];
+      for (let i = 2; i < count; i++)
+        instances.push({ ...instances[0], id: `fixture-${i}`, name: `Instance ${i}` });
+      const state = {
+        calls: [] as string[],
+        failRename: false,
+        failPermissions: false,
+        delayPermissions: false,
+        finishPermissions: null as (() => void) | null,
+        failStop: false,
+        delayModSearch: false,
+        rejectSearch: null as (() => void) | null,
+        emit: (event: string, payload: unknown) => {
+          for (const id of handlers[event] ?? []) callbacks[id]?.({ event, payload, id });
+        },
+      };
+      Object.assign(window, {
+        isTauri: true,
+        __test: state,
+        __TAURI_EVENT_PLUGIN_INTERNALS__: { unregisterListener: () => {} },
+        __TAURI_INTERNALS__: {
+          transformCallback: (fn: (data: unknown) => void) => {
+            callbacks[++counter] = fn;
+            return counter;
+          },
+          unregisterCallback: (id: number) => {
+            delete callbacks[id];
+          },
+          invoke: async (command: string, args: Record<string, string | number>) => {
+            state.calls.push(command);
+            switch (command) {
+              case "plugin:event|listen":
+                (handlers[args.event] ??= []).push(Number(args.handler));
+                return args.handler;
+              case "plugin:event|unlisten":
+                for (const key in handlers)
+                  handlers[key] = handlers[key].filter((id) => id !== args.eventId);
+                return;
+              case "list_minecraft_instances":
+                return [...instances];
+              case "microsoft_auth_status":
+                return { configured: true, authorized: false };
+              case "begin_microsoft_sign_in":
+                return {
+                  sessionId: "test-session",
+                  userCode: "TEST-CODE",
+                  verificationUri: "https://www.microsoft.com/link",
+                  expiresIn: 900,
+                  interval: 0.01,
+                };
+              case "plugin:opener|open_url":
+              case "sign_out_microsoft":
+                return;
+              case "poll_microsoft_sign_in":
+                return { status: "authorized", retryAfter: null };
+              case "refresh_minecraft_account":
+                return { name: "TestPlayer", uuid: "test-profile" };
+              case "list_minecraft_versions":
+                return {
+                  latest: { release: "26.2", snapshot: "24w01a" },
+                  versions: [
+                    { id: "26.2", versionType: "release", releaseTime: "2026-09-01" },
+                    { id: "1.21.1", versionType: "release", releaseTime: "2024-08-08" },
+                    { id: "24w01a", versionType: "snapshot", releaseTime: "2024-01-01" },
+                    { id: "a1.2.6", versionType: "old_alpha", releaseTime: "2010-12-03" },
+                  ],
+                };
+              case "list_fabric_loader_versions":
+                return [{ version: "0.16.0", stable: true }];
+              case "list_instance_mods":
+                return [];
+              case "search_modrinth_mods":
+                if (state.delayModSearch)
+                  return new Promise((_resolve, reject) => {
+                    state.rejectSearch = () => reject(new Error("以前の検索のエラー"));
+                  });
+                return { hits: [], offset: 0, limit: 20, totalHits: 0 };
+              case "minecraft_permission_support":
+                return { platform, editable: platform !== "unsupported" };
+              case "update_minecraft_permissions": {
+                if (state.delayPermissions)
+                  await new Promise<void>((resolve) => {
+                    state.finishPermissions = resolve;
+                  });
+                if (state.failPermissions) throw new Error("権限を保存できませんでした");
+                const item = instances.find((item) => item.id === args.instanceId)!;
+                item.permissions = {
+                  ...(args as unknown as { permissions: typeof item.permissions }).permissions,
+                };
+                return { ...item };
+              }
+              case "rename_minecraft_instance": {
+                if (state.failRename) throw new Error("保存テストエラー");
+                const item = instances.find((item) => item.id === args.instanceId)!;
+                item.name = String(args.name);
+                return { ...item };
+              }
+              case "launch_minecraft_instance":
+                state.emit("minecraft-status", {
+                  instanceId: args.instanceId,
+                  status: "running",
+                  exitCode: null,
                 });
-              return { hits: [], offset: 0, limit: 20, totalHits: 0 };
-            case "rename_minecraft_instance": {
-              if (state.failRename) throw new Error("保存テストエラー");
-              const item = instances.find((item) => item.id === args.instanceId)!;
-              item.name = String(args.name);
-              return { ...item };
+                return 123;
+              case "stop_minecraft_instance":
+                if (state.failStop) throw new Error("終了テストエラー");
+                return;
+              case "delete_minecraft_instance":
+                instances.splice(
+                  instances.findIndex((item) => item.id === args.instanceId),
+                  1,
+                );
+                return;
+              case "install_sandbox_instance": {
+                // Match the backend contract so UI tests cannot accept an unusable ID.
+                if (!/^[a-zA-Z0-9_-]{1,41}$/.test(String(args.instanceId)))
+                  throw new Error("Invalid instance ID: expected 1–41 safe characters");
+                const item = {
+                  ...instances[0],
+                  id: String(args.instanceId),
+                  name: String(args.name),
+                  versionId: String(args.versionId),
+                };
+                instances.push(item);
+                return item;
+              }
+              default:
+                throw new Error(`Unexpected command: ${command}`);
             }
-            case "launch_minecraft_instance":
-              state.emit("minecraft-status", {
-                instanceId: args.instanceId,
-                status: "running",
-                exitCode: null,
-              });
-              return 123;
-            case "stop_minecraft_instance":
-              if (state.failStop) throw new Error("終了テストエラー");
-              return;
-            case "delete_minecraft_instance":
-              instances.splice(
-                instances.findIndex((item) => item.id === args.instanceId),
-                1,
-              );
-              return;
-            case "install_sandbox_instance": {
-              // Match the backend contract so UI tests cannot accept an unusable ID.
-              if (!/^[a-zA-Z0-9_-]{1,41}$/.test(String(args.instanceId)))
-                throw new Error("Invalid instance ID: expected 1–41 safe characters");
-              const item = {
-                ...instances[0],
-                id: String(args.instanceId),
-                name: String(args.name),
-                versionId: String(args.versionId),
-              };
-              instances.push(item);
-              return item;
-            }
-            default:
-              throw new Error(`Unexpected command: ${command}`);
-          }
+          },
         },
-      },
-    });
-  }, count);
+      });
+    },
+    { count, platform },
+  );
   await page.goto("/");
 }
 async function openSurvival(page: Page) {
@@ -460,7 +486,7 @@ test("all tabs activate from the keyboard and label their panel", async ({ page 
   const dialog = page.getByRole("dialog", { name: "Survival", exact: true });
   const tabs = dialog.getByRole("tab");
   await tabs.first().focus();
-  for (let i = 0; i < 10; i++) {
+  for (let i = 0; i < 11; i++) {
     await expect(tabs.nth(i)).toHaveAttribute("aria-selected", "true");
     await expect(dialog.getByRole("tabpanel")).toHaveAccessibleName(
       (await tabs.nth(i).textContent())!,
@@ -595,4 +621,144 @@ test("canceling a guarded tab change keeps the draft and active panel", async ({
   await page.getByRole("tab", { name: "Overview", exact: true }).click();
   await page.getByRole("button", { name: "破棄して移動" }).click();
   await expect(page.getByRole("tabpanel")).toHaveAccessibleName("Overview");
+});
+
+test("permissions persist per instance and failed saves retain the confirmed value", async ({
+  page,
+}, testInfo) => {
+  await mockDesktop(page, 2, "macos");
+  await openSurvival(page);
+  await page.getByRole("tab", { name: "Permissions", exact: true }).click();
+  const game = page.getByRole("switch", { name: "ゲームデータへの書き込み", exact: true });
+  const narrator = page.getByRole("switch", { name: "ナレーター", exact: true });
+  await expect(game).toBeChecked();
+  await expect(narrator).toBeChecked();
+  await game.focus();
+  await page.keyboard.press("Space");
+  await expect(game).not.toBeChecked();
+  await expect(narrator).toBeChecked();
+  await page.evaluate(() => {
+    (window as any).__test.failPermissions = true;
+  });
+  await narrator.click();
+  await expect(page.getByRole("alert")).toContainText("権限を保存できませんでした");
+  await expect(narrator).toBeChecked();
+  await expect(page.getByText("Saved", { exact: true })).toHaveCount(0);
+  await page.evaluate(() => {
+    (window as any).__test.failPermissions = false;
+  });
+  await page.getByRole("button", { name: "再試行", exact: true }).click();
+  await expect(narrator).not.toBeChecked();
+  await expect(game).not.toBeChecked();
+  await page.screenshot({ path: testInfo.outputPath("permissions-macos.png") });
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Survival", exact: true }).click();
+  await expect(narrator).not.toBeChecked();
+  await expect(game).not.toBeChecked();
+  await page.keyboard.press("Escape");
+  await page
+    .getByRole("button", {
+      name: "とても長い日本語のインスタンス名で折り返しと操作ボタンへの到達性を確認する環境",
+      exact: true,
+    })
+    .click();
+  await page.getByRole("tab", { name: "Permissions", exact: true }).click();
+  await expect(game).toBeChecked();
+  await expect(narrator).toBeChecked();
+});
+
+test("permission save continues across tabs and prevents conflicting actions", async ({ page }) => {
+  await mockDesktop(page);
+  await openSurvival(page);
+  await page.getByRole("tab", { name: "Permissions", exact: true }).click();
+  await page.evaluate(() => {
+    (window as any).__test.delayPermissions = true;
+  });
+  await page.getByRole("switch", { name: "ナレーター", exact: true }).click();
+  await expect(page.getByText("Saving…", { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("dialog").getByText("権限を保存しています…", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("dialog").getByRole("button", { name: "Play", exact: true }),
+  ).toBeDisabled();
+  await expect(page.getByRole("switch").first()).toBeDisabled();
+  await expect(page.getByRole("switch").last()).toBeDisabled();
+  await page.getByRole("tab", { name: "Overview", exact: true }).click();
+  await page.keyboard.press("Escape");
+  await page.evaluate(() => {
+    (window as any).__test.finishPermissions();
+  });
+  await page.getByRole("button", { name: "Survival", exact: true }).click();
+  await page.getByRole("tab", { name: "Permissions", exact: true }).click();
+  await expect(page.getByRole("switch", { name: "ナレーター", exact: true })).not.toBeChecked();
+  await page.evaluate(() => {
+    (window as any).__test.emit("minecraft-status", {
+      instanceId: "survival",
+      status: "running",
+      exitCode: null,
+    });
+  });
+  await expect(page.getByText("権限を変更するにはゲームを終了してください。")).toBeVisible();
+  await expect(page.getByRole("switch").first()).toBeDisabled();
+  await expect(page.getByRole("switch").last()).toBeDisabled();
+});
+
+test("unsupported platforms show permissions without offering ineffective edits", async ({
+  page,
+}) => {
+  await mockDesktop(page, 2, "unsupported");
+  await openSurvival(page);
+  await page.getByRole("tab", { name: "Permissions", exact: true }).click();
+  await expect(page.getByText("このOSの権限設定はまだ未対応です。")).toBeVisible();
+  await expect(page.getByRole("switch").first()).toBeDisabled();
+  await expect(page.getByRole("switch").last()).toBeDisabled();
+});
+
+test("permission controls reflow in both themes and remain usable with accessibility settings", async ({
+  page,
+}, testInfo) => {
+  await mockDesktop(page);
+  await openSurvival(page);
+  await page.getByRole("tab", { name: "Permissions", exact: true }).click();
+  for (const theme of ["light", "dark"]) {
+    await page.evaluate((theme) => {
+      document.documentElement.dataset.theme = theme;
+    }, theme);
+    for (const size of [
+      { width: 1440, height: 900 },
+      { width: 1024, height: 640 },
+      { width: 320, height: 640 },
+    ]) {
+      await page.setViewportSize(size);
+      const panel = page.getByRole("tabpanel", { name: "Permissions", exact: true });
+      await expect.poll(() => panel.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+      for (const control of await page.getByRole("switch").all()) {
+        await control.scrollIntoViewIfNeeded();
+        await expect(control).toBeInViewport();
+        const bounds = await control.boundingBox();
+        expect(bounds!.width).toBeGreaterThanOrEqual(32);
+        expect(bounds!.height).toBeGreaterThanOrEqual(32);
+      }
+      await panel.evaluate((el) => {
+        el.scrollTop = 0;
+      });
+      await page.screenshot({
+        path: testInfo.outputPath(`permissions-${theme}-${size.width}.png`),
+      });
+    }
+  }
+  await page.emulateMedia({ forcedColors: "active", reducedMotion: "reduce" });
+  await page.evaluate(() => {
+    document.documentElement.style.fontSize = "200%";
+  });
+  const narrator = page.getByRole("switch", { name: "ナレーター", exact: true });
+  await narrator.focus();
+  await page.keyboard.press("Space");
+  await expect(narrator).not.toBeChecked();
+  await expect(page.getByRole("tab", { name: "Permissions", exact: true })).toBeInViewport();
+  await expect
+    .poll(() => page.getByRole("tabpanel").evaluate((el) => el.scrollWidth <= el.clientWidth))
+    .toBe(true);
+  await page.screenshot({ path: testInfo.outputPath("permissions-high-contrast-200.png") });
 });

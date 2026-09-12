@@ -169,6 +169,7 @@ fn run_acl_probe_in(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
             .into_owned(),
         demo: true,
         sandboxed: true,
+        permissions: Default::default(),
         mod_loader: ModLoader::Vanilla,
     };
     fs::write(

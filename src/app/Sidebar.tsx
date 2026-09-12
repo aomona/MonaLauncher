@@ -22,9 +22,11 @@ export function Sidebar({ page, navigate, launcher, playing, recent, openInstanc
     launcher.modInstallProgress?.message ??
     (busy === "stop"
       ? "Minecraftを終了しています…"
-      : busy === "diagnose"
-        ? "ファイルを検証しています…"
-        : null);
+      : busy === "permissions"
+        ? "権限を保存しています…"
+        : busy === "diagnose"
+          ? "ファイルを検証しています…"
+          : null);
   return (
     <aside className="sidebar" aria-label="アプリケーションナビゲーション">
       <nav aria-label="メインメニュー" className="min-h-0 flex-1 overflow-y-auto">

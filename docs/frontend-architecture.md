@@ -49,3 +49,5 @@ Reactの分割は、行数や見た目の小片ではなく、状態・操作・
 Dialogは呼び出し元の条件付き表示を維持するcontrolled component。閉じる要求は `onClose` を通し、未保存ガードと処理中の閉じ方はfeature側で決める。確認・Mod管理などの子Dialogは親DialogのReactツリー内に置き、Base UIがレイヤーの親子関係を認識できるようにする。初期Focusは `data-initial-focus`、未指定ならタイトル。未保存ガードを閉じた際は編集中のPanelへFocusを戻し、拒否したTab移動がFocus復帰で再発しないようにする。Portalの配色・文字・寸法は共通CSSで指定する。
 
 TabsはTablistとPanelをまとめ、表示内容はchildren、Panelのref・Scroll記憶・見た目は `panelProps` で受け取る。選択状態と未保存ガードは引き続きfeatureが所有する。Progressは未確定値を `null` としてBase UIに渡し、数値がない場合は%や塗りつぶし量を表示しない。
+
+Permissionsの保存済み値はIPCの `MinecraftInstance.permissions` に保持し、更新は `useLauncher` が調停する。`usePermissionSupport` はバックエンドの対応状況を取得する。`PermissionsPanel` は操作中・成功・再試行の表示を所有し、確定値を直接変更しない。タブやDialogを閉じても開始済みの保存結果はcontrollerのインスタンス一覧へ反映される。共通SwitchはBase UIを使い、値の保存・権限の意味はfeature側に残す。

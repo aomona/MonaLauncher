@@ -7,5 +7,6 @@ pub mod model;
 pub mod modrinth;
 pub mod modrinth_installer;
 pub mod paths;
+pub mod permissions;
 pub mod runtime;
 pub mod sandbox_policy;

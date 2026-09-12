@@ -563,6 +563,7 @@ where
         game_directory: game_directory.to_string_lossy().into_owned(),
         demo: options.demo,
         sandboxed: true,
+        permissions: Default::default(),
         mod_loader: options.mod_loader,
     };
 
@@ -1210,6 +1211,7 @@ mod tests {
             game_directory: directory.join("game").to_string_lossy().into_owned(),
             demo: false,
             sandboxed: true,
+            permissions: Default::default(),
             mod_loader: ModLoader::Vanilla,
         };
         fs::write(
@@ -1217,6 +1219,85 @@ mod tests {
             serde_json::to_vec_pretty(&manifest).unwrap(),
         )
         .unwrap();
+    }
+
+    #[cfg(any(windows, target_os = "macos"))]
+    #[test]
+    fn saves_permissions_without_replacing_other_settings_and_uses_them_at_launch() {
+        use crate::minecraft::{
+            permissions::{save_permissions, InstancePermissions},
+            sandbox_policy::policy_for_instance,
+        };
+        use crate::sandbox::{Backend, FileAccess, Resource};
+        let paths = temporary_minecraft_paths("instance-permissions");
+        write_test_instance(&paths, "trusted", "trusted");
+        write_test_instance(&paths, "other", "other");
+        let before = load_instance(&paths, "trusted").unwrap();
+        let changed = InstancePermissions {
+            game_write: false,
+            narrator: false,
+        };
+        save_permissions(&paths, "trusted", changed).unwrap();
+        // Reloading and another metadata edit must retain the persisted permission choices.
+        rename_instance(&paths, "trusted", "Renamed").unwrap();
+        let loaded = load_instance(&paths, "trusted").unwrap();
+        assert_eq!(loaded.permissions, changed);
+        assert_eq!(loaded.java_path, before.java_path);
+        assert_eq!(loaded.version_id, before.version_id);
+        assert_eq!(loaded.mod_loader, before.mod_loader);
+        assert_eq!(
+            load_instance(&paths, "other").unwrap().permissions,
+            InstancePermissions::default()
+        );
+        let launch = paths.instance("trusted").join("launch-test");
+        for dir in [
+            paths.assets(),
+            paths.libraries(),
+            paths.version_directory(&loaded.version_id),
+            launch.join("tmp"),
+        ] {
+            fs::create_dir_all(dir).unwrap();
+        }
+        let policy = policy_for_instance(&paths, &loaded, &launch).unwrap();
+        assert!(policy
+            .requested_files()
+            .contains(&(Resource::Game, FileAccess::ReadOnly)));
+        for backend in [Backend::Seatbelt, Backend::AppContainer] {
+            assert!(!policy.compile(backend).unwrap().narrator);
+        }
+        save_permissions(&paths, "trusted", InstancePermissions::default()).unwrap();
+        let restored = load_instance(&paths, "trusted").unwrap();
+        let policy = policy_for_instance(&paths, &restored, &launch).unwrap();
+        assert!(policy.narrator);
+        assert!(policy
+            .requested_files()
+            .contains(&(Resource::Game, FileAccess::ReadWrite)));
+        fs::remove_dir_all(paths.root()).unwrap();
+    }
+
+    #[cfg(any(windows, target_os = "macos"))]
+    #[test]
+    fn permission_save_rejects_unsafe_or_legacy_instances_without_changes() {
+        use crate::minecraft::permissions::{save_permissions, InstancePermissions};
+        let paths = temporary_minecraft_paths("reject-instance-permissions");
+        write_test_instance(&paths, "trusted", "trusted");
+        let manifest = paths.instance_manifest("trusted");
+        let mut instance = load_instance(&paths, "trusted").unwrap();
+        instance.sandboxed = false;
+        fs::write(&manifest, serde_json::to_vec_pretty(&instance).unwrap()).unwrap();
+        let before = fs::read(&manifest).unwrap();
+        assert!(save_permissions(
+            &paths,
+            "trusted",
+            InstancePermissions {
+                game_write: false,
+                narrator: false
+            }
+        )
+        .is_err());
+        assert!(save_permissions(&paths, "../trusted", InstancePermissions::default()).is_err());
+        assert_eq!(fs::read(&manifest).unwrap(), before);
+        fs::remove_dir_all(paths.root()).unwrap();
     }
 
     #[test]

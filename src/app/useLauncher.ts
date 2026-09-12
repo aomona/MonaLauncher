@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   InstallProgress,
   InstanceDiagnosis,
+  InstancePermissions,
   LogLine,
   MinecraftInstance,
   MinecraftLaunchProgress,
@@ -11,6 +12,7 @@ import type {
   MinecraftStatusEvent,
 } from "../domain/launcher";
 import { useAuthentication } from "../features/auth/useAuthentication";
+import { usePermissionSupport } from "../features/instances/detail/usePermissionSupport";
 import { useVersionCatalog } from "../features/instances/create/useVersionCatalog";
 import { redactLog } from "../features/instances/log/log-utils";
 import { useModManagement } from "../features/mods/useModManagement";
@@ -37,7 +39,15 @@ export function useLauncher() {
   const [runningIds, setRunningIds] = useState<Set<string>>(new Set());
 
   const [busy, setBusy] = useState<
-    "install" | "launch" | "stop" | "rename" | "delete" | "diagnose" | "repair" | null
+    | "install"
+    | "launch"
+    | "stop"
+    | "rename"
+    | "permissions"
+    | "delete"
+    | "diagnose"
+    | "repair"
+    | null
   >(null);
 
   const [error, setError] = useState<string | null>(null);
@@ -59,6 +69,8 @@ export function useLauncher() {
 
   const isRunning = selected ? runningIds.has(selected.id) : false;
 
+  const permissionSupport = usePermissionSupport();
+  const permissionsSaving = useRef(false);
   const auth = useAuthentication();
   const mods = useModManagement(selected, isRunning);
   const catalog = useVersionCatalog(showCreator, setCreatorError);
@@ -294,6 +306,30 @@ export function useLauncher() {
     }
   };
 
+  const saveSelectedPermissions = async (permissions: InstancePermissions) => {
+    if (!selected || busy || isRunning || mods.modOperationActive || permissionsSaving.current)
+      return false;
+    permissionsSaving.current = true;
+    setError(null);
+    setBusy("permissions");
+    try {
+      const updated = await invoke<MinecraftInstance>("update_minecraft_permissions", {
+        instanceId: selected.id,
+        permissions,
+      });
+      setInstances((current) =>
+        current.map((instance) => (instance.id === updated.id ? updated : instance)),
+      );
+      return true;
+    } catch (cause) {
+      setError(String(cause));
+      return false;
+    } finally {
+      permissionsSaving.current = false;
+      setBusy(null);
+    }
+  };
+
   const deleteSelected = async () => {
     if (!selected) return;
     const deletedId = selected.id;
@@ -321,6 +357,7 @@ export function useLauncher() {
     }
   };
   return {
+    ...permissionSupport,
     ...auth,
     ...mods,
     ...catalog,
@@ -355,6 +392,7 @@ export function useLauncher() {
     diagnoseSelected,
     repairSelected,
     renameSelected,
+    saveSelectedPermissions,
     deleteSelected,
   };
 }

@@ -269,13 +269,15 @@ Headerは最小64px、タイトルとCloseだけ。Version/Loader/Playを追加�
 
 ### 8.2 Tabs
 
-順番はOverview / Log / Version / Mods / Resource Packs / Shader Packs / Worlds / Servers / Screenshots / Settings。上部の横並び、Activeは2px underline。ラベルをアイコンだけにしない。More menuへ格納せず、横Scrollを維持する。
+順番はOverview / Log / Version / Mods / Resource Packs / Shader Packs / Worlds / Servers / Screenshots / Permissions / Settings。上部の横並び、Activeは2px underline。ラベルをアイコンだけにしない。More menuへ格納せず、横Scrollを維持する。
 
 Overflowがある側にだけ32px以上の左右Scroll buttonを表示する。端まで進んだ側は不要。これはタブの代替MenuではなくScroll補助である。フォーカスしたTabと選択したTabは自動的に可視範囲へ移動する。Gradient fadeは使わない。
 
 左右矢印で即時切替。Home/Endで先頭/末尾。TabキーはTablist全体で1つの停止点とし、次にPanelへ移る。軽量な初期表示データはModal表示時に取得・キャッシュし、Panelの枠と内容は待ち時間なく切り替える。重い未取得データはPanel内のLoading表示を経由し、取得結果で既存のFocusを移動させない。キー移動ごとに描画完了を待たせない。[S4]
 
 Modalを閉じて再度同じInstanceを開いた場合は、前回TabとScroll位置を復元する。削除された項目に戻ろうとした場合は該当Tabの一覧上部へ戻す。
+
+Permissionsでは、このインスタンスのゲーム全体に適用する権限を表示する。ゲームデータへの書き込みとナレーターはSwitchで変更・自動保存し、次回起動から適用する。既存インスタンスは従来の許可状態を引き継ぐ。通信・共有コードの読み取り・画面/入力/通常音声など未対応の変更は操作可能にせず、固定の状態として示す。実行中・保存中・Mod操作中・未対応OSでは編集を禁止し、理由を表示する。保存失敗時は確定値を維持し、近傍の再試行で同じ要求を送る。狭幅ではSwitchを説明文の下へ移す。値・寸法は既存Switchトークンを使う。
 
 ### 8.3 Footerと起動状態
 
@@ -518,7 +520,7 @@ Forced colors / High contrastではシステム色とOutlineを尊重する。Bo
 | 1024×640 / 1440×900、Light/Dark | 標準状態でPage全体の横Scrollなし。固定操作が見える |
 | 長い日本語Instance名・Path・Loader名 | 小さな文字への縮小やActionの消失なし。全文への経路あり |
 | 200%拡大・実効幅320px | 本文/フォームがReflowし、Navigation/Close/Apply/Playへ到達可能 |
-| 10個のInstance Tabs | マウスとキーボードの双方で全Tabへ到達でき、選択Tabが見える |
+| 11個のInstance Tabs | マウスとキーボードの双方で全Tabへ到達でき、選択Tabが見える |
 | Modal内でPlay | 準備/Download/起動中/失敗をFooterから確認できる |
 | Modalを閉じた処理 | 継続中ならSidebarに同じ状態が残る。閉じるだけで取消しない |
 | Save failure | 入力Draftが残る。成功・保存済みと誤表示しない |

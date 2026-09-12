@@ -1329,6 +1329,7 @@ mod tests {
             game_directory: game_directory.to_string_lossy().into_owned(),
             demo: false,
             sandboxed: true,
+            permissions: Default::default(),
             mod_loader: ModLoader::Fabric {
                 version: "0.17.2".to_owned(),
             },
