@@ -22,6 +22,10 @@ run = "pnpm design:check"
 description = "Lint frontend"
 run = "pnpm lint"
 
+[tasks.feed-test]
+description = "Validate deterministic RSS generation"
+run = "pnpm test:feed"
+
 [tasks.frontend-build]
 description = "Type-check and build frontend"
 run = "pnpm build"
@@ -45,6 +49,7 @@ depends = [
   "frontend-format",
   "frontend-lint",
   "frontend-build",
+  "feed-test",
   "rust-format",
   "rust-lint",
   "rust-test",

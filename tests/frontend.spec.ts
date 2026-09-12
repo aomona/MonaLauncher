@@ -75,6 +75,25 @@ async function mockDesktop(
         instances.push({ ...instances[0], id: `fixture-${i}`, name: `Instance ${i}` });
       const state = {
         calls: [] as string[],
+        newsFeed: {
+          entries: [] as {
+            id: string;
+            title: string;
+            summary: string;
+            category: string;
+            date: string;
+            articleUrl: string;
+            imageUrl: string | null;
+          }[],
+          fetchedAt: 1789185600000,
+          cached: false,
+          warning: null,
+        },
+        failNews: false,
+        delayNews: false,
+        finishNews: null as (() => void) | null,
+        articleUrl: "",
+        failOpenArticle: false,
         failRename: false,
         delayRename: false,
         finishRename: null as (() => void) | null,
@@ -110,6 +129,15 @@ async function mockDesktop(
                 for (const key in handlers)
                   handlers[key] = handlers[key].filter((id) => id !== args.eventId);
                 return;
+              case "cached_minecraft_news":
+                return null;
+              case "fetch_minecraft_news":
+                if (state.delayNews)
+                  await new Promise<void>((resolve) => {
+                    state.finishNews = resolve;
+                  });
+                if (state.failNews) throw new Error("ニュースの取得に失敗しました");
+                return state.newsFeed;
               case "list_minecraft_instances":
                 return [...instances];
               case "microsoft_auth_status":
@@ -123,6 +151,9 @@ async function mockDesktop(
                   interval: 0.01,
                 };
               case "plugin:opener|open_url":
+                if (state.failOpenArticle) throw new Error("open failed");
+                state.articleUrl = String(args.url);
+                return;
               case "sign_out_microsoft":
                 return;
               case "poll_microsoft_sign_in":
@@ -1176,4 +1207,236 @@ test("default-enabled compatibility permissions remain readable at narrow widths
       true,
     );
   }
+});
+
+async function loadNewsFixture(page: Page, showImage = false) {
+  await mockDesktop(page);
+  await page.evaluate(() => {
+    const state = (window as any).__test;
+    state.newsFeed.entries = Array.from({ length: 5 }, (_, i) => ({
+      id: `news-${i}`,
+      kind: i < 2 ? "javaPatchNotes" : "news",
+      title: `Minecraft News ${i + 1}`,
+      summary:
+        i === 0 ? '<script>alert("untrusted")</script> Minecraft update summary.' : "News summary",
+      category: i < 2 ? "Java Patch Notes · snapshot" : "Minecraft: Java Edition",
+      date: "2026-09-11T12:32:17.471Z",
+      articleUrl: "https://www.minecraft.net/article/test?ref=launcher",
+      imageUrl: i === 0 ? "https://launchercontent.mojang.com/images/test.jpg" : null,
+    }));
+  });
+  await page.route("https://launchercontent.mojang.com/images/**", (route) =>
+    showImage
+      ? route.fulfill({
+          contentType: "image/svg+xml",
+          body: '<svg xmlns="http://www.w3.org/2000/svg" width="160" height="90"><rect width="160" height="90" fill="#666"/></svg>',
+        })
+      : route.abort(),
+  );
+  await page.getByRole("button", { name: "更新", exact: true }).click();
+  await expect(page.locator(".news-row")).toHaveCount(3);
+}
+
+test("news shares Home's latest three and opens articles directly in the browser", async ({
+  page,
+}) => {
+  await loadNewsFixture(page);
+  await page.getByRole("button", { name: "News", exact: true }).click();
+  await expect(page.locator(".news-row")).toHaveCount(5);
+  await expect(
+    page.getByText('<script>alert("untrusted")</script> Minecraft update summary.', {
+      exact: true,
+    }),
+  ).toBeVisible();
+  const article = page.getByRole("button", { name: "Minecraft News 1", exact: true });
+  await page.evaluate(() => {
+    (window as any).__test.failOpenArticle = true;
+  });
+  await article.click();
+  await expect(page.getByRole("alert")).toContainText("開けませんでした");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await page.evaluate(() => {
+    (window as any).__test.failOpenArticle = false;
+  });
+  await article.focus();
+  await page.keyboard.press("Enter");
+  await expect
+    .poll(() => page.evaluate(() => (window as any).__test.articleUrl))
+    .toBe("https://www.minecraft.net/article/test?ref=launcher");
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(article).toBeFocused();
+  await page.getByRole("tab", { name: "MonaLauncher", exact: true }).click();
+  await expect(page.getByText("MonaLauncherのニュースは未配信です")).toBeVisible();
+  await page.getByRole("tab", { name: "Minecraft", exact: true }).click();
+  await expect(page.locator(".news-row")).toHaveCount(3);
+  await page.getByRole("tab", { name: "Java Patch Notes", exact: true }).click();
+  await expect(page.locator(".news-row")).toHaveCount(2);
+  await expect(page.getByRole("button", { name: "Minecraft News 1", exact: true })).toBeVisible();
+  await expect(
+    page.getByText("記事名をクリックすると、既定ブラウザで原文を開きます。"),
+  ).toHaveCount(0);
+});
+
+test("news keeps cached articles after a failed refresh and supports retry without blocking navigation", async ({
+  page,
+}) => {
+  await loadNewsFixture(page);
+  await page.evaluate(() => {
+    (window as any).__test.delayNews = true;
+  });
+  await page.getByRole("button", { name: "更新", exact: true }).click();
+  await expect(page.getByRole("status").filter({ hasText: "更新しています" })).toBeVisible();
+  await page.getByRole("button", { name: "News", exact: true }).click();
+  await expect(page.locator(".news-row")).toHaveCount(5);
+  await page.evaluate(() => {
+    (window as any).__test.failNews = true;
+    (window as any).__test.finishNews();
+  });
+  await expect(page.getByRole("alert")).toContainText("ニュースの取得に失敗しました");
+  await expect(page.getByRole("status").filter({ hasText: "キャッシュ" })).toBeVisible();
+  await expect(page.locator(".news-row")).toHaveCount(5);
+  await page.evaluate(() => {
+    (window as any).__test.failNews = false;
+    (window as any).__test.delayNews = false;
+    (window as any).__test.newsFeed.entries = [];
+  });
+  await page.getByRole("button", { name: "再試行" }).click();
+  await expect(page.getByText("配信されているニュースはありません。")).toBeVisible();
+  await expect(page.getByRole("alert")).toHaveCount(0);
+});
+
+test("news rows reflow across themes, narrow widths and accessibility preferences", async ({
+  page,
+}, testInfo) => {
+  await loadNewsFixture(page);
+  await page.getByRole("button", { name: "News", exact: true }).click();
+  for (const theme of ["light", "dark"]) {
+    await page.evaluate((theme) => {
+      document.documentElement.dataset.theme = theme;
+    }, theme);
+    for (const size of [
+      { width: 1440, height: 900 },
+      { width: 1024, height: 640 },
+      { width: 320, height: 640 },
+    ]) {
+      await page.setViewportSize(size);
+      expect(
+        await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+      ).toBeTruthy();
+      await page.screenshot({ path: testInfo.outputPath(`news-${theme}-${size.width}.png`) });
+      await page.getByRole("button", { name: "Minecraft News 1", exact: true }).click();
+      await expect(page.getByRole("dialog")).toHaveCount(0);
+      await expect
+        .poll(() => page.evaluate(() => (window as any).__test.articleUrl))
+        .toBe("https://www.minecraft.net/article/test?ref=launcher");
+    }
+  }
+  await page.emulateMedia({ reducedMotion: "reduce", forcedColors: "active" });
+  await page.getByRole("tab", { name: "All", exact: true }).focus();
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.press("ArrowRight");
+  await expect(page.getByRole("tab", { name: "Java Patch Notes", exact: true })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await page.getByRole("button", { name: "Minecraft News 1", exact: true }).focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+});
+
+test("news displays partial refresh warnings and reveals older entries on demand", async ({
+  page,
+}) => {
+  await loadNewsFixture(page);
+  await page.evaluate(() => {
+    const state = (window as any).__test;
+    const template = state.newsFeed.entries[0];
+    state.newsFeed.entries = Array.from({ length: 65 }, (_, i) => ({
+      ...template,
+      id: `patch-${i}`,
+      title: `Patch ${i}`,
+    }));
+    state.newsFeed.cached = true;
+    state.newsFeed.warning =
+      "Javaパッチノート: 更新に失敗しました。保存済みの記事を表示しています。";
+  });
+  await page.getByRole("button", { name: "更新", exact: true }).click();
+  await page.getByRole("button", { name: "News", exact: true }).click();
+  await expect(page.locator(".news-row")).toHaveCount(30);
+  await expect(
+    page.getByText("Javaパッチノート: 更新に失敗しました。保存済みの記事を表示しています。"),
+  ).toBeVisible();
+  await expect(page.getByRole("status").filter({ hasText: "キャッシュ" })).toBeVisible();
+  await page.getByRole("button", { name: "もっと表示（30 / 65件）" }).click();
+  await expect(page.locator(".news-row")).toHaveCount(60);
+  await page.getByRole("button", { name: "もっと表示（60 / 65件）" }).click();
+  await expect(page.locator(".news-row")).toHaveCount(65);
+  await expect(page.getByRole("button", { name: /もっと表示/ })).toHaveCount(0);
+});
+
+test("the entire news row opens its article and aligns the image with the title", async ({
+  page,
+}, testInfo) => {
+  await loadNewsFixture(page, true);
+  const row = page.locator(".news-row").first();
+  const button = row.getByRole("button");
+  const thumbnail = row.locator("img");
+  await expect(thumbnail).toBeVisible();
+  const imageBox = (await thumbnail.boundingBox())!;
+  const titleBox = (await button.boundingBox())!;
+  expect(Math.abs(imageBox.y - titleBox.y)).toBeLessThanOrEqual(1);
+  const rowBox = (await row.boundingBox())!;
+  const summaryBox = (await row.locator("p").first().boundingBox())!;
+  const positions = [
+    { x: 8, y: 8 },
+    {
+      x: imageBox.x - rowBox.x + imageBox.width / 2,
+      y: imageBox.y - rowBox.y + imageBox.height / 2,
+    },
+    { x: summaryBox.x - rowBox.x + 10, y: summaryBox.y - rowBox.y + 8 },
+    { x: rowBox.width - 8, y: rowBox.height - 8 },
+  ];
+  for (const [index, position] of positions.entries()) {
+    await row.click({ position });
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            (window as any).__test.calls.filter(
+              (command: string) => command === "plugin:opener|open_url",
+            ).length,
+        ),
+      )
+      .toBe(index + 1);
+  }
+  await button.focus();
+  await page.keyboard.press("Tab");
+  await page.keyboard.press("Shift+Tab");
+  await expect(button).toBeFocused();
+  const focus = await button.evaluate((element) => {
+    const style = getComputedStyle(element, "::after");
+    return {
+      outline: style.outlineStyle,
+      height: parseFloat(style.height),
+      width: parseFloat(style.width),
+    };
+  });
+  expect(focus.outline).toBe("solid");
+  expect(focus.height).toBeCloseTo(rowBox.height, 0);
+  expect(focus.width).toBeCloseTo(rowBox.width, 0);
+  await page.screenshot({ path: testInfo.outputPath("news-card-focus.png") });
+  await page.emulateMedia({ forcedColors: "active" });
+  await page.setViewportSize({ width: 320, height: 640 });
+  await row.click({ position: { x: 8, y: 8 } });
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as any).__test.calls.filter(
+            (command: string) => command === "plugin:opener|open_url",
+          ).length,
+      ),
+    )
+    .toBe(5);
 });

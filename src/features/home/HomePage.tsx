@@ -1,6 +1,10 @@
 import { Button } from "../../components/Button";
 import { HomeInstances, type HomeInstancesProps } from "./HomeInstances";
-export function HomePage(props: HomeInstancesProps & { onSignIn: () => void }) {
+import { NewsContent } from "../news/NewsContent";
+import type { NewsController } from "../news/useNews";
+export function HomePage(
+  props: HomeInstancesProps & { onSignIn: () => void; news: NewsController },
+) {
   const { launcher, navigate, onSignIn } = props;
   return (
     <>
@@ -34,9 +38,7 @@ export function HomePage(props: HomeInstancesProps & { onSignIn: () => void }) {
             View all
           </Button>
         </div>
-        <p className="text-text-secondary">
-          ニュースは未取得です。配信元との連携はまだありません。
-        </p>
+        <NewsContent news={props.news} limit={3} />
       </section>
     </>
   );

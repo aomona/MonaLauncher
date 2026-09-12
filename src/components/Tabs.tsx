@@ -18,6 +18,7 @@ function revealTab(list: HTMLElement, tab: HTMLElement | null) {
 
 export function Tabs({
   id,
+  label,
   tabs,
   active,
   onChange,
@@ -25,6 +26,7 @@ export function Tabs({
   panelProps,
 }: {
   id: string;
+  label?: string;
   tabs: readonly string[];
   active: string;
   onChange: (tab: string) => void;
@@ -99,7 +101,7 @@ export function Tabs({
             manualScroll.current = false;
           }}
           activateOnFocus
-          aria-label={id === "instance" ? "インスタンスの詳細" : "設定の分類"}
+          aria-label={label ?? (id === "instance" ? "インスタンスの詳細" : "設定の分類")}
           className="tabs"
         >
           {tabs.map((tab, index) => (

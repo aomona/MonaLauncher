@@ -9,7 +9,12 @@
       "identifier": "opener:allow-open-url",
       "allow": [
         { "url": "https://www.microsoft.com/link" },
-        { "url": "https://microsoft.com/devicelogin" }
+        { "url": "https://microsoft.com/devicelogin" },
+        { "url": "https://www.minecraft.net/*" },
+        { "url": "https://minecraft.net/*" },
+        { "url": "https://feedback.minecraft.net/hc/en-us/articles/*" },
+        { "url": "https://aka.ms/*" },
+        { "url": "https://www.youtube.com/*" }
       ]
     }
   ]

@@ -39,6 +39,8 @@ pub fn run() {
         .manage(commands::minecraft::MinecraftRuntimeState::default())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
+            commands::news::cached_minecraft_news,
+            commands::news::fetch_minecraft_news,
             commands::auth::begin_microsoft_sign_in,
             commands::auth::microsoft_auth_status,
             commands::auth::poll_microsoft_sign_in,

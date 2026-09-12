@@ -1,0 +1,66 @@
+name: Publish news RSS
+
+on:
+  push:
+    branches: [dev]
+    paths:
+      - news/**
+      - scripts/generate-feed*
+      - scripts/feed-config.ts
+      - package.json
+      - pnpm-lock.yaml
+      - mise.toml
+      - tsconfig*.json
+      - vite.config.ts
+      - .github/workflows/generate-feed.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: news-pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v4
+        with:
+          install: true
+          cache: true
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/configure-pages@v5
+        id: pages
+      - run: pnpm test:feed
+      - name: Generate RSS and build
+        run: pnpm build
+        env:
+          NEWS_SITE_URL: ${{ steps.pages.outputs.base_url }}
+      - name: Stage only public news content
+        run: |
+          mkdir .feed-site
+          cp dist/rss.xml .feed-site/rss.xml
+          cp -R dist/news .feed-site/news
+          cp dist/news/index.html .feed-site/index.html
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: .feed-site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/deploy-pages@v5
+        id: deployment

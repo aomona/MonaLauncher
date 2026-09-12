@@ -10,14 +10,16 @@
     "lint:fix": "oxlint --react-plugin --jsx-a11y-plugin --import-plugin --fix .",
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
-    "build": "pnpm typecheck && vite build",
-    "check": "pnpm design:check && pnpm format:check && pnpm lint && pnpm build",
+    "build": "pnpm generate:feed && pnpm typecheck && vite build",
+    "check": "pnpm design:check && pnpm format:check && pnpm lint && pnpm test:feed && pnpm build",
     "preview": "vite preview",
     "tauri": "tauri",
     "prepare": "husky",
     "design:generate": "node scripts/generate-design-theme.mjs",
     "design:check": "node scripts/generate-design-theme.mjs --check && node --test scripts/design-theme.test.mjs",
-    "test:ui": "playwright test"
+    "test:ui": "playwright test",
+    "generate:feed": "node scripts/generate-feed.ts",
+    "test:feed": "node --test scripts/generate-feed.test.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",
@@ -38,14 +40,18 @@
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^4.6.0",
+    "feed": "^6.0.0",
+    "gray-matter": "^4.0.3",
     "husky": "^9.1.7",
     "lint-staged": "^17.4.1",
+    "marked": "^18.0.12",
     "oxfmt": "^0.62.0",
     "oxlint": "^1.77.0",
     "prettier": "^3.9.6",
     "tailwindcss": "^4.3.3",
     "typescript": "~5.8.3",
-    "vite": "^7.0.4"
+    "vite": "^7.0.4",
+    "yaml": "^2.9.0"
   },
   "engines": {
     "node": "24.x",
