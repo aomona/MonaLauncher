@@ -53,7 +53,7 @@ export function InstanceSettingsPanel({
               disabled={Boolean(l.busy) || !l.settingsName.trim()}
               onClick={() => void save()}
             >
-              {l.busy === "rename" ? "Saving…" : "Apply"}
+              Apply
             </Button>
             <Button disabled={Boolean(l.busy)} onClick={() => l.setSettingsName(instance.name)}>
               Cancel

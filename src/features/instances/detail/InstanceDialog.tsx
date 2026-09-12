@@ -4,7 +4,7 @@ import { Dialog } from "../../../components/Dialog";
 import { Empty } from "../../../components/Empty";
 import { ErrorMessage } from "../../../components/ErrorMessage";
 import { Tabs } from "../../../components/Tabs";
-import { createToastManager, ToastProvider, ToastViewport } from "../../../components/Toast";
+import { ToastProvider, ToastViewport } from "../../../components/Toast";
 
 import { ModCatalog } from "../../mods/ModCatalog";
 import { ModRemovalDialog } from "../../mods/ModRemovalDialog";
@@ -17,6 +17,7 @@ import { PermissionsPanel } from "./PermissionsPanel";
 import { OverviewPanel } from "./OverviewPanel";
 import { UnsavedChangesDialog } from "./UnsavedChangesDialog";
 import { useInstanceEditor } from "./useInstanceEditor";
+import { useInstanceSaveToast } from "./useInstanceSaveToast";
 import { VersionPanel } from "./VersionPanel";
 const instanceTabs = [
   "Overview",
@@ -48,21 +49,10 @@ export function InstanceDialog({
   const [tab, setTab] = useState(initialTab);
   const [confirm, setConfirm] = useState<InstanceAction | null>(null);
   const body = useRef<HTMLDivElement>(null);
-  const [toasts] = useState(createToastManager);
-  const notifySaved = (title: string) => {
-    toasts.close("instance-save-error");
-    toasts.notify({ title, type: "success", priority: "low", timeout: 5000 });
-  };
-  const notifySaveError = () => {
-    toasts.notify({
-      id: "instance-save-error",
-      title: "保存できませんでした",
-      type: "error",
-      priority: "high",
-      timeout: 0,
-    });
-  };
-  const editor = useInstanceEditor(l, () => notifySaved("表示名を保存しました"), notifySaveError);
+  const { toasts, saveWithToast } = useInstanceSaveToast();
+  const editor = useInstanceEditor(l, () =>
+    saveWithToast(l.renameSelected, "表示名を保存しました"),
+  );
   const changeTab = (next: string) =>
     editor.request(() => {
       setTab(next);
@@ -112,8 +102,9 @@ export function InstanceDialog({
           {tab === "Permissions" && (
             <PermissionsPanel
               launcher={l}
-              onSaved={() => notifySaved("権限を保存しました")}
-              onSaveError={notifySaveError}
+              onSave={(permissions) =>
+                saveWithToast(() => l.saveSelectedPermissions(permissions), "権限を保存しました")
+              }
             />
           )}
           {tab === "Settings" && (

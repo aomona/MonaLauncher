@@ -138,7 +138,7 @@ Instance ModalにPermissionsを追加。ゲームデータ書き込み・ナレ�
 
 Playwrightでは11タブへのキーボード到達、インスタンス別の保存・失敗と再試行・保存中のタブ移動/閉じる操作・実行中と未対応OSの編集禁止を確認。PermissionsのLight/Dark、1440×900・1024×640・実効幅320px、200%文字とHigh contrast/Reduced motionも確認した。IPCモックの保存テストと、Rustの実ファイル保存/ポリシー変換テストを区別する。
 
-Instanceの表示名・Permissionsの保存完了は、アプリ画面全体の右下のBase UI Toastへ統一する。成功通知は5秒、Hover/Focusで停止し、保存成功は最大3件を重ねて表示する。保存失敗と再試行は本文に残す。
+Instanceの表示名・Permissionsの保存中・完了は、アプリ画面全体の右下のBase UI Toastへ統一する。「保存中…」は自動消去せず、同じ通知を成功・失敗へ更新する。途中で通知を閉じても処理は継続し、結果を再表示する。本文・Footer・Applyボタンの保存中表示は置かない。成功通知は5秒、Hover/Focusで停止し、保存成功は最大3件を重ねて表示する。保存失敗と再試行は本文に残す。
 
 Toastは共通managerの `notify({ title, type })` で表示する。typeはneutral（既定）/success/error/warning。通常はニュートラル、成功は緑、失敗は赤、警告は専用のオレンジトークンを使う。縦padding4px、閉じる操作32pxの小型表示とし、枠線はsubtleまたは意味色20%。画面右下16pxに固定し、ModalのFocus境界内で操作可能にする。失敗通知は自動消去せず、本文のエラーと再試行を残す。
 

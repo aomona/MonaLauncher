@@ -39,6 +39,8 @@ async function mockDesktop(
       const state = {
         calls: [] as string[],
         failRename: false,
+        delayRename: false,
+        finishRename: null as (() => void) | null,
         failPermissions: false,
         delayPermissions: false,
         finishPermissions: null as (() => void) | null,
@@ -125,6 +127,10 @@ async function mockDesktop(
                 return { ...item };
               }
               case "rename_minecraft_instance": {
+                if (state.delayRename)
+                  await new Promise<void>((resolve) => {
+                    state.finishRename = resolve;
+                  });
                 if (state.failRename) throw new Error("保存テストエラー");
                 const item = instances.find((item) => item.id === args.instanceId)!;
                 item.name = String(args.name);
@@ -699,6 +705,78 @@ test("permissions persist per instance and failed saves retain the confirmed val
   await expect(narrator).toBeChecked();
 });
 
+for (const kind of ["Rename", "Permissions"] as const) {
+  test(`${kind} saving toast becomes the result and survives dismissal`, async ({
+    page,
+  }, testInfo) => {
+    await mockDesktop(page);
+    await openSurvival(page);
+    await page
+      .getByRole("tab", { name: kind === "Rename" ? "Settings" : "Permissions", exact: true })
+      .click();
+    await page.evaluate((kind) => {
+      (window as any).__test[`delay${kind}`] = true;
+    }, kind);
+    const save = async () => {
+      if (kind === "Rename") {
+        await page.getByLabel("表示名", { exact: false }).fill("Renamed instance");
+        await page.getByRole("button", { name: "Apply", exact: true }).click();
+        await expect(page.getByRole("button", { name: "Apply", exact: true })).toBeDisabled();
+      } else {
+        await page.getByRole("switch", { name: "ナレーター", exact: true }).click();
+      }
+    };
+    await save();
+    const toast = page.locator(".toast:not([data-ending-style])");
+    await expect(toast).toHaveText("保存中…");
+    await expect(toast).toHaveAttribute("data-type", "neutral");
+    const pendingToast = await toast.elementHandle();
+    await expect
+      .poll(async () => {
+        const bounds = (await toast.boundingBox())!;
+        return Math.round(bounds.y + bounds.height);
+      })
+      .toBe(page.viewportSize()!.height - 16);
+    await toast.evaluate((element) =>
+      Promise.all(element.getAnimations().map((animation) => animation.finished)),
+    );
+    await page.screenshot({ path: testInfo.outputPath("saving-toast.png") });
+    await page.clock.install();
+    await page.clock.fastForward(6000);
+    await expect(toast).toHaveText("保存中…");
+    await page.evaluate((kind) => (window as any).__test[`finish${kind}`](), kind);
+    await expect(toast).toHaveAttribute("data-type", "success");
+    expect(await pendingToast!.evaluate((element) => element.isConnected)).toBe(true);
+    await expect(toast).toHaveText(
+      kind === "Rename" ? "表示名を保存しました" : "権限を保存しました",
+    );
+    await page
+      .getByRole("heading", {
+        name: kind === "Rename" ? "Renamed instance" : "Survival",
+        exact: true,
+      })
+      .hover();
+    await page.clock.fastForward(6000);
+    await expect(toast).toHaveCount(0);
+    await page.clock.resume();
+    await page.evaluate((kind) => {
+      (window as any).__test[`fail${kind}`] = true;
+    }, kind);
+    if (kind === "Rename") {
+      await page.getByRole("textbox", { name: "表示名", exact: false }).fill("Failed draft");
+      await page.getByRole("button", { name: "Apply", exact: true }).click();
+    } else await save();
+    await expect(toast).toHaveText("保存中…");
+    await toast.hover();
+    await toast.getByRole("button", { name: "通知を閉じる" }).click();
+    await expect(page.locator(".toast")).toHaveCount(0);
+    await page.evaluate((kind) => (window as any).__test[`finish${kind}`](), kind);
+    await expect(toast).toHaveText("保存できませんでした");
+    await expect(toast).toHaveAttribute("data-type", "error");
+    await expect(page.getByRole("tabpanel").getByRole("alert")).toBeVisible();
+  });
+}
+
 test("permission save continues across tabs and prevents conflicting actions", async ({ page }) => {
   await mockDesktop(page);
   await openSurvival(page);
@@ -707,12 +785,13 @@ test("permission save continues across tabs and prevents conflicting actions", a
     (window as any).__test.delayPermissions = true;
   });
   await page.getByRole("switch", { name: "ナレーター", exact: true }).click();
-  await expect(page.getByText("Saving…", { exact: true })).toBeVisible();
+  await expect(page.locator(".toast")).toHaveText("保存中…");
+  await expect(page.locator(".footer-status")).not.toContainText("保存");
+  await expect(page.getByRole("tabpanel").getByText("Saving…", { exact: true })).toHaveCount(0);
   await expect(
-    page.getByRole("dialog").getByText("権限を保存しています…", { exact: true }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("dialog").getByRole("button", { name: "Play", exact: true }),
+    page
+      .getByRole("dialog", { name: "Survival", exact: true })
+      .getByRole("button", { name: "Play", exact: true }),
   ).toBeDisabled();
   await expect(page.getByRole("switch").first()).toBeDisabled();
   await expect(page.getByRole("switch").last()).toBeDisabled();

@@ -11,7 +11,6 @@ type Model = Pick<
   | "busy"
   | "isRunning"
   | "modOperationActive"
-  | "saveSelectedPermissions"
   | "permissionSupport"
   | "permissionSupportError"
   | "refreshPermissionSupport"
@@ -33,12 +32,10 @@ const permissions = [
 
 export function PermissionsPanel({
   launcher: l,
-  onSaved,
-  onSaveError,
+  onSave,
 }: {
   launcher: Model;
-  onSaved: () => void;
-  onSaveError: () => void;
+  onSave: (permissions: InstancePermissions) => Promise<boolean>;
 }) {
   const id = useId();
   const [saving, setSaving] = useState<keyof InstancePermissions | null>(null);
@@ -56,13 +53,9 @@ export function PermissionsPanel({
     if (disabled || saving) return;
     setSaving(key);
     setFailed(null);
-    const ok = await l.saveSelectedPermissions({ ...instance.permissions, [key]: value });
+    const ok = await onSave({ ...instance.permissions, [key]: value });
     setSaving(null);
-    if (ok) onSaved();
-    else {
-      setFailed({ key, value });
-      onSaveError();
-    }
+    if (!ok) setFailed({ key, value });
   };
   return (
     <>
@@ -99,7 +92,6 @@ export function PermissionsPanel({
             <p id={`${id}-${key}-description`} className="mt-1 text-small text-text-secondary">
               {description}
             </p>
-            {saving === key && <output className="block mt-2 text-small">Saving…</output>}
             {failed?.key === key && (
               <div className="mt-2 flex flex-wrap items-center gap-2 text-small">
                 <span>保存できなかったため、元の設定を維持しています。</span>
