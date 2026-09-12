@@ -22,28 +22,30 @@ function NewsImage({ url }: { url: string }) {
 function NewsRow({ entry, heading: Heading }: { entry: NewsEntry; heading: "h2" | "h3" }) {
   const link = useNewsArticle(entry.articleUrl);
   return (
-    <li className="news-row">
-      {entry.imageUrl && <NewsImage key={entry.imageUrl} url={entry.imageUrl} />}
-      <div className="min-w-0 flex-1">
-        <Heading className="mb-2 text-navigation">
-          <Button
-            tone="ghost"
-            className="news-title"
-            disabled={link.opening}
-            title="既定ブラウザで原文を開く"
-            onClick={() => void link.open()}
-          >
-            {entry.title}{" "}
-            <ExternalLink size={14} aria-hidden="true" className="inline-block align-middle" />
-          </Button>
-        </Heading>
-        <p className="mb-2 line-clamp-2 wrap-anywhere text-text-secondary">{entry.summary}</p>
-        <p className="text-small text-text-secondary">
-          Minecraft · {entry.category} ·{" "}
-          <time dateTime={entry.date}>{entry.date.slice(0, 10)}</time>
-        </p>
-        <ErrorMessage>{link.error}</ErrorMessage>
+    <li>
+      <div className="news-row">
+        {entry.imageUrl && <NewsImage key={entry.imageUrl} url={entry.imageUrl} />}
+        <div className="min-w-0 flex-1">
+          <Heading className="mb-2 text-navigation">
+            <Button
+              tone="ghost"
+              className="news-title"
+              disabled={link.opening}
+              title="既定ブラウザで原文を開く"
+              onClick={() => void link.open()}
+            >
+              {entry.title}{" "}
+              <ExternalLink size={14} aria-hidden="true" className="inline-block align-middle" />
+            </Button>
+          </Heading>
+          <p className="mb-2 line-clamp-2 wrap-anywhere text-text-secondary">{entry.summary}</p>
+          <p className="text-small text-text-secondary">
+            Minecraft · {entry.category} ·{" "}
+            <time dateTime={entry.date}>{entry.date.slice(0, 10)}</time>
+          </p>
+        </div>
       </div>
+      <ErrorMessage>{link.error}</ErrorMessage>
     </li>
   );
 }

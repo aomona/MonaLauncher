@@ -1209,7 +1209,7 @@ test("default-enabled compatibility permissions remain readable at narrow widths
   }
 });
 
-async function loadNewsFixture(page: Page) {
+async function loadNewsFixture(page: Page, showImage = false) {
   await mockDesktop(page);
   await page.evaluate(() => {
     const state = (window as any).__test;
@@ -1225,7 +1225,14 @@ async function loadNewsFixture(page: Page) {
       imageUrl: i === 0 ? "https://launchercontent.mojang.com/images/test.jpg" : null,
     }));
   });
-  await page.route("https://launchercontent.mojang.com/images/**", (route) => route.abort());
+  await page.route("https://launchercontent.mojang.com/images/**", (route) =>
+    showImage
+      ? route.fulfill({
+          contentType: "image/svg+xml",
+          body: '<svg xmlns="http://www.w3.org/2000/svg" width="160" height="90"><rect width="160" height="90" fill="#666"/></svg>',
+        })
+      : route.abort(),
+  );
   await page.getByRole("button", { name: "更新", exact: true }).click();
   await expect(page.locator(".news-row")).toHaveCount(3);
 }
@@ -1366,4 +1373,70 @@ test("news displays partial refresh warnings and reveals older entries on demand
   await page.getByRole("button", { name: "もっと表示（60 / 65件）" }).click();
   await expect(page.locator(".news-row")).toHaveCount(65);
   await expect(page.getByRole("button", { name: /もっと表示/ })).toHaveCount(0);
+});
+
+test("the entire news row opens its article and aligns the image with the title", async ({
+  page,
+}, testInfo) => {
+  await loadNewsFixture(page, true);
+  const row = page.locator(".news-row").first();
+  const button = row.getByRole("button");
+  const thumbnail = row.locator("img");
+  await expect(thumbnail).toBeVisible();
+  const imageBox = (await thumbnail.boundingBox())!;
+  const titleBox = (await button.boundingBox())!;
+  expect(Math.abs(imageBox.y - titleBox.y)).toBeLessThanOrEqual(1);
+  const rowBox = (await row.boundingBox())!;
+  const summaryBox = (await row.locator("p").first().boundingBox())!;
+  const positions = [
+    { x: 8, y: 8 },
+    {
+      x: imageBox.x - rowBox.x + imageBox.width / 2,
+      y: imageBox.y - rowBox.y + imageBox.height / 2,
+    },
+    { x: summaryBox.x - rowBox.x + 10, y: summaryBox.y - rowBox.y + 8 },
+    { x: rowBox.width - 8, y: rowBox.height - 8 },
+  ];
+  for (const [index, position] of positions.entries()) {
+    await row.click({ position });
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            (window as any).__test.calls.filter(
+              (command: string) => command === "plugin:opener|open_url",
+            ).length,
+        ),
+      )
+      .toBe(index + 1);
+  }
+  await button.focus();
+  await page.keyboard.press("Tab");
+  await page.keyboard.press("Shift+Tab");
+  await expect(button).toBeFocused();
+  const focus = await button.evaluate((element) => {
+    const style = getComputedStyle(element, "::after");
+    return {
+      outline: style.outlineStyle,
+      height: parseFloat(style.height),
+      width: parseFloat(style.width),
+    };
+  });
+  expect(focus.outline).toBe("solid");
+  expect(focus.height).toBeCloseTo(rowBox.height, 0);
+  expect(focus.width).toBeCloseTo(rowBox.width, 0);
+  await page.screenshot({ path: testInfo.outputPath("news-card-focus.png") });
+  await page.emulateMedia({ forcedColors: "active" });
+  await page.setViewportSize({ width: 320, height: 640 });
+  await row.click({ position: { x: 8, y: 8 } });
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as any).__test.calls.filter(
+            (command: string) => command === "plugin:opener|open_url",
+          ).length,
+      ),
+    )
+    .toBe(5);
 });
