@@ -54,11 +54,11 @@ export type NewsController = ReturnType<typeof useNews>;
 export function useNewsArticle(url: string) {
   const [error, setError] = useState("");
   const [opening, setOpening] = useState(false);
-  async function open() {
+  async function open(target = url) {
     setError("");
     setOpening(true);
     try {
-      await openUrl(url);
+      await openUrl(target);
     } catch {
       setError("既定ブラウザで記事を開けませんでした。もう一度お試しください。");
     } finally {

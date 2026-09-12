@@ -1,8 +1,7 @@
-// GitHub Pages project URL. Set NEWS_SITE_URL for a custom domain or another repository.
+import config from "../news.config.json" with { type: "json" };
+
+// Shared with the desktop RSS reader. NEWS_SITE_URL can override the deployment/build URL.
 export const feedConfig = {
-  siteUrl: process.env.NEWS_SITE_URL ?? "https://aomona.github.io/MonaLauncher/",
-  title: "MonaLauncher News",
-  description: "MonaLauncherのお知らせと更新情報。",
-  language: "ja",
-  copyright: "MonaLauncher contributors",
+  ...config,
+  siteUrl: process.env.NEWS_SITE_URL ?? config.siteUrl,
 };

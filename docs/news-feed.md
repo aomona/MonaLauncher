@@ -28,9 +28,9 @@ author: 記事の著者名
 
 ## 設定と公開先
 
-設定は `scripts/feed-config.ts` の一箇所にまとめている。サイトURLは `NEWS_SITE_URL` で上書き可能。その他のtitle・description・language・copyrightもここで変更する。
+設定は `news.config.json` にまとめ、`scripts/feed-config.ts`とランチャーのRSS取得処理で共有する。サイトURLは `NEWS_SITE_URL` で上書き可能。ランチャー側にはRustビルド時に反映されるため、配信URLを変えた場合はアプリも再ビルドする。その他のtitle・description・language・copyrightもJSONで変更する。
 
-既定の予定URL:
+既定の公開URL:
 
 - RSS: `https://aomona.github.io/MonaLauncher/rss.xml`
 - 記事一覧: `https://aomona.github.io/MonaLauncher/news/`
@@ -77,3 +77,11 @@ pnpm test:ui
 `node:test`でメタデータの検証・並び順・決定性・タイムゾーン独立性・重複・失敗時の既存出力保持を検査する。既存のPlaywrightテストではブラウザのXMLパーサーを使い、RSS 2.0、名前空間、各itemの主要値、日本語とHTMLを確認する。
 
 追加したライブラリはビルド用の`feed`・`gray-matter`・`marked`・`yaml`のみ。`yaml`は日付を文字列として読み、YAMLの自動日付変換で不正な日付が補正されるのを防ぐために使用する。専用SSG、TS実行用ランタイム、RSS用Webサーバーは不要。
+
+## ランチャー内の表示
+
+Homeの最新3件とNewsのAllにMojangの記事とまとめて表示し、MonaLauncherタブで絞り込める。MonaLauncherの記事Rowを押すと本文Modalを開く。既存のMojang記事は引き続き既定ブラウザで開く。
+
+取得にはRustの`roxmltree`を使用する。RSSの受信上限は2MiB・2000記事・XMLノード10万件、タイムアウト15秒、リダイレクトなし。DTDは許可しない。本文を含むキャッシュは配信元別に保存し、更新失敗時も閲覧できる。未公開・取得失敗時はその旨を表示し、サンプルをアプリへ埋め込んで成功扱いにはしない。
+
+本文は`DOMPurify`でサニタイズし、見出し・段落・リスト・引用・コード・表・HTTPSリンクを表示する。外部画像・動画・iframe・フォーム・スクリプトは表示しない。本文内のHTTPSリンクはクリック時だけOSの既定ブラウザで開く。これに対応してopenerはHTTPS URLを許可し、ファイルや任意の独自プロトコルは追加許可しない。

@@ -5,6 +5,7 @@ on:
     branches: [dev]
     paths:
       - news/**
+      - news.config.json
       - scripts/generate-feed*
       - scripts/feed-config.ts
       - package.json

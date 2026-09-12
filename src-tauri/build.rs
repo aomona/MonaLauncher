@@ -3,6 +3,8 @@ use std::path::PathBuf;
 use std::process::Command;
 
 fn main() {
+    println!("cargo:rerun-if-changed=../news.config.json");
+    println!("cargo:rerun-if-env-changed=NEWS_SITE_URL");
     println!("cargo:rerun-if-changed=java/narrator-bridge");
     println!("cargo:rerun-if-changed=java/narrator-bridge-smoke");
     println!("cargo:rerun-if-changed=java/cursor-agent");

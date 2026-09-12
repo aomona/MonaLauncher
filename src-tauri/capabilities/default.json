@@ -8,6 +8,7 @@
     {
       "identifier": "opener:allow-open-url",
       "allow": [
+        { "url": "https://*" },
         { "url": "https://www.microsoft.com/link" },
         { "url": "https://microsoft.com/devicelogin" },
         { "url": "https://www.minecraft.net/*" },

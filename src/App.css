@@ -76,6 +76,59 @@
   .news-list {
     @apply divide-y divide-border-subtle;
   }
+  .news-article-dialog {
+    width: min(var(--mona-layout-content-max-width-news), calc(100vw - 4rem));
+  }
+  .news-article-dialog .dialog-header {
+    flex-wrap: wrap-reverse;
+  }
+  .news-article-dialog .dialog-header h2 {
+    flex: 1 1 10em;
+    max-height: 25dvh;
+    overflow-y: auto;
+  }
+  .news-article-dialog .dialog-header button {
+    margin-left: auto;
+  }
+  .news-article-body {
+    @apply select-text wrap-anywhere text-body;
+  }
+  .news-article-body > * + * {
+    @apply mt-4;
+  }
+  .news-article-body :is(h1, h2, h3, h4, h5, h6) {
+    @apply mt-6 mb-3 text-section-title text-text-heading;
+  }
+  .news-article-body ul {
+    @apply list-disc pl-6;
+  }
+  .news-article-body ol {
+    @apply list-decimal pl-6;
+  }
+  .news-article-body li + li {
+    @apply mt-2;
+  }
+  .news-article-body a[href] {
+    @apply design-focus underline;
+  }
+  .news-article-body blockquote {
+    @apply border-l border-border-control pl-4 text-text-secondary;
+  }
+  .news-article-body pre {
+    @apply overflow-x-auto rounded-control bg-background-app p-4;
+  }
+  .news-article-body code {
+    @apply font-mono text-small;
+  }
+  .news-article-body table {
+    @apply block max-w-full overflow-x-auto border-collapse;
+  }
+  .news-article-body :is(th, td) {
+    @apply border border-border-subtle p-2 text-left;
+  }
+  .news-article-body hr {
+    @apply border-border-subtle;
+  }
   .news-row {
     @apply relative flex min-w-0 items-start gap-4 py-6;
   }

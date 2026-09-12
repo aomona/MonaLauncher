@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { NewsEntry } from "../../domain/news";
 import { ExternalLink } from "lucide-react";
 import { Button } from "../../components/Button";
 import { ErrorMessage } from "../../components/ErrorMessage";
 import { useNewsArticle, type NewsController } from "./useNews";
+import { NewsArticleDialog } from "./NewsArticleDialog";
 
 function NewsImage({ url }: { url: string }) {
   const [failed, setFailed] = useState(false);
@@ -21,6 +22,9 @@ function NewsImage({ url }: { url: string }) {
 
 function NewsRow({ entry, heading: Heading }: { entry: NewsEntry; heading: "h2" | "h3" }) {
   const link = useNewsArticle(entry.articleUrl);
+  const [articleOpen, setArticleOpen] = useState(false);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const launcher = entry.kind === "monaLauncher";
   return (
     <li>
       <div className="news-row">
@@ -28,24 +32,31 @@ function NewsRow({ entry, heading: Heading }: { entry: NewsEntry; heading: "h2" 
         <div className="min-w-0 flex-1">
           <Heading className="mb-2 text-navigation">
             <Button
+              ref={trigger}
               tone="ghost"
               className="news-title"
               disabled={link.opening}
-              title="既定ブラウザで原文を開く"
-              onClick={() => void link.open()}
+              title={launcher ? undefined : "既定ブラウザで原文を開く"}
+              aria-haspopup={launcher ? "dialog" : undefined}
+              onClick={() => (launcher ? setArticleOpen(true) : void link.open())}
             >
               {entry.title}{" "}
-              <ExternalLink size={14} aria-hidden="true" className="inline-block align-middle" />
+              {!launcher && (
+                <ExternalLink size={14} aria-hidden="true" className="inline-block align-middle" />
+              )}
             </Button>
           </Heading>
           <p className="mb-2 line-clamp-2 wrap-anywhere text-text-secondary">{entry.summary}</p>
           <p className="text-small text-text-secondary">
-            Minecraft · {entry.category} ·{" "}
+            {launcher ? "MonaLauncher" : `Minecraft · ${entry.category}`} ·{" "}
             <time dateTime={entry.date}>{entry.date.slice(0, 10)}</time>
           </p>
         </div>
       </div>
       <ErrorMessage>{link.error}</ErrorMessage>
+      {articleOpen && (
+        <NewsArticleDialog entry={entry} trigger={trigger} onClose={() => setArticleOpen(false)} />
+      )}
     </li>
   );
 }
@@ -94,7 +105,7 @@ export function NewsContent({
       {news.feed && entries.length === 0 && (
         <p className="text-text-secondary">配信されているニュースはありません。</p>
       )}
-      <ul className="news-list" aria-label="Minecraftのニュース">
+      <ul className="news-list" aria-label="ニュース記事">
         {entries.map((entry) => (
           <NewsRow key={entry.id} entry={entry} heading={limit ? "h3" : "h2"} />
         ))}
