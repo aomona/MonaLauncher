@@ -53,6 +53,8 @@ X11 and PulseAudio are compatibility service grants. They permit more than drawi
 
 UTM uses software rendering (`llvmpipe`); do not treat it as GPU-driver coverage. Native Wayland, Linux Microsoft credential storage/sign-in, arbitrary Minecraft/Mod versions, Windows runtime behavior, and production package installation are separate work.
 
+The subsequent [UTM 4.7.5 GPU comparison](utm-4.7.5-gpu-2026-09-12.md) detected accelerated Apple M4 Pro rendering, but both ANGLE backends exposed only OpenGL 2.1 to this guest. Minecraft 26.2 requires 3.3 and did not launch through that GPU path; an unrestricted core-context probe failed too.
+
 ## Upstream references
 
 - [bubblewrap options](https://github.com/containers/bubblewrap/blob/main/bwrap.xml): namespace lifetime, seccomp FD and nested user-namespace controls.
