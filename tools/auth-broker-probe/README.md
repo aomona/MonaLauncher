@@ -92,7 +92,7 @@ Linuxの同じUTM検証VMでも、26.2 / authlib 9.0.75 / Java 25の公式クラ
 
 `python3 tools/auth-broker-probe/prepare_online_server.py` は公式26.2サーバーを固定URLから取得し、サイズとSHA-1を検証する。出力は無視対象の `build/online-server-26.2/`。`127.0.0.1:35565` のみで待ち受ける設定とし、`online-mode=true`、`enforce-secure-profile=true`、RCON・query無効で準備する。既存の異なる設定は上書きせず停止する。
 
-このスクリプトはサーバーを起動せず、新規の `eula.txt` を `eula=false` にする。実行には利用者による [Minecraft EULA](https://www.minecraft.net/en-us/eula) への同意が必要。実アカウントによる接続・署名チャットの検証は未実施で、合成トークン用の読取ハーネスだけでは代替できない。2026-09-14に取得・ハッシュ検証・再実行時の設定維持を確認した。
+このスクリプトはサーバーを起動せず、新規の `eula.txt` を `eula=false` にする。実行には利用者による [Minecraft EULA](https://www.minecraft.net/en-us/eula) への同意が必要。この準備時点では実アカウントによる接続・署名チャットは未検証だった。その後の実接続結果は後述する。2026-09-14に取得・ハッシュ検証・再実行時の設定維持を確認した。
 
 ## キャッシュ移行の攻撃側検証
 
@@ -148,3 +148,28 @@ cargo test --manifest-path src-tauri/Cargo.toml --locked --lib \
 `OnlineGameAdapter` は1.21.8の公式マッピングとFabric intermediaryの対応を用いる。接続・鍵・セッションの操作は型と引数の一致が一意であることを要求し、チャット送信は確認済みの `method_45729` を解決する。対応の曖昧さを最初に見つかったメソッドの選択で隠さない。実接続の成功記録は、ハーネスのビルド成功とは分けて記録する。
 
 共通アダプターによる実接続結果は `online-macos-versions-2026-09-14.json`。macOSで1.21.8・26.2それぞれ2回の実ゲーム起動、署名付きチャットの受信、再接続が成功した。どちらも認証必須・secure profile必須のサーバーを使い、各回で不透明な署名鍵と秘密鍵PEMの不在を確認した。サーバーとゲームは検証後に停止した。以前の26.2単独記録は過去のハーネスによる観測として保持する。
+
+## 同時起動したFabricゲームの分離と失効
+
+`InstanceIsolationProbe` は2つの実ゲームで合成証明書を取得し、互いの鍵識別子を検証ハーネス経由で交換する。Modは `RemotePrivateKey` のコンストラクターをリフレクションで呼び、Javaの発行済み識別子チェックを通さずに、相手の鍵での署名を要求する。Rust側でそれぞれ1回の鍵拒否が発生したことを計数し、単にJava側で失敗しただけの結果を合格にしない。同時に、自分の鍵での署名は公開鍵で検証できることを確認する。
+
+両方のreadyファイルがホスト上に存在してから、Modが相手のゲームディレクトリのreadyファイルを読むことも試す。Linuxではホスト側のパスがゲームの名前空間に公開されていない場合もあるため、特定のerrnoによる拒否とは扱わず、対象ファイルを読めなかったという結果で記録する。
+
+片方のゲームを終了させた後、残ったゲームの鍵で引き続き署名できることを確認する。その後、Rustの `Operations.valid` に失効を注入し、要求のない待機中でも5秒以内に鍵の保持処理が終了すること、生存中のゲームからの次の署名要求が拒否されることを確認する。これはMicrosoftのサインアウトUI操作自体の検証ではない。
+
+```sh
+MONALAUNCHER_ISOLATION_ROOT="/absolute/path/to/minecraft" \
+MONALAUNCHER_ISOLATION_JAR="/absolute/path/to/mona-token-read-probe.jar" \
+MONALAUNCHER_ISOLATION_VERSION="26.2" \
+MONALAUNCHER_ISOLATION_REPORT="/absolute/path/to/isolation.json" \
+cargo test --manifest-path src-tauri/Cargo.toml --locked --lib \
+  concurrent_fabric_instances_reject_foreign_keys_and_survive_peer_exit -- --ignored --nocapture
+```
+
+Linux検証VMでは、既存のAppArmor設定でuser namespaceの作成を許可した、root所有の `/usr/local/libexec/monalauncher-probes/key_heap_probe` にビルド済みのRustテスト実行ファイルを配置して同じテストを実行する。この配置は検証VMの制約であり、全Linux環境への一般条件ではない。
+
+この試験は鍵識別子の横流しを自分の仲介経路で使えないことと、ゲーム単位の終了・失効を検証する。認証を許可された悪意あるゲームが他のゲームの依頼を代行することや、自分のIPCファイル記述子を別プロセスへ渡すことまで防ぐ保証には使わない。既知の公開RSA fixtureだけを使い、実アカウントや資格情報をVMへコピーしない。
+
+結果は `instance-isolation-2026-09-14.json`。macOSの1.21.8・26.2とLinux ARM64検証VMの26.2で、各2つのFabric 0.19.5ゲームを同時起動し、上記の鍵分離・相手ファイルの非読取・片方の終了後の署名継続・待機中の失効と次回署名拒否が成功した。macOSのRustチェックは133件成功・9件スキップ、両OSのClippyは警告をエラー扱いにして成功。ゲームとVMは検証後に停止した。
+
+Linuxの実アカウントによるオンライン検証は未実施。既存の `auth/token_store.rs` はLinuxで資格情報の保存・読込を `UnsupportedPlatform` としており、安全なアカウント取得経路を用意する必要がある。今回の合成鍵試験で、その前提を解消したとは扱わない。

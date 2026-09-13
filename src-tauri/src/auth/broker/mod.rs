@@ -10,3 +10,6 @@ mod interop;
 
 #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
 mod game_key_probe;
+
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+mod game_isolation_probe;

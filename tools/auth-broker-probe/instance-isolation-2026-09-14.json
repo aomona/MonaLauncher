@@ -1,0 +1,106 @@
+{
+  "schema": 1,
+  "date": "2026-09-14",
+  "baseCommit": "b7eb3755e81a6e9534144bbfd0766f0b984d61a0",
+  "sourceSha256": {
+    "src-tauri/src/auth/broker/game_isolation_probe.rs": "18b143149b00e1d0fb2d29943af9fc4b1f1e875e0e0423f83cab3f94af102c85",
+    "src-tauri/src/auth/broker/game_key_probe.rs": "81658dd5bdb11a186dfd4dc4a231df01f6d9cd752d4b4b93910c8a52e098e817",
+    "src-tauri/src/auth/broker/mod.rs": "22b77b3b60899efe168b8de29682d07deeba0ebfafe15d2521bc7472d3ec6a75",
+    "tools/auth-broker-probe/src/me/aomona/probe/InstanceIsolationProbe.java": "11b70c4396bbb49e5b3e7b20cde59721ee76ff84c1e7559fdc33e54946ac9c26",
+    "tools/auth-broker-probe/src/me/aomona/probe/TokenReadProbe.java": "ea72fc16aea3d5a0a031c96d56b57d87612d39eb04cb4792fe7ac06dab132eb8",
+    "tools/auth-broker-probe/build.py": "c36a0d70c70461901a7957ad0972c646406170954170715836a9e211c340fdb8"
+  },
+  "checks": {
+    "macosRust": "133 passed, 9 ignored; all targets and features",
+    "macosClippy": "passed, all targets and features, warnings denied",
+    "linuxClippy": "passed, all targets and features, warnings denied",
+    "linuxBuildControls": "secret pattern scanner and native memory self control passed"
+  },
+  "scope": "Public synthetic RSA fixture; two actual sandboxed Fabric 0.19.5 games per configuration. Rust rejects foreign key handles even with Java marker checks bypassed. Independent peer exit and injected idle Operations.valid revocation verified. No real-account signout UI, certificate expiration, operation relay or IPC descriptor forwarding tested. Linux ARM64 UTM configuration only; no Windows claim.",
+  "observations": [
+    {
+      "distinctKeyHandles": true,
+      "gameA": {
+        "foreignKeyRejected": true,
+        "ownSignatureVerified": true,
+        "peerReadyFileReadable": false
+      },
+      "gameB": {
+        "foreignKeyRejected": true,
+        "ownSignatureVerified": true,
+        "peerReadyFileReadable": false
+      },
+      "keyOwnersReleased": [true, true],
+      "minecraft": "1.21.8",
+      "platform": "macos",
+      "probeSha256": "13a1ef7d4e7234765e3967d790d8be5f148ac134417cacce3120072d9bf814b9",
+      "revoked": {
+        "signatureAfterRevocationRejected": true
+      },
+      "rustForeignKeyRejections": [1, 1],
+      "rustSuccessfulSignatures": [1, 2],
+      "schema": 1,
+      "scope": "Synthetic public RSA fixture; actual sandboxed Fabric JVMs, forged RemotePrivateKey bypasses Java marker checks and reaches Rust. Peer files were known to exist before read attempts. Lease invalidation is injected through Operations.valid, not the Microsoft UI. Does not prevent an already-authorized malicious game from relaying allowed operations to another game.",
+      "survivor": {
+        "signatureAfterPeerExitVerified": true
+      },
+      "twoGamesConcurrent": true
+    },
+    {
+      "distinctKeyHandles": true,
+      "gameA": {
+        "foreignKeyRejected": true,
+        "ownSignatureVerified": true,
+        "peerReadyFileReadable": false
+      },
+      "gameB": {
+        "foreignKeyRejected": true,
+        "ownSignatureVerified": true,
+        "peerReadyFileReadable": false
+      },
+      "keyOwnersReleased": [true, true],
+      "minecraft": "26.2",
+      "platform": "macos",
+      "probeSha256": "13a1ef7d4e7234765e3967d790d8be5f148ac134417cacce3120072d9bf814b9",
+      "revoked": {
+        "signatureAfterRevocationRejected": true
+      },
+      "rustForeignKeyRejections": [1, 1],
+      "rustSuccessfulSignatures": [1, 2],
+      "schema": 1,
+      "scope": "Synthetic public RSA fixture; actual sandboxed Fabric JVMs, forged RemotePrivateKey bypasses Java marker checks and reaches Rust. Peer files were known to exist before read attempts. Lease invalidation is injected through Operations.valid, not the Microsoft UI. Does not prevent an already-authorized malicious game from relaying allowed operations to another game.",
+      "survivor": {
+        "signatureAfterPeerExitVerified": true
+      },
+      "twoGamesConcurrent": true
+    },
+    {
+      "distinctKeyHandles": true,
+      "gameA": {
+        "foreignKeyRejected": true,
+        "ownSignatureVerified": true,
+        "peerReadyFileReadable": false
+      },
+      "gameB": {
+        "foreignKeyRejected": true,
+        "ownSignatureVerified": true,
+        "peerReadyFileReadable": false
+      },
+      "keyOwnersReleased": [true, true],
+      "minecraft": "26.2",
+      "platform": "linux",
+      "probeSha256": "ebe2a2cfb2ee156dc894cbcc18bcece6d5c8106f539e18dfbb4509c05220e1a2",
+      "revoked": {
+        "signatureAfterRevocationRejected": true
+      },
+      "rustForeignKeyRejections": [1, 1],
+      "rustSuccessfulSignatures": [1, 2],
+      "schema": 1,
+      "scope": "Synthetic public RSA fixture; actual sandboxed Fabric JVMs, forged RemotePrivateKey bypasses Java marker checks and reaches Rust. Peer files were known to exist before read attempts. Lease invalidation is injected through Operations.valid, not the Microsoft UI. Does not prevent an already-authorized malicious game from relaying allowed operations to another game.",
+      "survivor": {
+        "signatureAfterPeerExitVerified": true
+      },
+      "twoGamesConcurrent": true
+    }
+  ]
+}

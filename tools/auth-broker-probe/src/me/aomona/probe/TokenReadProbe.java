@@ -38,6 +38,10 @@ public final class TokenReadProbe implements ClientModInitializer {
                     ChatKeyReadProbe.run(game, config);
                     return;
                 }
+                if (Boolean.parseBoolean(config.getProperty("instanceIsolation", "false"))) {
+                    InstanceIsolationProbe.run(game, config);
+                    return;
+                }
                 expected = config.getProperty("sha256");
                 tokenLength = Integer.parseInt(config.getProperty("length"));
                 if (expected == null || !expected.matches("[a-f0-9]{64}") || tokenLength < 32 || tokenLength > 32768)

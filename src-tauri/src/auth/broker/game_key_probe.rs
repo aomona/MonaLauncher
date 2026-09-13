@@ -27,7 +27,7 @@ use std::{
     time::{Duration, Instant, SystemTime},
 };
 
-struct SyntheticSession;
+pub(super) struct SyntheticSession;
 impl SessionSource for SyntheticSession {
     fn valid(&self) -> bool {
         true
@@ -36,7 +36,7 @@ impl SessionSource for SyntheticSession {
         Err(BrokerError::Unsupported)
     }
 }
-struct Fixture(ChatKeys);
+pub(super) struct Fixture(pub(super) ChatKeys);
 impl Operations for Fixture {
     fn valid(&self) -> bool {
         true
