@@ -15,16 +15,27 @@ pub trait Operations: Send {
     fn valid(&self) -> bool;
 }
 
+#[derive(Clone, Copy)]
+pub enum UserAttributesSchema {
+    Authlib6,
+    Authlib9,
+}
+
 pub struct OfficialOperations {
     source: Arc<dyn SessionSource>,
     account_id: String,
+    attributes_schema: UserAttributesSchema,
     client: Client,
     #[cfg(test)]
     test_origin: Option<String>,
 }
 
 impl OfficialOperations {
-    pub fn new(source: Arc<dyn SessionSource>, account_id: String) -> Result<Self, BrokerError> {
+    pub fn new(
+        source: Arc<dyn SessionSource>,
+        account_id: String,
+        attributes_schema: UserAttributesSchema,
+    ) -> Result<Self, BrokerError> {
         let client = Client::builder()
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
@@ -36,6 +47,7 @@ impl OfficialOperations {
         Ok(Self {
             source,
             account_id,
+            attributes_schema,
             client,
             #[cfg(test)]
             test_origin: None,
@@ -84,7 +96,7 @@ impl Operations for OfficialOperations {
                     .bearer_auth(&session.access_token)
                     .send()
                     .map_err(|_| BrokerError::Unavailable)?;
-                sanitize_properties(read_response(response)?)
+                sanitize_properties(read_response(response)?, self.attributes_schema)
             }
             Command::BlockList {} => {
                 let response = self
@@ -162,7 +174,7 @@ fn valid_uuid(value: &str) -> bool {
         })
 }
 
-fn sanitize_properties(value: Value) -> Result<Value, BrokerError> {
+fn sanitize_properties(value: Value, schema: UserAttributesSchema) -> Result<Value, BrokerError> {
     let mut privileges = serde_json::Map::new();
     for key in [
         "onlineChat",
@@ -205,9 +217,33 @@ fn sanitize_properties(value: Value) -> Result<Value, BrokerError> {
         }
         bans.insert(scope.clone(), Value::Object(clean));
     }
-    Ok(
-        json!({ "privileges": privileges, "profanityFilterPreferences": { "enabled": filter }, "banStatus": { "bannedScopes": bans } }),
-    )
+    let mut clean = json!({ "privileges": privileges, "profanityFilterPreferences": { "enabled": filter }, "banStatus": { "bannedScopes": bans } });
+    // authlib 9 consumes these restrictions too. Missing values are not grants.
+    for (group, fields, allowed) in [
+        (
+            "friendsPreferences",
+            &["friends", "acceptInvites"][..],
+            &["DISABLED", "ENABLED"][..],
+        ),
+        (
+            "chatPreferences",
+            &["textCommunication"][..],
+            &["DISABLED", "FRIENDS_ONLY", "ENABLED"][..],
+        ),
+    ] {
+        if matches!(schema, UserAttributesSchema::Authlib9) || value.get(group).is_some() {
+            let mut selected = serde_json::Map::new();
+            for field in fields {
+                let setting = value[group][*field]
+                    .as_str()
+                    .filter(|s| allowed.contains(s))
+                    .ok_or(BrokerError::InvalidResponse)?;
+                selected.insert((*field).into(), json!(setting));
+            }
+            clean[group] = Value::Object(selected);
+        }
+    }
+    Ok(clean)
 }
 
 #[cfg(test)]
@@ -278,6 +314,7 @@ mod tests {
         let mut operations = OfficialOperations::new(
             Arc::new(Source(valid.clone())),
             "0123456789abcdef0123456789abcdef".into(),
+            UserAttributesSchema::Authlib6,
         )
         .unwrap();
         operations.test_origin = Some(origin);
@@ -358,10 +395,25 @@ mod tests {
         ] {
             privileges.insert(key.into(), json!({ "enabled": false }));
         }
-        let clean = sanitize_properties(json!({ "privileges": privileges, "profanityFilterPreferences": { "enabled": true }, "banStatus": { "bannedScopes": {} }, "accessToken": "not-returned" })).unwrap();
+        let clean = sanitize_properties(json!({ "privileges": privileges, "profanityFilterPreferences": { "enabled": true }, "banStatus": { "bannedScopes": {} }, "accessToken": "not-returned" }), UserAttributesSchema::Authlib6).unwrap();
         assert_eq!(clean["privileges"]["multiplayerServer"]["enabled"], false);
         assert!(clean.get("accessToken").is_none());
-        assert!(sanitize_properties(json!({})).is_err());
+        assert!(sanitize_properties(clean.clone(), UserAttributesSchema::Authlib9).is_err());
+        let mut social = clean.clone();
+        social["friendsPreferences"] =
+            json!({ "friends": "DISABLED", "acceptInvites": "DISABLED", "extra": "not-returned" });
+        social["chatPreferences"] = json!({ "textCommunication": "FRIENDS_ONLY" });
+        let sanitized =
+            sanitize_properties(social.clone(), UserAttributesSchema::Authlib9).unwrap();
+        assert_eq!(
+            sanitized["chatPreferences"]["textCommunication"],
+            "FRIENDS_ONLY"
+        );
+        assert_eq!(sanitized["friendsPreferences"]["friends"], "DISABLED");
+        assert!(sanitized["friendsPreferences"].get("extra").is_none());
+        social["chatPreferences"]["textCommunication"] = json!("unknown");
+        assert!(sanitize_properties(social, UserAttributesSchema::Authlib9).is_err());
+        assert!(sanitize_properties(json!({}), UserAttributesSchema::Authlib6).is_err());
         assert!(sanitize_blocks(json!({ "blockedProfiles": ["credential-like-value"] })).is_err());
     }
 }

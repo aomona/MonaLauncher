@@ -289,6 +289,11 @@ pub fn spawn_instance(
                 let operations = crate::auth::broker::service::OfficialOperations::new(
                     Arc::clone(source),
                     identity.expect("identity exists").uuid.clone(),
+                    if instance.version_id == "26.2" {
+                        crate::auth::broker::service::UserAttributesSchema::Authlib9
+                    } else {
+                        crate::auth::broker::service::UserAttributesSchema::Authlib6
+                    },
                 )
                 .map_err(|error| MinecraftLaunchError::Sandbox(error.to_string()))?;
                 Ok(Box::new(operations) as Box<dyn crate::auth::broker::service::Operations>)
