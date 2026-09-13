@@ -479,6 +479,7 @@ pub async fn launch_minecraft_instance(
         return Err("安全でない通常起動は無効です。インスタンスを再作成してください".to_owned());
     }
     let identity = if !instance.demo && has_microsoft_authorization().await? {
+        let generation = super::auth::authentication_generation(&auth_state);
         emit_launch_progress(
             &app,
             &instance_id,
@@ -486,13 +487,14 @@ pub async fn launch_minecraft_instance(
             "MicrosoftアカウントとMinecraftの所有権を確認しています…",
         );
         let session = acquire_minecraft_session(&auth_state).await?;
+        let broker = instance
+            .permissions
+            .access_token
+            .then(|| super::auth::broker_source(&auth_state, session.uuid.clone(), generation));
         Some(MinecraftIdentity {
             player_name: session.player_name,
             uuid: session.uuid,
-            access_token: instance
-                .permissions
-                .access_token
-                .then_some(session.access_token),
+            broker,
         })
     } else {
         None
@@ -504,9 +506,6 @@ pub async fn launch_minecraft_instance(
         "隔離環境とゲームファイルを準備しています…",
     );
     let launch_instance_id = instance_id.clone();
-    let log_access_token = identity
-        .as_ref()
-        .and_then(|identity| identity.access_token.clone());
     let spawned = tauri::async_runtime::spawn_blocking(move || {
         spawn_instance(&paths, &launch_instance_id, identity.as_ref())
             .map_err(|error| error.to_string())
@@ -559,17 +558,10 @@ pub async fn launch_minecraft_instance(
         instance_id.clone(),
         spawned.stdout,
         spawned.narrator_token,
-        log_access_token.clone(),
         #[cfg(windows)]
         spawned.cursor_broker,
     );
-    spawn_log_reader(
-        app.clone(),
-        instance_id.clone(),
-        "stderr",
-        spawned.stderr,
-        log_access_token,
-    );
+    spawn_log_reader(app.clone(), instance_id.clone(), "stderr", spawned.stderr);
 
     let registry = Arc::clone(&state.registry);
     std::thread::spawn(move || loop {
@@ -689,31 +681,12 @@ fn reserve_shared_installation(
     })
 }
 
-fn redact_access_token(line: &str, token: Option<&str>) -> String {
-    match token.filter(|token| !token.is_empty()) {
-        Some(token) => line.replace(token, "[REDACTED]"),
-        None => line.to_owned(),
-    }
-}
-
-fn spawn_log_reader<R>(
-    app: AppHandle,
-    instance_id: String,
-    stream: &'static str,
-    reader: R,
-    access_token: Option<String>,
-) where
+fn spawn_log_reader<R>(app: AppHandle, instance_id: String, stream: &'static str, reader: R)
+where
     R: std::io::Read + Send + 'static,
 {
     std::thread::spawn(move || {
-        read_lines(reader, |line| {
-            emit_log(
-                &app,
-                &instance_id,
-                stream,
-                &redact_access_token(&line, access_token.as_deref()),
-            )
-        });
+        read_lines(reader, |line| emit_log(&app, &instance_id, stream, &line));
     });
 }
 
@@ -722,7 +695,6 @@ fn spawn_stdout_reader<R>(
     instance_id: String,
     reader: R,
     narrator_token: Option<String>,
-    access_token: Option<String>,
     #[cfg(windows)] cursor_broker: Option<
         Arc<crate::platform::windows::cursor_broker::CursorBroker>,
     >,
@@ -760,12 +732,7 @@ fn spawn_stdout_reader<R>(
                 let narrator_protocol =
                     narrator_protocol || line.contains("MONALAUNCHER_NARRATOR\t");
                 if !cursor_protocol && !narrator_protocol {
-                    emit_log(
-                        &app,
-                        &instance_id,
-                        "stdout",
-                        &redact_access_token(&line, access_token.as_deref()),
-                    );
+                    emit_log(&app, &instance_id, "stdout", &line);
                 }
             });
         });
@@ -774,7 +741,7 @@ fn spawn_stdout_reader<R>(
     #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
     {
         let _ = narrator_token;
-        spawn_log_reader(app, instance_id, "stdout", reader, access_token);
+        spawn_log_reader(app, instance_id, "stdout", reader);
     }
 }
 
@@ -813,24 +780,7 @@ fn emit_launch_progress(app: &AppHandle, instance_id: &str, stage: &str, message
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn game_log_tokens_are_redacted_before_reaching_the_frontend() {
-        assert_eq!(
-            super::redact_access_token("secret / secret", Some("secret")),
-            "[REDACTED] / [REDACTED]"
-        );
-        assert_eq!(
-            super::redact_access_token("ordinary log", None),
-            "ordinary log"
-        );
-        assert_eq!(
-            super::redact_access_token("ordinary log", Some("")),
-            "ordinary log"
-        );
-    }
-
     use super::*;
-
     #[test]
     fn shared_installation_blocks_every_other_instance_operation() {
         let state = MinecraftRuntimeState::default();

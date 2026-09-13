@@ -1,4 +1,8 @@
 //! Runs an actual Fabric mod against a random synthetic token; never prints token contents.
+use monalauncher_lib::auth::{
+    broker::{protocol::BrokerError, service::SessionSource},
+    minecraft_services::MinecraftSession,
+};
 use monalauncher_lib::minecraft::{
     installer,
     launcher::{self, MinecraftIdentity},
@@ -8,6 +12,17 @@ use monalauncher_lib::minecraft::{
     runtime,
 };
 use sha2::{Digest, Sha256};
+use std::sync::Arc;
+
+struct ProbeSession(MinecraftSession);
+impl SessionSource for ProbeSession {
+    fn valid(&self) -> bool {
+        true
+    }
+    fn current(&self) -> Result<MinecraftSession, BrokerError> {
+        Ok(self.0.clone())
+    }
+}
 use std::{
     fs,
     path::PathBuf,
@@ -27,7 +42,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("invalid arguments".into());
     }
     let paths = MinecraftPaths::new(root);
-    let id = format!("auth-probe-direct-{}", version.replace('.', "-"));
+    let id = format!("auth-probe-brokered-{}", version.replace('.', "-"));
     if !paths.instance_manifest(&id).exists() {
         let java = runtime::install_java_runtime(
             &paths,
@@ -79,7 +94,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let identity = MinecraftIdentity {
         player_name: "MonaProbe".into(),
         uuid: "0123456789abcdef0123456789abcdef".into(),
-        access_token: Some(secret.clone()),
+        broker: Some(Arc::new(ProbeSession(MinecraftSession {
+            player_name: "MonaProbe".into(),
+            uuid: "0123456789abcdef0123456789abcdef".into(),
+            access_token: secret.clone(),
+            expires_in: Duration::from_secs(300),
+        }))),
     };
     let mut launched = launcher::spawn_instance(&paths, &id, Some(&identity))?;
     let (diagnostics, messages) = std::sync::mpsc::sync_channel(128);
@@ -136,7 +156,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let mut observation: serde_json::Value = serde_json::from_slice(&fs::read(result)?)?;
     observation["minecraft"] = version.into();
-    observation["mode"] = "direct-positive-control".into();
+    observation["mode"] = "brokered-network-denied".into();
     observation["credentialKind"] = "random synthetic canary; no account credentials".into();
     observation["platform"] = std::env::consts::OS.into();
     observation["sandboxed"] = launched.sandboxed.into();
@@ -144,17 +164,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         fs::create_dir_all(parent)?;
     }
     fs::write(&report, serde_json::to_vec_pretty(&observation)?)?;
-    if observation["tokenDetected"] != true
-        || !observation["detectedSurfaces"]
-            .as_array()
-            .is_some_and(|a| a.iter().any(|v| v == "user_session"))
+    if observation["tokenDetected"] != false
+        || observation["agentAdapterPresent"] != true
+        || observation["brokerHandshakeCompleted"] != true
     {
         return Err(
-            "positive control failed: probe did not read the actual game's user token".into(),
+            "brokered probe failed: secret detected or live adapter/IPC handshake missing".into(),
         );
     }
     println!(
-        "PASS: Fabric mod read the synthetic token from Minecraft User; report {}",
+        "PASS: live broker handshake completed and Fabric mod could not read the synthetic token; report {}",
         report.display()
     );
     Ok(())

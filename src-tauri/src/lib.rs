@@ -1,4 +1,4 @@
-mod auth;
+pub mod auth;
 mod commands;
 pub mod minecraft;
 mod platform;

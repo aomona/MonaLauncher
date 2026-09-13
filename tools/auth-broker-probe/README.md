@@ -13,12 +13,14 @@ python3 tools/auth-broker-probe/build.py --loader /absolute/path/to/fabric-loade
 cargo run --manifest-path src-tauri/Cargo.toml --locked --bin auth_broker_probe -- \
   /absolute/path/to/minecraft \
   tools/auth-broker-probe/build/mona-token-read-probe.jar \
-  tools/auth-broker-probe/reports/direct-26.2-macos.json 26.2
+  tools/auth-broker-probe/reports/brokered-26.2-macos.json 26.2
 ```
 
-末尾のversionは1.21.8または26.2。専用の `auth-probe-direct-*` インスタンスを作成し、既存のユーザーインスタンスへModを入れない。ライブラリ・Javaは通常の検証済みインストーラーを共有する。通信OFF、ナレーターOFFで、最大120秒の実プロセス検証後に所有するゲームを停止する。
+末尾のversionは1.21.8または26.2。専用の `auth-probe-brokered-*` インスタンスを作成し、既存のユーザーインスタンスへModを入れない。ライブラリ・Javaは通常の検証済みインストーラーを共有する。通信OFF、ナレーターOFFで、最大120秒の実プロセス検証後に所有するゲームを停止する。
 
-`tokenDetected=true` かつ `user_session` からの検出を正の対照の合格条件とする。検出なしを無条件に安全と判定しない。仲介が未実装の段階では、これらの合格は「実際に漏えいを検出できる検証器」の証拠。
+現行ハーネスは `tokenDetected=false`、`agentAdapterPresent=true`、`brokerHandshakeCompleted=true` を合格条件とする。ゲーム起動中の実authlib呼び出しでRust仲介とhelloを交換し、通信OFFのため外部認証要求は拒否される。これはオンライン参加成功の試験ではない。
+
+正の対照はコミット `fd02af8` の同じハーネスで再現できる（別worktreeで実行する）。そこでは直接渡したランダムな検証用トークンをUser/Sessionから実際に検出した。現行の製品コードには実トークンを直接渡す検証用フォールバックを残さない。
 
 ## 検査範囲
 
@@ -30,3 +32,5 @@ cargo run --manifest-path src-tauri/Cargo.toml --locked --bin auth_broker_probe 
 Javaヒープ全体・ネイティブメモリ・ランチャーのメモリはこのMod単体では未検査。OSが返さないプロセス情報は空となり、その面から検出できないことはOS情報の非公開も含む。署名鍵・認証仲介・オンラインサーバー接続の検証は追加工程。
 
 2026-09-13のmacOS Seatbelt実行では、1.21.8と26.2の双方でFabric entrypointが実行され、実User/Sessionから検証用トークンを検出。検査結果は `baseline-macos.json` に保存。
+
+仲介後のmacOS実ゲーム結果は `brokered-macos.json` に保存。秘密鍵取得とチャット署名は未実装のため、現在のアダプターは未対応エラーを返す。Windows IPCは未実装、Linux経路は実ゲーム未検証。どちらもmacOSの結果を根拠に対応済みとしない。

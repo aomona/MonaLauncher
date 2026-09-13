@@ -85,6 +85,9 @@ public final class TokenReadProbe implements ClientModInitializer {
                 String result = "{\"schema\":1,\"fabricEntrypointRan\":true,\"tokenDetected\":" + !detected.isEmpty()
                     + ",\"detectedSurfaces\":" + jsonArray(detected) + ",\"completedSurfaces\":" + jsonArray(completed)
                     + ",\"objectsVisited\":" + objects + ",\"wholeHeapScanned\":false}";
+                result = result.substring(0, result.length() - 1)
+                    + ",\"agentAdapterPresent\":" + "authlib-client-v1".equals(System.getProperty("monalauncher.auth.adapter"))
+                    + ",\"brokerHandshakeCompleted\":" + "true".equals(System.getProperty("monalauncher.auth.broker.handshake")) + "}";
                 Files.writeString(game.resolve("auth-probe-result.json"), result);
                 System.out.println("MONALAUNCHER_AUTH_PROBE_COMPLETE");
             } catch (Throwable e) {

@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -15,6 +16,47 @@ pub struct MicrosoftAuthState {
     pending: Arc<Mutex<Option<PendingAuthorization>>>,
     minecraft_session: Arc<Mutex<Option<CachedMinecraftSession>>>,
     credential_operation: Arc<tokio::sync::Mutex<()>>,
+    generation: Arc<AtomicU64>,
+}
+
+pub(crate) fn authentication_generation(state: &MicrosoftAuthState) -> u64 {
+    state.generation.load(Ordering::Acquire)
+}
+
+pub(crate) fn broker_source(
+    state: &MicrosoftAuthState,
+    uuid: String,
+    generation: u64,
+) -> Arc<dyn crate::auth::broker::service::SessionSource> {
+    Arc::new(AccountLease {
+        state: state.clone(),
+        uuid,
+        generation,
+    })
+}
+
+struct AccountLease {
+    state: MicrosoftAuthState,
+    uuid: String,
+    generation: u64,
+}
+
+impl crate::auth::broker::service::SessionSource for AccountLease {
+    fn valid(&self) -> bool {
+        authentication_generation(&self.state) == self.generation
+    }
+    fn current(&self) -> Result<MinecraftSession, crate::auth::broker::protocol::BrokerError> {
+        use crate::auth::broker::protocol::BrokerError;
+        if !self.valid() {
+            return Err(BrokerError::Revoked);
+        }
+        let session = tauri::async_runtime::block_on(acquire_minecraft_session(&self.state))
+            .map_err(|_| BrokerError::Unauthorized)?;
+        if !self.valid() || session.uuid != self.uuid {
+            return Err(BrokerError::Revoked);
+        }
+        Ok(session)
+    }
 }
 
 struct CachedMinecraftSession {
@@ -139,6 +181,7 @@ pub async fn poll_microsoft_sign_in(
     let client = MicrosoftOAuthClient::from_configuration().map_err(|error| error.to_string())?;
     match client.poll_device_authorization(&pending.device_code).await {
         Ok(TokenPoll::Authorized(token)) => {
+            state.generation.fetch_add(1, Ordering::AcqRel);
             save_refresh_token(&token.refresh_token)
                 .await
                 .map_err(|error| error.to_string())?;
@@ -190,6 +233,7 @@ pub async fn refresh_minecraft_account(
 
 #[tauri::command]
 pub async fn sign_out_microsoft(state: State<'_, MicrosoftAuthState>) -> Result<(), String> {
+    state.generation.fetch_add(1, Ordering::AcqRel);
     let _operation = state.credential_operation.lock().await;
     *state
         .pending
@@ -298,6 +342,29 @@ fn random_session_id() -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn broker_lease_rejects_account_changes_and_sign_out_without_loading_credentials() {
+        use crate::auth::broker::protocol::BrokerError;
+        let state = MicrosoftAuthState::default();
+        *state.minecraft_session.lock().unwrap() = Some(CachedMinecraftSession {
+            session: MinecraftSession {
+                player_name: "Probe".into(),
+                uuid: "account-a".into(),
+                access_token: "synthetic-credential".into(),
+                expires_in: Duration::from_secs(300),
+            },
+            refresh_at: Instant::now() + Duration::from_secs(200),
+        });
+        let lease = broker_source(&state, "account-a".into(), 0);
+        assert!(lease.valid());
+        assert!(lease.current().is_ok());
+        let wrong_account = broker_source(&state, "account-b".into(), 0);
+        assert!(matches!(wrong_account.current(), Err(BrokerError::Revoked)));
+        state.generation.fetch_add(1, Ordering::AcqRel);
+        assert!(!lease.valid());
+        assert!(matches!(lease.current(), Err(BrokerError::Revoked)));
+    }
 
     #[test]
     fn session_ids_are_256_bit_hex_values() {
