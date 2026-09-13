@@ -391,9 +391,8 @@ pub(crate) fn prepare_with_broker(
             command.env("LIBGL_ALWAYS_SOFTWARE", "1");
         }
     }
-    if broker.is_some() {
-        command.args(["--preserve-fds", "1"]);
-    }
+    // bubblewrap passes inherited non-CLOEXEC descriptors to the command; only its
+    // PID 1 reaper closes extras. No preserve-fds option exists in bubblewrap.
     command
         .arg("--seccomp")
         .arg(fd.to_string())

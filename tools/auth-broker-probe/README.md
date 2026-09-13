@@ -18,7 +18,7 @@ cargo run --manifest-path src-tauri/Cargo.toml --locked --bin auth_broker_probe 
 
 末尾のversionは1.21.8または26.2。専用の `auth-probe-brokered-*` インスタンスを作成し、既存のユーザーインスタンスへModを入れない。ライブラリ・Javaは通常の検証済みインストーラーを共有する。通信OFF、ナレーターOFFで、最大120秒の実プロセス検証後に所有するゲームを停止する。
 
-現行ハーネスは `tokenDetected=false`、`agentAdapterPresent=true`、`brokerHandshakeCompleted=true` を合格条件とする。ゲーム起動中の実authlib呼び出しでRust仲介とhelloを交換し、通信OFFのため外部認証要求は拒否される。これはオンライン参加成功の試験ではない。
+現行ハーネスは `tokenDetected=false`、`agentAdapterPresent=true`、`brokerHandshakeCompleted=true`、`liveJavaHeapDumpScanned=true` を合格条件とする。ゲーム起動中の実authlib呼び出しでRust仲介とhelloを交換し、通信OFFのため外部認証要求は拒否される。これはオンライン参加成功の試験ではない。
 
 正の対照はコミット `fd02af8` の同じハーネスで再現できる（別worktreeで実行する）。そこでは直接渡したランダムな検証用トークンをUser/Sessionから実際に検出した。現行の製品コードには実トークンを直接渡す検証用フォールバックを残さない。
 
@@ -26,11 +26,21 @@ cargo run --manifest-path src-tauri/Cargo.toml --locked --bin auth_broker_probe 
 
 - 実User/Sessionの文字列フィールド。
 - Minecraft/authlibの到達可能なオブジェクトフィールド（深さ5・2万オブジェクトまで）。
-- JVM起動オプション、OSが公開する自プロセスコマンド、環境変数、システムプロパティ。
+- JVM起動オプション、OSが公開する自プロセスコマンド、環境変数、システムプロパティ。取得できないプロセス情報は `unavailableSurfaces` に分ける。
 - 専用ゲームディレクトリの通常ファイル（深さ4・512件・1件256 KiB・合計8 MiBまで）。リンクは追跡しない。
 
-Javaヒープ全体・ネイティブメモリ・ランチャーのメモリはこのMod単体では未検査。OSが返さないプロセス情報は空となり、その面から検出できないことはOS情報の非公開も含む。署名鍵・認証仲介・オンラインサーバー接続の検証は追加工程。
+- HotSpotの生存中オブジェクトのヒープダンプを作り、全バイトを読み、検証用hexトークンをLatin-1/UTF-8・UTF-16 BE/LE表現で探す。ダンプは検査後に削除し、ハーネスも異常終了後の残存ダンプを削除する。ファイルサイズはレポートに残す。
+
+生存していないオブジェクトを含むヒープ全体、変換・分割された値、ネイティブメモリ、ランチャーのメモリは未検査。したがって `wholeHeapScanned` はfalseのままとし、生存中ヒープの検査だけを `liveJavaHeapDumpScanned` で示す。署名鍵・オンラインサーバー接続の検証も追加工程。
 
 2026-09-13のmacOS Seatbelt実行では、1.21.8と26.2の双方でFabric entrypointが実行され、実User/Sessionから検証用トークンを検出。検査結果は `baseline-macos.json` に保存。
 
-仲介後のmacOS実ゲーム結果は `brokered-macos.json` に保存。秘密鍵取得とチャット署名は未実装のため、現在のアダプターは未対応エラーを返す。Windows IPCは未実装、Linux経路は実ゲーム未検証。どちらもmacOSの結果を根拠に対応済みとしない。
+仲介後のmacOS実ゲーム結果は `brokered-macos.json` に保存。秘密鍵取得とチャット署名は未実装のため、現在のアダプターは未対応エラーを返す。Windows IPCは未実装。Linuxの26.2経路は後述の独立したゲスト内で検証した。
+
+## 生存中ヒープを含む比較
+
+`heap-comparison-2026-09-13.json` は同じMod JAR（SHA-256を記録）を使った、macOSの1.21.8・26.2とLinuxの26.2の計6実行。直接受け渡しの3実行ではUser/Sessionと生存中ヒープから検証用トークンを検出し、仲介後の3実行では検出しなかった。各ダンプは約306–309 MB。macOSではOS経由の自プロセスコマンド取得は利用できず、Linuxでは取得・検査できた。これは検査した経路における合成トークンの非検出で、未知の全経路からの非開示や実アカウントによるオンライン参加の証明ではない。
+
+LinuxはUTM 5.0.5の既存Ubuntu ARM64検証VM、kernel 6.8.0-139、bubblewrap 0.9.0、GNOME Wayland。root所有の専用probeをAppArmorの既存検証プロファイルに置き、monaユーザーで実行した。ホストの認証情報は移していない。初回は誤って指定した `--preserve-fds` が拒否されてゲーム起動前に失敗した。bubblewrapはそのオプションを持たず、継承したFDを子コマンドへ渡すため、指定を削除してIPC往復を実証した。[bubblewrap 0.9.0実装](https://github.com/containers/bubblewrap/blob/v0.9.0/bubblewrap.c)
+
+検証時の自動チェックはmacOSでRust 118件成功・5件スキップ、Linuxで121件成功・4件スキップ、双方Clippy `--all-targets -D warnings` 成功。UIは `pnpm check` とPlaywright 42件成功。ヒープダンプの内容自体は保存・コミットせず、検査結果だけを残す。

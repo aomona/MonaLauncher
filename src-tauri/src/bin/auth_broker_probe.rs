@@ -86,7 +86,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let fingerprint = format!("{:x}", Sha256::digest(secret.as_bytes()));
     fs::write(
         game.join("auth-probe.properties"),
-        format!("sha256={fingerprint}\nlength={}\n", secret.len()),
+        format!(
+            "sha256={fingerprint}\nlength={}\nheapDump=true\n",
+            secret.len()
+        ),
     )?;
     let result = game.join("auth-probe-result.json");
     if result.exists() {
@@ -138,6 +141,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     launched.child.wait()?;
     stdout.join().map_err(|_| "stdout thread failed")?;
     stderr.join().map_err(|_| "stderr thread failed")?;
+    // The VM may be killed during dump creation, before Java's finally block can delete it.
+    for entry in fs::read_dir(&game)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with("auth-probe-heap-")
+            && name.ends_with(".hprof")
+            && entry.file_type()?.is_file()
+        {
+            fs::remove_file(entry.path())?;
+        }
+    }
     // Remove synthetic credential occurrences from runtime logs before exposing diagnostics.
     for path in [game.join("logs/latest.log"), game.join("options.txt")] {
         if let Ok(text) = fs::read_to_string(&path) {
@@ -159,18 +174,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     observation["minecraft"] = version.into();
     observation["mode"] = "brokered-network-denied".into();
     observation["credentialKind"] = "random synthetic canary; no account credentials".into();
+    observation["probeSha256"] = format!("{:x}", Sha256::digest(fs::read(&probe)?)).into();
     observation["platform"] = std::env::consts::OS.into();
     observation["sandboxed"] = launched.sandboxed.into();
     if let Some(parent) = report.parent() {
         fs::create_dir_all(parent)?;
     }
     fs::write(&report, serde_json::to_vec_pretty(&observation)?)?;
-    if observation["tokenDetected"] != false
+    if observation["liveJavaHeapDumpScanned"] != true
+        || observation["tokenDetected"] != false
         || observation["agentAdapterPresent"] != true
         || observation["brokerHandshakeCompleted"] != true
     {
         return Err(
-            "brokered probe failed: secret detected or live adapter/IPC handshake missing".into(),
+            "brokered probe failed: secret detected or live heap/adapter/IPC check missing".into(),
         );
     }
     println!(

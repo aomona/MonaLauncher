@@ -3,6 +3,8 @@ package me.aomona.probe;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.loader.api.FabricLoader;
 import java.lang.management.ManagementFactory;
+import com.sun.management.HotSpotDiagnosticMXBean;
+import java.io.BufferedInputStream;
 import java.lang.reflect.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
@@ -13,6 +15,8 @@ import java.util.*;
 public final class TokenReadProbe implements ClientModInitializer {
     private final Set<String> detected = new TreeSet<>();
     private final Set<String> completed = new TreeSet<>();
+    private final Set<String> unavailable = new TreeSet<>();
+    private long heapBytes;
     private final Set<Object> visited = Collections.newSetFromMap(new IdentityHashMap<>());
     private String expected;
     private int tokenLength;
@@ -33,8 +37,11 @@ public final class TokenReadProbe implements ClientModInitializer {
                 Thread.sleep(8000);
                 scan("jvm_arguments", ManagementFactory.getRuntimeMXBean().getInputArguments().toString());
                 completed.add("jvm_arguments");
-                scan("process_arguments", ProcessHandle.current().info().commandLine().orElse(""));
-                completed.add("process_arguments");
+                Optional<String> commandLine = ProcessHandle.current().info().commandLine();
+                if (commandLine.isPresent()) {
+                    scan("process_arguments", commandLine.get());
+                    completed.add("process_arguments");
+                } else unavailable.add("process_arguments");
                 for (String value : System.getenv().values()) scan("environment", value);
                 completed.add("environment");
                 for (Object value : System.getProperties().values()) scan("system_properties", String.valueOf(value));
@@ -82,9 +89,13 @@ public final class TokenReadProbe implements ClientModInitializer {
                     }
                 }
                 completed.add("game_files");
+                if (Boolean.parseBoolean(config.getProperty("heapDump", "true"))) scanLiveHeap(game);
                 String result = "{\"schema\":1,\"fabricEntrypointRan\":true,\"tokenDetected\":" + !detected.isEmpty()
                     + ",\"detectedSurfaces\":" + jsonArray(detected) + ",\"completedSurfaces\":" + jsonArray(completed)
-                    + ",\"objectsVisited\":" + objects + ",\"wholeHeapScanned\":false}";
+                    + ",\"unavailableSurfaces\":" + jsonArray(unavailable)
+                    + ",\"objectsVisited\":" + objects + ",\"wholeHeapScanned\":false"
+                    + ",\"liveJavaHeapDumpScanned\":" + completed.contains("live_java_heap_dump")
+                    + ",\"heapDumpBytes\":" + heapBytes + "}";
                 result = result.substring(0, result.length() - 1)
                     + ",\"agentAdapterPresent\":" + "authlib-client-v1".equals(System.getProperty("monalauncher.auth.adapter"))
                     + ",\"brokerHandshakeCompleted\":" + "true".equals(System.getProperty("monalauncher.auth.broker.handshake")) + "}";
@@ -97,6 +108,48 @@ public final class TokenReadProbe implements ClientModInitializer {
         }, "mona-token-read-probe");
         worker.setDaemon(true);
         worker.start();
+    }
+
+    /** Scans all dump bytes for the hex canary in Latin-1/UTF-8 and UTF-16 BE/LE. */
+    private void scanLiveHeap(Path game) throws Exception {
+        Path dump = Files.createTempFile(game, "auth-probe-heap-", ".hprof");
+        Files.delete(dump); // HotSpot requires the output path to be absent.
+        try {
+            ManagementFactory.getPlatformMXBean(HotSpotDiagnosticMXBean.class).dumpHeap(dump.toString(), true);
+            heapBytes = Files.size(dump);
+            byte[] ring = new byte[tokenLength * 2];
+            byte[] candidate = new byte[tokenLength];
+            byte[] digest = HexFormat.of().parseHex(expected);
+            MessageDigest hash = MessageDigest.getInstance("SHA-256");
+            int offset = 0, asciiRun = 0, previous = -1;
+            int[][] utf16Runs = new int[2][2];
+            long index = 0;
+            try (var input = new BufferedInputStream(Files.newInputStream(dump), 1024 * 1024)) {
+                int value;
+                while ((value = input.read()) != -1) {
+                    ring[offset] = (byte)value; offset = (offset + 1) % ring.length;
+                    asciiRun = hex(value) ? asciiRun + 1 : 0;
+                    if (asciiRun >= tokenLength) {
+                        for (int i = 0; i < tokenLength; i++) candidate[i] = ring[(offset + tokenLength + i) % ring.length];
+                        if (MessageDigest.isEqual(hash.digest(candidate), digest)) detected.add("live_java_heap_dump");
+                    }
+                    int parity = (int)(index++ & 1);
+                    for (int endian = 0; endian < 2; endian++) {
+                        boolean pair = endian == 0 ? hex(previous) && value == 0 : previous == 0 && hex(value);
+                        utf16Runs[endian][parity] = pair ? utf16Runs[endian][parity] + 1 : 0;
+                        if (utf16Runs[endian][parity] >= tokenLength) {
+                            for (int i = 0; i < tokenLength; i++) candidate[i] = ring[(offset + 2 * i + endian) % ring.length];
+                            if (MessageDigest.isEqual(hash.digest(candidate), digest)) detected.add("live_java_heap_dump");
+                        }
+                    }
+                    previous = value;
+                }
+            }
+            completed.add("live_java_heap_dump");
+        } finally { Files.deleteIfExists(dump); }
+    }
+    private static boolean hex(int value) {
+        return value >= '0' && value <= '9' || value >= 'a' && value <= 'f';
     }
 
     private void walk(Object value, int depth) throws Exception {

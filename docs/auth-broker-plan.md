@@ -6,13 +6,13 @@
 
 `codex/auth-broker` でRust限定API・Java authlibアダプター・Unix IPCを実装中。実トークンをゲーム起動用Identityから取り除き、引数は認証能力を持たない固定値になった。UnixのIPCはパス名を持たない `UnixStream::pair` の片端をFD 3として継承する方式に具体化し、Javaの初期化でCLOEXECと非ブロッキングを設定する。TCPの待受・環境変数の秘密・公開仮トークンによる接続を追加しない。
 
-macOS Seatbelt上の1.21.8 / 26.2 + Fabric 0.19.5で、実ゲームからRustへのhelloと読み出しModの動作を確認。直接受け渡しの正の対照はUser/Sessionから検証用トークンを検出し、仲介後は同じ探索範囲から検出しなかった。結果と再現方法は `tools/auth-broker-probe/` に記録。検証用トークンはランダムな合成値で、実アカウントの資格情報を使っていない。
+macOS Seatbelt上の1.21.8 / 26.2、およびLinux bubblewrap上の26.2 + Fabric 0.19.5で、実ゲームからRustへのhelloと読み出しModの動作を確認。直接受け渡しの正の対照はUser/Sessionから検証用トークンを検出し、仲介後は同じ探索範囲から検出しなかった。追加した生存中Javaヒープのダンプ検査でも、直接受け渡しで検出・仲介後で非検出となった。結果と再現方法は `tools/auth-broker-probe/` に記録。検証用トークンはランダムな合成値で、実アカウントの資格情報を使っていない。
 
 固定のJoinServer / UserProperties / BlockListを実装し、HTTPモックでアカウント固定・redirect拒否・応答上限・失効時の結果破棄を検査。IPCは余分なフィールド、不正フレーム、再送、過剰要求、通信禁止、セッション失効を検査する。アダプターは未対応操作を明示的に拒否する。
 
 設定は `accountAuthentication: disabled | brokered` に移行済み。旧boolは読み込み時に変換し、保存時は新形式だけを出す。新旧フィールド重複は同じ値でも拒否する。権限画面は初期OFF・通信との独立・起動中のModによる仲介利用・未対応範囲を表示し、保存失敗時の設定維持と再試行を検査した。
 
-署名鍵・署名仲介、実online-mode接続、secure profile、Windows IPC、Linux実ゲーム、全ヒープ・ネイティブ・ランチャーメモリの探索はまだ未完了。以下のリリース判定を満たした状態ではない。
+署名鍵・署名仲介、実online-mode接続、secure profile、Windows IPC、Linuxの追加バージョン、非生存オブジェクトを含む全ヒープ・ネイティブ・ランチャーメモリの探索はまだ未完了。以下のリリース判定を満たした状態ではない。
 
 ## 目的と保証の範囲
 
