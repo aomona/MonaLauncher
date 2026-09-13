@@ -1,3 +1,4 @@
+mod auth_compatibility;
 pub mod diagnostics;
 pub mod fabric;
 pub(crate) mod file_io;

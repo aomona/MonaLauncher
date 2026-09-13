@@ -8,6 +8,8 @@
 
 macOS Seatbelt上の1.21.8 / 26.2、およびLinux bubblewrap上の26.2 + Fabric 0.19.5で、実ゲームからRustへのhelloと読み出しModの動作を確認。直接受け渡しの正の対照はUser/Sessionから検証用トークンを検出し、仲介後は同じ探索範囲から検出しなかった。追加した生存中Javaヒープのダンプ検査でも、直接受け渡しで検出・仲介後で非検出となった。結果と再現方法は `tools/auth-broker-probe/` に記録。検証用トークンはランダムな合成値で、実アカウントの資格情報を使っていない。
 
+認証仲介の起動前にMinecraft / authlib / Java / loaderの組を照合する互換表を追加。1.21.8 / authlib 6.0.58 / Java 21、26.2 / authlib 9.0.75 / Java 25と、VanillaまたはFabric 0.19.5を試験対象とする。authlibの実ファイルをサイズとSHA-256で照合し、未知の構成・破損・Fabric側のauthlib上書きを拒否する。macOSの両バージョンとLinuxの26.2でFabric回帰試験が成功。これはリリース対応表ではなく、オンライン検証前の試験対象表である。結果は `tools/auth-broker-probe/compatibility-2026-09-14.json`。
+
 固定のJoinServer / UserProperties / BlockListを実装し、HTTPモックでアカウント固定・redirect拒否・応答上限・失効時の結果破棄を検査。IPCは余分なフィールド、不正フレーム、再送、過剰要求、通信禁止、セッション失効を検査する。アダプターは未対応操作を明示的に拒否する。
 
 設定は `accountAuthentication: disabled | brokered` に移行済み。旧boolは読み込み時に変換し、保存時は新形式だけを出す。新旧フィールド重複は同じ値でも拒否する。権限画面は初期OFF・通信との独立・起動中のModによる仲介利用・未対応範囲を表示し、保存失敗時の設定維持と再試行を検査した。

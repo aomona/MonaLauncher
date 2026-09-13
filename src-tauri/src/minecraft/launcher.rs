@@ -277,23 +277,30 @@ pub fn spawn_instance(
     )?)?
     .for_current_platform()?;
     let fabric = load_instance_fabric_profile(paths, &instance)?;
+    let detected_java_major = installed_java_major(paths, Path::new(&instance.java_path))?;
     let broker = if instance.permissions.account_authentication.is_brokered() && !instance.demo {
         identity
             .and_then(|identity| identity.broker.as_ref())
             .map(|source| {
-                if !["1.21.8", "26.2"].contains(&instance.version_id.as_str()) || !cfg!(unix) {
+                if !cfg!(any(target_os = "macos", target_os = "linux")) {
                     return Err(MinecraftLaunchError::Sandbox(
                         "このOS・Minecraftバージョンでは認証の仲介が未対応です".into(),
                     ));
                 }
+                let adapter = super::auth_compatibility::validate(
+                    &instance.version_id,
+                    &version,
+                    detected_java_major,
+                    &instance.mod_loader,
+                    fabric.as_ref(),
+                )
+                .map_err(MinecraftLaunchError::Sandbox)?;
+                super::auth_compatibility::verify_authlib(paths, adapter)
+                    .map_err(MinecraftLaunchError::Sandbox)?;
                 let operations = crate::auth::broker::service::OfficialOperations::new(
                     Arc::clone(source),
                     identity.expect("identity exists").uuid.clone(),
-                    if instance.version_id == "26.2" {
-                        crate::auth::broker::service::UserAttributesSchema::Authlib9
-                    } else {
-                        crate::auth::broker::service::UserAttributesSchema::Authlib6
-                    },
+                    adapter.schema,
                 )
                 .map_err(|error| MinecraftLaunchError::Sandbox(error.to_string()))?;
                 Ok(Box::new(operations) as Box<dyn crate::auth::broker::service::Operations>)
@@ -302,7 +309,6 @@ pub fn spawn_instance(
     } else {
         None
     };
-    let detected_java_major = installed_java_major(paths, Path::new(&instance.java_path))?;
     if let Some(java_version) = &version.java_version {
         if detected_java_major < java_version.major_version {
             return Err(MinecraftLaunchError::IncompatibleJava {

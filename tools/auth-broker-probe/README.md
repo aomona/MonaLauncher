@@ -81,3 +81,9 @@ Linuxの同じUTM検証VMでも、26.2 / authlib 9.0.75 / Java 25の公式クラ
 ハーネスは `nativeMemoryProbeRan=true`、`nativeControlPassed=true` と親読取拒否を必須にする。macOSは自プロセス読取成功・親KERN_FAILURE(5)、Linuxは自プロセス・親の双方EPERM(1)を検査する。結果は `native-memory-2026-09-14.json`。
 
 これは指定したOS APIでの読取試験である。macOSの拒否がSeatbeltだけに由来するとは断定しない。ネイティブメモリ全体の走査、他のデバッグ・IPC経路、カーネルやランチャーの脆弱性は検証していない。以前の生存中Javaヒープ検査と区別し、未知の全経路からの非開示を証明したとは扱わない。
+
+## 起動構成の互換性判定（2026-09-14）
+
+バックエンドは1.21.8 / authlib 6.0.58 / Java 21と26.2 / authlib 9.0.75 / Java 25を照合し、VanillaまたはFabric 0.19.5に限定する。メタデータだけでなくauthlib JARのサイズとSHA-256を検査する。未知の構成、Java不一致、authlib差し替え・重複・破損を拒否し、実トークンの直接受け渡しへ戻さない。
+
+`compatibility-2026-09-14.json` にRustソースのハッシュと、判定追加後のmacOS 1.21.8・26.2 / Linux 26.2の実Fabric試験を記録。3実行とも合成トークン非検出、IPC往復成功、限定した親メモリ読み取り拒否を確認した。Linux ARM64の1.21.8、Windows、オンライン参加はこの成功に含まない。
