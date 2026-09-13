@@ -293,7 +293,12 @@ pub fn spawn_instance(
         .map(|profile| build_fabric_classpath(paths, profile))
         .transpose()?
         .unwrap_or_default();
-    classpath.extend(build_classpath(paths, &version, instance.demo)?);
+    classpath.extend(build_classpath(
+        paths,
+        &version,
+        instance.demo,
+        fabric.as_ref(),
+    )?);
     let source_client_jar = paths.version_jar(&version.id);
     require_file(&source_client_jar)?;
 
@@ -1138,11 +1143,20 @@ fn build_classpath(
     paths: &MinecraftPaths,
     version: &VersionMetadata,
     demo: bool,
+    fabric: Option<&FabricProfile>,
 ) -> Result<Vec<PathBuf>, MinecraftLaunchError> {
     let features = HashMap::from([("is_demo_user".to_owned(), demo)]);
     let mut classpath = Vec::new();
 
     for library in &version.libraries {
+        if fabric.is_some_and(|profile| {
+            profile
+                .libraries
+                .iter()
+                .any(|replacement| same_library_artifact(&library.name, &replacement.name))
+        }) {
+            continue;
+        }
         if !rules_allow(library.rules.as_deref(), &features) {
             continue;
         }
@@ -1171,6 +1185,16 @@ fn build_classpath(
     }
 
     Ok(classpath)
+}
+
+fn same_library_artifact(left: &str, right: &str) -> bool {
+    let left: Vec<_> = left.split(':').collect();
+    let right: Vec<_> = right.split(':').collect();
+    left.len() >= 3
+        && right.len() >= 3
+        && left[0] == right[0]
+        && left[1] == right[1]
+        && left.get(3) == right.get(3)
 }
 
 fn expand_arguments(
@@ -1231,6 +1255,22 @@ fn require_file(path: &Path) -> Result<(), MinecraftLaunchError> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn fabric_library_versions_replace_vanilla_artifacts_but_not_native_classifiers() {
+        assert!(super::same_library_artifact(
+            "org.ow2.asm:asm:9.6",
+            "org.ow2.asm:asm:9.10.1"
+        ));
+        assert!(!super::same_library_artifact(
+            "org.ow2.asm:asm-tree:9.6",
+            "org.ow2.asm:asm:9.10.1"
+        ));
+        assert!(!super::same_library_artifact(
+            "org.lwjgl:lwjgl:3.3.3:natives-macos",
+            "org.lwjgl:lwjgl:3.3.3"
+        ));
+        assert!(!super::same_library_artifact("invalid", "invalid"));
+    }
     #[test]
     fn wayland_compatibility_flags_are_scoped_to_verified_version_and_display() {
         use crate::sandbox::LinuxDisplayProtocol::{Wayland, X11};
