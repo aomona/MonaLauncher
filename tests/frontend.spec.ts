@@ -1,5 +1,9 @@
 import { test, expect, type Page } from "@playwright/test";
 import type { InstancePermissions } from "../src/domain/launcher";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { generateFeed } from "../scripts/generate-feed.ts";
 
 async function mockDesktop(
   page: Page,
@@ -1237,6 +1241,238 @@ async function loadNewsFixture(page: Page, showImage = false) {
   await expect(page.locator(".news-row")).toHaveCount(3);
 }
 
+async function loadLauncherNewsFixture(page: Page, sourceDir = "tests/fixtures/news") {
+  await loadNewsFixture(page);
+  // Exercise the real Markdown generator without depending on production article contents.
+  const outputDir = await mkdtemp(join(tmpdir(), "mona-article-ui-"));
+  let xml: string;
+  try {
+    ({ xml } = await generateFeed({ sourceDir, outputDir }));
+  } finally {
+    await rm(outputDir, { recursive: true, force: true });
+  }
+  await page.evaluate((xml) => {
+    const doc = new DOMParser().parseFromString(xml, "application/xml");
+    const item = doc.querySelector("item")!;
+    const state = (window as any).__test;
+    state.newsFeed.entries.unshift({
+      id: "launcher:example",
+      kind: "monaLauncher",
+      title: item.querySelector("title")!.textContent,
+      summary: item.querySelector("description")!.textContent,
+      date: new Date(item.querySelector("pubDate")!.textContent!).toISOString(),
+      articleUrl: item.querySelector("link")!.textContent,
+      category: "MonaLauncher",
+      imageUrl: null,
+      author: "テスト著者",
+      contentHtml: item.getElementsByTagNameNS(
+        "http://purl.org/rss/1.0/modules/content/",
+        "encoded",
+      )[0].textContent,
+    });
+  }, xml);
+  await page.getByRole("button", { name: "更新", exact: true }).click();
+}
+
+test("launcher RSS opens from Home and News in a modal with cached body and focus restoration", async ({
+  page,
+}) => {
+  await loadLauncherNewsFixture(page);
+  const article = page.getByRole("button", {
+    name: "MonaLauncherニュース配信のサンプル",
+    exact: true,
+  });
+  await article
+    .locator("..")
+    .locator("..")
+    .locator("..")
+    .click({ position: { x: 8, y: 8 } });
+  const dialog = page.getByRole("dialog", { name: "MonaLauncherニュース配信のサンプル" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole("heading", { level: 2 })).toBeFocused();
+  await expect(dialog.locator("strong").first()).toHaveText("RSS生成の確認用サンプル");
+  await expect(dialog).toContainText("日本語の本文");
+  await expect(dialog).toContainText("テスト著者");
+  await expect.poll(() => page.evaluate(() => (window as any).__test.articleUrl)).toBe("");
+  await page.keyboard.press("Control+2");
+  await expect(dialog).toBeVisible();
+  await page.keyboard.press("Meta+2");
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("button", { name: "閉じる" }).focus();
+  await page.keyboard.press("Shift+Tab");
+  await expect
+    .poll(() => page.evaluate(() => !!document.activeElement?.closest('[role="dialog"]')))
+    .toBe(true);
+  const repository = dialog.getByRole("link", { name: "MonaLauncherのリポジトリ" });
+  await page.evaluate(() => {
+    (window as any).__test.failOpenArticle = true;
+  });
+  await repository.click();
+  await expect(dialog.getByRole("alert")).toContainText("開けませんでした");
+  await expect(repository).toBeFocused();
+  await page.evaluate(() => {
+    (window as any).__test.failOpenArticle = false;
+  });
+  await repository.focus();
+  await expect(repository).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect
+    .poll(() => page.evaluate(() => (window as any).__test.articleUrl))
+    .toBe("https://github.com/aomona/MonaLauncher");
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(article).toBeFocused();
+  await page.getByRole("button", { name: "News", exact: true }).click();
+  await expect(page.locator(".news-row")).toHaveCount(6);
+  await page.getByRole("tab", { name: "MonaLauncher", exact: true }).click();
+  await expect(page.locator(".news-row")).toHaveCount(1);
+  await page.evaluate(() => {
+    (window as any).__test.failNews = true;
+  });
+  await page.getByRole("button", { name: "更新", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText("ニュースの取得に失敗しました");
+  await article.focus();
+  await page.keyboard.press("Space");
+  await expect(dialog).toContainText("日本語の本文");
+  await page.locator(".dialog-viewport").click({ position: { x: 2, y: 2 } });
+  await expect(dialog).toHaveCount(0);
+  await expect(article).toBeFocused();
+});
+
+test("launcher article sanitizes untrusted markup and reflows with an accessible close control", async ({
+  page,
+}, testInfo) => {
+  await loadLauncherNewsFixture(page);
+  await page.evaluate(() => {
+    const entry = (window as any).__test.newsFeed.entries[0];
+    entry.contentHtml += `<script>window.__articleExecuted = true</script>
+      <img src="javascript:alert(1)" onerror="window.__articleExecuted = true">
+      <iframe src="https://evil.test/frame"></iframe><form><input autofocus name="x"></form>
+      <svg onload="window.__articleExecuted = true"></svg>
+      <p style="position:fixed" onclick="window.__articleExecuted = true">安全な本文</p>
+      <a href="javascript:alert(1)">危険なリンク</a><a href="file:///etc/passwd">ファイル</a>
+      <a href="https://">壊れたURL</a><a href="https://user:secret@example.test/">認証情報</a>
+      <pre><code>${"very_long_code_".repeat(100)}</code></pre>
+      <table><thead><tr><th>項目</th><th>説明</th></tr></thead><tbody><tr><td>更新</td><td>日本語</td></tr></tbody></table>
+      ${"<p>長い記事でも本文だけをスクロールして、閉じるボタンへ移動できます。</p>".repeat(40)}`;
+  });
+  await page.getByRole("button", { name: "更新", exact: true }).click();
+  await page
+    .getByRole("button", { name: "MonaLauncherニュース配信のサンプル", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog");
+  const body = dialog.getByRole("article");
+  await expect(
+    body.locator("script, img, iframe, form, input, svg, [style], [onclick], [onerror]"),
+  ).toHaveCount(0);
+  await expect(body.getByRole("link")).toHaveCount(1);
+  await expect(body).toContainText("安全な本文");
+  expect(await page.evaluate(() => (window as any).__articleExecuted)).toBeUndefined();
+  for (const theme of ["light", "dark"]) {
+    await page.evaluate((theme) => {
+      document.documentElement.dataset.theme = theme;
+    }, theme);
+    for (const size of [
+      { width: 1440, height: 900 },
+      { width: 1024, height: 640 },
+      { width: 320, height: 640 },
+    ]) {
+      await page.setViewportSize(size);
+      await expect(dialog.getByRole("button", { name: "閉じる" })).toBeInViewport();
+      expect(await dialog.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+      expect(
+        await dialog.locator(".dialog-body").evaluate((el) => el.scrollWidth <= el.clientWidth),
+      ).toBe(true);
+      await page.screenshot({ path: testInfo.outputPath(`article-${theme}-${size.width}.png`) });
+    }
+  }
+  await page.emulateMedia({ reducedMotion: "reduce", forcedColors: "active" });
+  await page.evaluate(() => {
+    document.documentElement.style.fontSize = "200%";
+  });
+  await expect(dialog.getByRole("button", { name: "閉じる" })).toBeInViewport();
+  expect((await dialog.locator(".dialog-body").boundingBox())!.height).toBeGreaterThan(100);
+  expect(
+    await dialog.locator(".dialog-body").evaluate((el) => el.scrollWidth <= el.clientWidth),
+  ).toBe(true);
+  await dialog.getByRole("button", { name: "閉じる" }).focus();
+  await page.screenshot({ path: testInfo.outputPath("article-200percent-contrast.png") });
+  await page.keyboard.press("Enter");
+  await expect(dialog).toHaveCount(0);
+});
+
+test("Markdown article images load over HTTPS and fit the modal without allowing active content", async ({
+  page,
+}, testInfo) => {
+  const requests: string[] = [];
+  await page.route("https://images.example.test/**", (route) => {
+    requests.push(route.request().url());
+    expect(route.request().headers()["referer"]).toBeUndefined();
+    return route.request().url().endsWith("wide.svg")
+      ? route.fulfill({
+          contentType: "image/svg+xml",
+          body: '<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="400"><rect width="1600" height="400" fill="#ccc"/><rect x="32" y="32" width="1536" height="336" fill="#555"/></svg>',
+        })
+      : route.abort();
+  });
+  await loadLauncherNewsFixture(page, "tests/fixtures/news-images");
+  expect(requests).toHaveLength(0);
+  await page.evaluate(() => {
+    const entry = (window as any).__test.newsFeed.entries[0];
+    entry.contentHtml += `<img alt="安全でない画像" src="data:image/svg+xml,test" onerror="window.__articleExecuted = true">
+      <img alt="ローカルファイル" src="file:///etc/passwd">
+      <img alt="認証情報付き" src="https://user:secret@images.example.test/private">
+      <img alt="HTTP画像" src="http://images.example.test/plain">
+      <img src="https://" srcset="https://images.example.test/unwanted 2x">
+      <img alt="追加画像" src="https://images.example.test/news/wide.svg" onload="window.__articleExecuted = true" style="width:99999px" width="99999" referrerpolicy="unsafe-url">`;
+  });
+  await page.getByRole("button", { name: "更新", exact: true }).click();
+  await page
+    .getByRole("button", { name: "MonaLauncherニュース配信のサンプル", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog");
+  const image = dialog.getByRole("img", { name: "ランチャーの画面", exact: true });
+  await image.scrollIntoViewIfNeeded();
+  await expect
+    .poll(() => image.evaluate((element: HTMLImageElement) => element.naturalWidth))
+    .toBe(1600);
+  await expect(dialog.locator("img")).toHaveCount(3);
+  await expect(image).toHaveAttribute("loading", "lazy");
+  await expect(image).toHaveAttribute("referrerpolicy", "no-referrer");
+  await expect(
+    dialog.locator("[srcset], [onerror], [onload], article [style], article [width]"),
+  ).toHaveCount(0);
+  await expect(dialog.getByRole("article")).toContainText("安全でない画像");
+  const missing = dialog.getByRole("img", { name: "取得できない画像の説明" });
+  await missing.scrollIntoViewIfNeeded();
+  await expect
+    .poll(() => missing.evaluate((element: HTMLImageElement) => element.complete))
+    .toBe(true);
+  expect(await missing.evaluate((element: HTMLImageElement) => element.naturalWidth)).toBe(0);
+  for (const theme of ["light", "dark"]) {
+    await page.evaluate((theme) => {
+      document.documentElement.dataset.theme = theme;
+    }, theme);
+    for (const width of [1440, 1024, 320]) {
+      await page.setViewportSize({ width, height: width === 1440 ? 900 : 640 });
+      await image.scrollIntoViewIfNeeded();
+      const box = (await image.boundingBox())!;
+      expect(box.width / box.height).toBeCloseTo(4, 1);
+      expect(
+        await dialog
+          .locator(".dialog-body")
+          .evaluate((element) => element.scrollWidth <= element.clientWidth),
+      ).toBe(true);
+      await expect(dialog.getByRole("button", { name: "閉じる" })).toBeInViewport();
+      await page.screenshot({ path: testInfo.outputPath(`article-image-${theme}-${width}.png`) });
+    }
+  }
+  expect(requests.every((url) => url.endsWith("wide.svg") || url.endsWith("missing.png"))).toBe(
+    true,
+  );
+  expect(await page.evaluate(() => (window as any).__articleExecuted)).toBeUndefined();
+});
+
 test("news shares Home's latest three and opens articles directly in the browser", async ({
   page,
 }) => {
@@ -1267,7 +1503,7 @@ test("news shares Home's latest three and opens articles directly in the browser
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(article).toBeFocused();
   await page.getByRole("tab", { name: "MonaLauncher", exact: true }).click();
-  await expect(page.getByText("MonaLauncherのニュースは未配信です")).toBeVisible();
+  await expect(page.getByText("配信されているニュースはありません。")).toBeVisible();
   await page.getByRole("tab", { name: "Minecraft", exact: true }).click();
   await expect(page.locator(".news-row")).toHaveCount(3);
   await page.getByRole("tab", { name: "Java Patch Notes", exact: true }).click();

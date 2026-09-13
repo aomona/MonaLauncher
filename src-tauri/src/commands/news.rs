@@ -1,3 +1,4 @@
+mod launcher;
 mod links;
 
 use crate::minecraft::file_io::{read_bounded_file, write_atomic};
@@ -18,6 +19,7 @@ const MAX_BYTES: u64 = 2 * 1024 * 1024;
 pub enum Source {
     News,
     JavaPatchNotes,
+    MonaLauncher,
 }
 
 impl Source {
@@ -25,18 +27,21 @@ impl Source {
         match self {
             Self::News => "news.json",
             Self::JavaPatchNotes => "javaPatchNotes.json",
+            Self::MonaLauncher => "rss.xml",
         }
     }
     fn name(self) -> &'static str {
         match self {
             Self::News => "Minecraftニュース",
             Self::JavaPatchNotes => "Javaパッチノート",
+            Self::MonaLauncher => "MonaLauncher",
         }
     }
     fn cache_file(self) -> &'static str {
         match self {
             Self::News => "mojang-v2-news.json",
             Self::JavaPatchNotes => "mojang-v2-java-patch-notes.json",
+            Self::MonaLauncher => "monalauncher-rss-v1.json",
         }
     }
 }
@@ -95,6 +100,8 @@ pub struct NewsEntry {
     kind: Source,
     article_url: String,
     image_url: Option<String>,
+    content_html: Option<String>,
+    author: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -172,6 +179,8 @@ fn normalize(cache: &Cache, source: Source) -> Result<NewsFeed, String> {
                         image_url: raw
                             .news_page_image
                             .and_then(|image| allowed_url(&image.url, true)),
+                        content_html: None,
+                        author: None,
                     }
                 }
                 Source::JavaPatchNotes => {
@@ -185,8 +194,11 @@ fn normalize(cache: &Cache, source: Source) -> Result<NewsFeed, String> {
                         kind: source,
                         article_url: links::patch_article_url(&raw.version, &raw.release_type)?,
                         image_url: raw.image.and_then(|image| allowed_url(&image.url, true)),
+                        content_html: None,
+                        author: None,
                     }
                 }
+                Source::MonaLauncher => launcher::normalize(value).ok()?,
             };
             if entry.title.trim().is_empty()
                 || entry.id.ends_with(':')
@@ -225,7 +237,14 @@ fn fetch(source: Source) -> Result<Cache, String> {
         .build()
         .map_err(|e| e.to_string())?;
     let response = client
-        .get(format!("{BASE_URL}{}", source.file()))
+        .get(if source == Source::MonaLauncher {
+            launcher::site_url()?
+                .join(source.file())
+                .map_err(|e| e.to_string())?
+                .to_string()
+        } else {
+            format!("{BASE_URL}{}", source.file())
+        })
         .send()
         .and_then(|response| response.error_for_status())
         .map_err(|_| "取得できませんでした。通信状態を確認して再試行してください。".to_string())?;
@@ -237,8 +256,12 @@ fn fetch(source: Source) -> Result<Cache, String> {
     if bytes.len() as u64 > MAX_BYTES {
         return Err("配信サイズが上限を超えています。".into());
     }
-    let feed = serde_json::from_slice(&bytes)
-        .map_err(|_| "配信の形式を読み取れませんでした。".to_string())?;
+    let feed = if source == Source::MonaLauncher {
+        launcher::parse(&bytes)?
+    } else {
+        serde_json::from_slice(&bytes)
+            .map_err(|_| "配信の形式を読み取れませんでした。".to_string())?
+    };
     Ok(Cache {
         feed,
         fetched_at: SystemTime::now()
@@ -249,7 +272,8 @@ fn fetch(source: Source) -> Result<Cache, String> {
 }
 
 fn read_cache(path: &Path, source: Source) -> Option<NewsFeed> {
-    let bytes = read_bounded_file(path, MAX_BYTES).ok()?;
+    // JSON escaping can expand the downloaded RSS/HTML when persisted.
+    let bytes = read_bounded_file(path, MAX_BYTES * 6).ok()?;
     let cache = serde_json::from_slice(&bytes).ok()?;
     let mut result = normalize(&cache, source).ok()?;
     result.cached = true;
@@ -302,7 +326,7 @@ fn accept_fetched(
     }
 }
 
-fn combine(results: [Result<NewsFeed, String>; 2]) -> Result<NewsFeed, String> {
+fn combine<const N: usize>(results: [Result<NewsFeed, String>; N]) -> Result<NewsFeed, String> {
     let mut feeds = Vec::new();
     let mut errors = Vec::new();
     for result in results {
@@ -331,7 +355,9 @@ fn combine(results: [Result<NewsFeed, String>; 2]) -> Result<NewsFeed, String> {
     for error in errors {
         append_warning(&mut merged, error);
     }
-    merged.entries.sort_by(|a, b| b.date.cmp(&a.date));
+    merged
+        .entries
+        .sort_by(|a, b| b.date.cmp(&a.date).then(a.id.cmp(&b.id)));
     Ok(merged)
 }
 
@@ -339,7 +365,7 @@ fn combine(results: [Result<NewsFeed, String>; 2]) -> Result<NewsFeed, String> {
 pub async fn cached_minecraft_news(app: tauri::AppHandle) -> Result<Option<NewsFeed>, String> {
     let dir = app.path().app_cache_dir().map_err(|e| e.to_string())?;
     tauri::async_runtime::spawn_blocking(move || {
-        let results = [Source::News, Source::JavaPatchNotes].map(|source| {
+        let results = [Source::News, Source::JavaPatchNotes, Source::MonaLauncher].map(|source| {
             read_cache(&dir.join(source.cache_file()), source)
                 .ok_or_else(|| format!("{}は未取得です。", source.name()))
         });
@@ -358,14 +384,19 @@ pub async fn fetch_minecraft_news(app: tauri::AppHandle) -> Result<NewsFeed, Str
             accept_fetched(source, path.as_deref(), fetch(source))
         })
     };
-    // Start both requests before awaiting either; one unavailable feed must not hide the other.
+    // Start all requests before awaiting; an unavailable feed must not hide the others.
     let news = start(Source::News);
     let patches = start(Source::JavaPatchNotes);
+    let launcher = start(Source::MonaLauncher);
     combine([
         news.await
             .map_err(|e| e.to_string())
             .and_then(|result| result),
         patches
+            .await
+            .map_err(|e| e.to_string())
+            .and_then(|result| result),
+        launcher
             .await
             .map_err(|e| e.to_string())
             .and_then(|result| result),

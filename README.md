@@ -60,4 +60,6 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib --locked auth:: -- --inclu
 pnpm generate:feed
 ```
 
-公開予定のRSS URL: `https://aomona.github.io/MonaLauncher/rss.xml`
+RSS URL: `https://aomona.github.io/MonaLauncher/rss.xml`
+
+配信された記事はランチャーのHomeとNewsに表示し、MonaLauncherタブで絞り込めます。MonaLauncherの記事はクリックすると本文をモーダルで表示し、取得済み本文はオフラインでも読めます。配信元URLは`news.config.json`で生成側と共有しています。

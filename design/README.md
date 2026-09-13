@@ -12,11 +12,13 @@ UIを実装・変更するエージェントは、このガイドを最初に読
 
 フロントエンドは新デザインへ移行済み。Home、Instances、Settingsの外観・アカウント管理、狭幅Drawer、大型Instance Modal、作成・認証・Mod管理のDialogを実装している。Themeと、このUIで観測した起動履歴はローカルに保存する。既存バックエンドの作成・起動・停止・改名・削除・診断・修復・認証・Mod操作は `src/app/useLauncher.ts` に分離して接続している。
 
-NewsはMojangの `https://launchercontent.mojang.com/v2/news.json` と `https://launchercontent.mojang.com/v2/javaPatchNotes.json` を取得し、Homeの最新3件・要約付き一覧・記事Row全体のクリックによる既定ブラウザでの原文閲覧に対応。保存済み記事と取得日時はオフラインでも表示する。両フィードを公開日時順に統合し、種類別の絞り込みに対応。本文のアプリ内表示とMonaLauncher独自のお知らせ配信は未対応。
+NewsはMojangの `https://launchercontent.mojang.com/v2/news.json` と `https://launchercontent.mojang.com/v2/javaPatchNotes.json`、MonaLauncherのRSSを取得し、公開日時順に統合する。Homeの最新3件とNewsの種類別一覧で共有し、保存済み記事と取得日時はオフラインでも表示する。Mojangの記事Rowは既定ブラウザで開き、MonaLauncherの記事Rowは共通Base UI Dialogで本文を表示する。RSSの公開元は`news.config.json`で生成側と共有する。
 
 Gallery、Resource Packs、Shader Packs、Worlds、Serversは取得APIがないため、未取得・未対応として表示する。Group管理、Created日時によるSort、バージョン変更、Open Folder、Java等のグローバル設定も未対応。架空の記事・画像・件数や、実行できない操作は追加しない。これはデザイン仕様全機能の完成宣言ではない。
 
 ## ファイルと更新手順
+
+記事ModalのHTTPS画像は元の縦横比を保って本文幅に収め、既存の`rounded-image`を使う。画像にはalt・遅延読み込み・no-referrerを設定し、取得失敗時も説明を残す。画像の独自オフラインキャッシュは持たない。
 
 | ファイル                            | 役割                                                                                       |
 | ----------------------------------- | ------------------------------------------------------------------------------------------ |

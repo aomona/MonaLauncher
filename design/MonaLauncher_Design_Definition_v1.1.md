@@ -471,13 +471,17 @@ Imageを元の縦横比のままContainで大きく表示。下部にInstance名
 
 ## 15. News
 
-TabsはAll / Minecraft / Java Patch Notes / MonaLauncher。Allではv2ニュースとJava版パッチノートを公開日時順に統合し、Minecraftではニュース、Java Patch Notesではパッチノートだけを表示する。テキスト主体のRow、左に画像がある場合だけ160×90pxのThumbnail。画像がない記事のために装飾用Placeholderを増やさない。
+TabsはAll / Minecraft / Java Patch Notes / MonaLauncher。Allではv2ニュース・Java版パッチノート・MonaLauncherのRSSを公開日時順に統合し、各配信元のTabでは対象の記事だけを表示する。テキスト主体のRow、左に画像がある場合だけ160×90pxのThumbnail。画像がない記事のために装飾用Placeholderを増やさない。
 
 記事名、短い要約、配信元、日時を表示する。記事名は標準2行まで、要約2行まで。本文と画像間16px。画像とタイトルの上端を揃える。幅不足時はThumbnailを本文の上へ移せる。スクリーンショットのHoverメタデータ方式をNewsへ流用しない。
 
 Mojang配信の記事は、画像・要約・余白を含む記事Row全体をクリックするとOSの既定ブラウザで原文を直接開く。キーボードのFocus枠もRow全体に表示する。外部リンクアイコンを添える。クリック方法の案内文は表示しない。中間のArticle Modalは表示しない。
 
 配信JSONに含まれるタイトル・要約をプレーンテキストとして表示し、外部HTMLやスクリプトは埋め込まない。本文を推測して補完しない。ブラウザで開けなかったときは該当記事にエラーを表示し、同じ記事Rowから再試行できるようにする。
+
+MonaLauncherの記事はRow全体から記事Modalを開く。タイトル・配信元・日付・著者（任意）とRSS内の本文を表示する。本文は許可した見出し・段落・リスト・引用・コード・表・HTTPSリンク・HTTPS画像に限定してサニタイズする。画像は元の縦横比を維持し、最大幅を本文幅に収め、既存の画像Radiusを使う。遅延読み込み・no-referrerを設定し、altで内容を説明する。画像のためのLightboxは追加しない。埋め込み・フォームは読み込まない。本文リンクは既定ブラウザで開き、失敗時はModal内にエラーを残す。クリック方法の案内文は表示しない。
+
+記事Modalの最大幅はNews本文の最大幅を再利用し、周囲32px/狭幅16px、タイトルと閉じる操作を固定して本文だけScrollする。長いタイトルは最大25dvhの領域内でScrollでき、文字拡大で幅が不足した場合は閉じる操作をタイトルの上段へ送る。本文は選択可能。共通DialogでFocusを閉じ込め、Esc/Backdrop/閉じるボタンで元の記事RowへFocusを戻す。Modal表示中は背景のページ切替Shortcutを無効にする。取得済み本文はオフラインでも表示する。配信元ごとにキャッシュを分離し、一部取得失敗でも他の記事を隠さない。
 
 ## 16. 認証・Offline・破壊操作
 
@@ -534,6 +538,7 @@ Forced colors / High contrastではシステム色とOutlineを尊重する。Bo
 | Log更新 | 過去行閲覧やテキスト選択を妨げない。失敗文字を読める |
 | 0件 / 検索0件 / 未取得 / Error | 異なる状態として適切な説明・操作を表示 |
 | Offline / 認証切れ | ローカル閲覧を不必要に止めず、起動可否を偽らない |
+| MonaLauncher News | Homeと配信元Tabから本文Modalを開け、キャッシュ本文・Focus復帰・不正HTML除去を確認できる |
 | OS Scrollbar / Reduced motion / High contrast | ユーザー設定を妨げず、必要な情報・操作が残る |
 | 表示データと操作権限 | 未実装機能、架空の進捗、未確認の安全性を正常表示しない |
 

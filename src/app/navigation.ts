@@ -12,7 +12,7 @@ export function useNavigation() {
       if (
         event.isComposing ||
         !(event.metaKey || event.ctrlKey) ||
-        document.querySelector("dialog[open]")
+        document.querySelector('dialog[open], [role="dialog"], [role="alertdialog"]')
       )
         return;
       const next = event.key === "," ? "Settings" : pages[Number(event.key) - 1];
