@@ -96,13 +96,27 @@ public final class TokenReadProbe implements ClientModInitializer {
                     }
                 }
                 completed.add("game_files");
+                NativeMemoryProbe.Result nativeResult = null;
+                if (Boolean.parseBoolean(config.getProperty("nativeProbe", "false"))) {
+                    nativeResult = NativeMemoryProbe.run(game, Integer.parseInt(config.getProperty("parentPid")),
+                        Long.parseUnsignedLong(config.getProperty("parentAddress")), tokenLength);
+                    if (nativeResult.parentBytes() != null)
+                        scan("native_launcher_memory", new String(nativeResult.parentBytes(), StandardCharsets.US_ASCII));
+                    completed.add("native_launcher_memory");
+                }
                 if (Boolean.parseBoolean(config.getProperty("heapDump", "true"))) scanLiveHeap(game);
                 String result = "{\"schema\":1,\"fabricEntrypointRan\":true,\"tokenDetected\":" + !detected.isEmpty()
                     + ",\"detectedSurfaces\":" + jsonArray(detected) + ",\"completedSurfaces\":" + jsonArray(completed)
                     + ",\"unavailableSurfaces\":" + jsonArray(unavailable)
                     + ",\"objectsVisited\":" + objects + ",\"wholeHeapScanned\":false"
                     + ",\"liveJavaHeapDumpScanned\":" + completed.contains("live_java_heap_dump")
-                    + ",\"heapDumpBytes\":" + heapBytes + "}";
+                    + ",\"heapDumpBytes\":" + heapBytes
+                    + ",\"nativeMemoryProbeRan\":" + (nativeResult != null)
+                    + ",\"nativeControlPassed\":" + (nativeResult != null && nativeResult.controlPassed())
+                    + ",\"nativeSelfReadAllowed\":" + (nativeResult != null && nativeResult.selfReadAllowed())
+                    + ",\"nativeSelfReadError\":" + (nativeResult == null ? -1 : nativeResult.selfError())
+                    + ",\"launcherMemoryReadAllowed\":" + (nativeResult != null && nativeResult.parentReadAllowed())
+                    + ",\"launcherMemoryReadError\":" + (nativeResult == null ? -1 : nativeResult.parentError()) + "}";
                 result = result.substring(0, result.length() - 1)
                     + ",\"agentAdapterPresent\":" + "authlib-client-v1".equals(System.getProperty("monalauncher.auth.adapter"))
                     + ",\"chatAdapterPresent\":" + "crypt-v1".equals(System.getProperty("monalauncher.auth.chat.adapter"))

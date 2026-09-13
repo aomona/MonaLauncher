@@ -87,8 +87,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     fs::write(
         game.join("auth-probe.properties"),
         format!(
-            "sha256={fingerprint}\nlength={}\nheapDump=true\n",
-            secret.len()
+            "sha256={fingerprint}\nlength={}\nheapDump=true\nnativeProbe=true\nparentPid={}\nparentAddress={}\n",
+            secret.len(), std::process::id(), secret.as_ptr() as usize
         ),
     )?;
     let result = game.join("auth-probe-result.json");
@@ -146,8 +146,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let entry = entry?;
         let name = entry.file_name();
         let name = name.to_string_lossy();
-        if name.starts_with("auth-probe-heap-")
-            && name.ends_with(".hprof")
+        if ((name.starts_with("auth-probe-heap-") && name.ends_with(".hprof"))
+            || (name.starts_with("auth-probe-native-")
+                && (name.ends_with(".dylib") || name.ends_with(".so"))))
             && entry.file_type()?.is_file()
         {
             fs::remove_file(entry.path())?;
@@ -182,13 +183,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     fs::write(&report, serde_json::to_vec_pretty(&observation)?)?;
     if observation["liveJavaHeapDumpScanned"] != true
+        || observation["nativeMemoryProbeRan"] != true
+        || observation["nativeControlPassed"] != true
+        || observation["nativeSelfReadAllowed"] != cfg!(target_os = "macos")
+        || observation["nativeSelfReadError"] != if cfg!(target_os = "macos") { 0 } else { 1 }
+        || observation["launcherMemoryReadAllowed"] != false
+        || observation["launcherMemoryReadError"] != if cfg!(target_os = "macos") { 5 } else { 1 }
         || observation["tokenDetected"] != false
         || observation["agentAdapterPresent"] != true
         || observation["chatAdapterPresent"] != true
         || observation["brokerHandshakeCompleted"] != true
     {
         return Err(
-            "brokered probe failed: secret detected or live heap/auth/chat adapter/IPC check missing".into(),
+            "brokered probe failed: secret detected or heap/native/auth/chat adapter/IPC check missing".into(),
         );
     }
     println!(

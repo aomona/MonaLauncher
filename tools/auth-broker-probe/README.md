@@ -31,7 +31,7 @@ cargo run --manifest-path src-tauri/Cargo.toml --locked --bin auth_broker_probe 
 
 - HotSpotの生存中オブジェクトのヒープダンプを作り、全バイトを読み、検証用hexトークンをLatin-1/UTF-8・UTF-16 BE/LE表現で探す。ダンプは検査後に削除し、ハーネスも異常終了後の残存ダンプを削除する。ファイルサイズはレポートに残す。
 
-生存していないオブジェクトを含むヒープ全体、変換・分割された値、ネイティブメモリ、ランチャーのメモリは未検査。したがって `wholeHeapScanned` はfalseのままとし、生存中ヒープの検査だけを `liveJavaHeapDumpScanned` で示す。署名鍵・オンラインサーバー接続の検証も追加工程。
+生存していないオブジェクトを含むヒープ全体、変換・分割された値、ネイティブメモリ全体は未検査。ランチャーのメモリについては後述の限定したOS APIによる読取試験を追加した。したがって `wholeHeapScanned` はfalseのままとし、生存中ヒープの検査だけを `liveJavaHeapDumpScanned` で示す。署名鍵・オンラインサーバー接続の検証も追加工程。
 
 2026-09-13のmacOS Seatbelt実行では、1.21.8と26.2の双方でFabric entrypointが実行され、実User/Sessionから検証用トークンを検出。検査結果は `baseline-macos.json` に保存。
 
@@ -68,3 +68,16 @@ cargo test --manifest-path src-tauri/Cargo.toml --locked --lib \
 Linuxの同じUTM検証VMでも、26.2 / authlib 9.0.75 / Java 25の公式クラスによる署名互換試験と、Fabric 0.19.5実ゲームでのCrypt差し替え・IPC・生存中ヒープの回帰検査が成功した。結果は `chat-adapter-linux-2026-09-14.json`。1.21.8は既存インストーラーがLWJGL freetype 3.3.3のLinux ARM64ネイティブを未対応として起動前に拒否したため、このVMでの成功には含めない。
 
 追加確認では、macOSでRust 124件成功・6件スキップ、Linuxで127件成功・5件スキップ、双方Clippy成功。その後の待機中失効修正は双方のIPC 5件で検証し、Clippyも再実行した。IPCが待機中でも250 msの読取タイムアウトごとにアカウント失効を検査し、切断して鍵を持つ処理を破棄する。処理中に失効した場合も結果を返さず、分類済みの失効エラー後に閉じる。HTTP処理中の待機時間は既存の最大30秒に従う。
+
+## Fabric Modからのネイティブな親メモリ読取（2026-09-14）
+
+`native_memory.c` と `NativeMemoryProbe.java` を追加。ハーネスが保持する合成トークンの正確なアドレス・長さと親PIDを専用インスタンスの設定に渡し、ModからOS APIでその範囲を読み出す。実アカウントの資格情報を対象にしない。一部だけでも読めた場合は読取成功として扱い、トークン検出または親メモリ読取成功でハーネスを失敗させる。読み出したバイトは既存のSHA-256比較にも渡す。Linuxのビルド時には、読取可能ページと読取禁止ページをまたぐ要求で8バイトだけ返る対照試験を行い、部分読取を拒否と誤判定しないことも検査する。JSONにはPID・アドレス・読んだ内容を残さない。
+
+ビルドにはJDKのJNIヘッダーとCコンパイラーが必要。`build.py` はホストOS用のネイティブライブラリをJARへ同梱し、同じOS APIによる自プロセスメモリの読取をサンドボックス外で実行して成功を必須にする。Modは一時ファイルへ展開してJNIを読み込み、検査後にファイルを削除する。ハーネスも異常終了時の生成ファイルを片付ける。
+
+- macOSは親の `task_for_pid` と `mach_vm_read_overwrite` を使用する。自プロセスの対照には `mach_task_self()` を使用する。[Apple API](https://developer.apple.com/documentation/kernel/1402127-mach_vm_read_overwrite)
+- Linuxは `process_vm_readv` を使用する。bubblewrap内から指定するPIDはホスト側のPIDであり、PID名前空間内で同じ対象を指すとは扱わない。現在のseccompはこのシステムコール自体をEPERMにするため、自プロセス宛ての読取拒否も別途必須にする。[Linux API](https://www.man7.org/linux/man-pages/man2/process_vm_readv.2.html)
+
+ハーネスは `nativeMemoryProbeRan=true`、`nativeControlPassed=true` と親読取拒否を必須にする。macOSは自プロセス読取成功・親KERN_FAILURE(5)、Linuxは自プロセス・親の双方EPERM(1)を検査する。結果は `native-memory-2026-09-14.json`。
+
+これは指定したOS APIでの読取試験である。macOSの拒否がSeatbeltだけに由来するとは断定しない。ネイティブメモリ全体の走査、他のデバッグ・IPC経路、カーネルやランチャーの脆弱性は検証していない。以前の生存中Javaヒープ検査と区別し、未知の全経路からの非開示を証明したとは扱わない。
