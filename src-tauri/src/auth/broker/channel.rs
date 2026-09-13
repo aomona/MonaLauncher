@@ -104,10 +104,13 @@ fn read_exact_until(
     stream: &mut UnixStream,
     mut bytes: &mut [u8],
     active: &AtomicBool,
+    operations: &dyn Operations,
     deadline: Option<Instant>,
 ) -> io::Result<()> {
     while !bytes.is_empty() {
-        if !active.load(Ordering::Acquire) {
+        // The socket's 250 ms read timeout also bounds idle lease revocation. Returning drops
+        // the operation owner and its chat keys even when the game never sends another request.
+        if !active.load(Ordering::Acquire) || !operations.valid() {
             return Err(io::ErrorKind::Interrupted.into());
         }
         if deadline.is_some_and(|end| Instant::now() >= end) {
@@ -141,15 +144,33 @@ fn serve(
     let mut requests = 0;
     loop {
         let mut header = [0; 4];
-        read_exact_until(&mut stream, &mut header[..1], &active, None)?;
+        read_exact_until(
+            &mut stream,
+            &mut header[..1],
+            &active,
+            operations.as_ref(),
+            None,
+        )?;
         let deadline = Some(Instant::now() + Duration::from_secs(5));
-        read_exact_until(&mut stream, &mut header[1..], &active, deadline)?;
+        read_exact_until(
+            &mut stream,
+            &mut header[1..],
+            &active,
+            operations.as_ref(),
+            deadline,
+        )?;
         let length = u32::from_be_bytes(header) as usize;
         if length == 0 || length > protocol::MAX_REQUEST {
             return Err(io::ErrorKind::InvalidData.into());
         }
         let mut bytes = vec![0; length];
-        read_exact_until(&mut stream, &mut bytes, &active, deadline)?;
+        read_exact_until(
+            &mut stream,
+            &mut bytes,
+            &active,
+            operations.as_ref(),
+            deadline,
+        )?;
         let request: Request =
             serde_json::from_slice(&bytes).map_err(|_| io::ErrorKind::InvalidData)?;
         if window.elapsed() >= Duration::from_secs(1) {
@@ -174,7 +195,8 @@ fn serve(
             operations.execute(&request.command)
         };
         previous_id = previous_id.max(request.id);
-        let result = if !active.load(Ordering::Acquire) || !operations.valid() {
+        let revoked = !active.load(Ordering::Acquire) || !operations.valid();
+        let result = if revoked {
             Err(BrokerError::Revoked)
         } else {
             result
@@ -185,6 +207,9 @@ fn serve(
         }
         stream.write_all(&(reply.len() as u32).to_be_bytes())?;
         stream.write_all(&reply)?;
+        if revoked {
+            return Ok(());
+        }
     }
 }
 
@@ -291,12 +316,85 @@ mod tests {
             "network_denied"
         );
         valid.store(false, Ordering::Release);
-        assert_eq!(
-            request(&mut peer, json!({"id":4,"command":{"type":"hello"}}))["error"],
-            "revoked"
-        );
-        drop(broker);
         let mut byte = [0];
         assert_eq!(peer.read(&mut byte).unwrap(), 0);
+    }
+
+    #[test]
+    fn expired_chat_handle_does_not_revoke_the_account_channel() {
+        struct ExpiredKey;
+        impl Operations for ExpiredKey {
+            fn valid(&self) -> bool {
+                true
+            }
+            fn execute(&mut self, _: &Command) -> Result<serde_json::Value, BrokerError> {
+                Err(BrokerError::Revoked)
+            }
+        }
+        let broker = PreparedBroker::new(Box::new(ExpiredKey), true).unwrap();
+        let mut peer = broker.test_peer();
+        peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        request(&mut peer, json!({"id":1,"command":{"type":"hello"}}));
+        assert_eq!(
+            request(
+                &mut peer,
+                json!({"id":2,"command":{"type":"sign","key_id":"expired","message":""}})
+            )["error"],
+            "revoked"
+        );
+        assert_eq!(
+            request(&mut peer, json!({"id":3,"command":{"type":"hello"}}))["result"]["protocol"],
+            1
+        );
+    }
+
+    #[test]
+    fn revocation_drops_key_owner_when_idle_or_during_execution() {
+        struct KeyOwner {
+            valid: Arc<AtomicBool>,
+            dropped: Arc<AtomicBool>,
+            revoke_in_execute: bool,
+        }
+        impl Operations for KeyOwner {
+            fn valid(&self) -> bool {
+                self.valid.load(Ordering::Acquire)
+            }
+            fn execute(&mut self, _: &Command) -> Result<serde_json::Value, BrokerError> {
+                assert!(self.revoke_in_execute);
+                self.valid.store(false, Ordering::Release);
+                Ok(json!({ "must_not_return": true }))
+            }
+        }
+        impl Drop for KeyOwner {
+            fn drop(&mut self) {
+                self.dropped.store(true, Ordering::Release);
+            }
+        }
+        for during_execution in [false, true] {
+            let valid = Arc::new(AtomicBool::new(true));
+            let dropped = Arc::new(AtomicBool::new(false));
+            let broker = PreparedBroker::new(
+                Box::new(KeyOwner {
+                    valid: valid.clone(),
+                    dropped: dropped.clone(),
+                    revoke_in_execute: during_execution,
+                }),
+                true,
+            )
+            .unwrap();
+            let mut peer = broker.test_peer();
+            peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+            request(&mut peer, json!({"id":1,"command":{"type":"hello"}}));
+            if during_execution {
+                assert_eq!(
+                    request(&mut peer, json!({"id":2,"command":{"type":"certificate"}})),
+                    json!({"id":2,"error":"revoked"})
+                );
+            } else {
+                valid.store(false, Ordering::Release);
+            }
+            assert_eq!(peer.read(&mut [0]).unwrap(), 0);
+            assert!(dropped.load(Ordering::Acquire));
+        }
     }
 }
