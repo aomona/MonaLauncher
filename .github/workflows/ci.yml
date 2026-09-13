@@ -2,6 +2,7 @@ name: CI
 
 on:
   push:
+    branches: [dev, main]
   pull_request:
   workflow_dispatch:
 
@@ -13,37 +14,104 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  check:
-    name: Project checks
-    runs-on: windows-latest
-    timeout-minutes: 20
-
+  frontend:
+    name: Frontend and UI
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v7
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: 1.97.1
-          components: rustfmt, clippy
-
-      - name: Set up project tools
-        uses: jdx/mise-action@v4
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v4
         with:
           install: true
           cache: true
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check
+      - name: Install test browser
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Run UI and RSS browser tests
+        run: pnpm test:ui --workers=2
+      - name: Upload failed browser test evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-test-results
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 7
 
-      - name: Install frontend dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Run project checks
-        run: mise run check
-
+  native:
+    name: Rust and sandbox (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-15, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf libssl-dev build-essential pkg-config bubblewrap apparmor-utils
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.97.1
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+      - uses: jdx/mise-action@v4
+        with:
+          install: true
+          cache: true
+      - run: pnpm install --frozen-lockfile
+      - name: Generate news and build frontend for the native app
+        run: pnpm build
+      - name: Check Rust formatting, lint and tests
+        run: |
+          mise run rust-format
+          mise run rust-lint
+          mise run rust-test
+      - name: Verify generated RSS with the launcher parser
+        run: cargo test --manifest-path src-tauri/Cargo.toml --locked --lib commands::news::launcher::tests::generated_launcher_feed -- --ignored --exact
+      - name: Build native app and platform probes
+        run: cargo build --manifest-path src-tauri/Cargo.toml --locked --bins --features tauri/custom-protocol
       - name: Verify AppContainer isolation
-        working-directory: src-tauri
-        run: cargo run --locked --bin sandbox_probe -- --appcontainer
+        if: runner.os == 'Windows'
+        run: ./src-tauri/target/debug/sandbox_probe.exe --appcontainer
+      - name: Verify Windows sandbox ACL boundaries
+        if: runner.os == 'Windows'
+        run: ./src-tauri/target/debug/sandbox_probe.exe --acl
+      - name: Verify Windows child cleanup after launcher exit
+        if: runner.os == 'Windows'
+        run: ./scripts/verify-windows-job.ps1
+      - name: Verify Linux sandbox as an unprivileged user
+        if: runner.os == 'Linux'
+        run: |
+          test "$(id -u)" -ne 0
+          sudo install -d -o root -g root -m 755 /usr/local/libexec/monalauncher-probes
+          sudo install -o root -g root -m 755 src-tauri/target/debug/linux_sandbox_probe /usr/local/libexec/monalauncher-probes/linux_sandbox_probe
+          if sudo aa-status --enabled; then
+            sudo apparmor_parser -r tools/linux-validation/monalauncher-probes.apparmor
+          fi
+          /usr/local/libexec/monalauncher-probes/linux_sandbox_probe
 
-      - name: Verify sandbox ACL boundaries
-        working-directory: src-tauri
-        run: cargo run --locked --bin sandbox_probe -- --acl
+  check:
+    name: Project checks
+    if: always()
+    needs: [frontend, native]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Require all checks to succeed
+        env:
+          FRONTEND_RESULT: ${{ needs.frontend.result }}
+          NATIVE_RESULT: ${{ needs.native.result }}
+        run: |
+          test "$FRONTEND_RESULT" = success
+          test "$NATIVE_RESULT" = success

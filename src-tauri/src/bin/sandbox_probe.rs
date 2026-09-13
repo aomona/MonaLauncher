@@ -1,3 +1,4 @@
+#[cfg(windows)]
 use serde::{Deserialize, Serialize};
 #[cfg(windows)]
 use std::ffi::OsString;
@@ -9,6 +10,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 #[cfg(windows)]
 use std::process::Command;
+#[cfg(windows)]
 use std::time::Duration;
 
 #[cfg(windows)]
@@ -34,6 +36,7 @@ use monalauncher_lib::probe::{
 const PROBE_RUNTIME_CHECKSUM: &str =
     "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
+#[cfg(windows)]
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ProbeResult {
@@ -43,6 +46,7 @@ struct ProbeResult {
     cursor_access: CursorAccessProbe,
 }
 
+#[cfg(windows)]
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct CursorAccessProbe {
@@ -51,6 +55,7 @@ struct CursorAccessProbe {
     write_error: Option<String>,
 }
 
+#[cfg(windows)]
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AppContainerProbeResult {
@@ -58,6 +63,7 @@ struct AppContainerProbeResult {
     child: ProbeResult,
 }
 
+#[cfg(windows)]
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AclProbeResult {
@@ -78,6 +84,7 @@ struct AclProbeResult {
     other_manifest_readable: bool,
 }
 
+#[cfg(windows)]
 #[derive(Debug, Deserialize, Serialize)]
 struct GameAreaProbe {
     name: String,
