@@ -7,13 +7,26 @@ import java.security.ProtectionDomain;
 public final class AuthAgent {
     public static void premain(String options, Instrumentation instrumentation) {
         if (options == null || options.isEmpty()) throw new IllegalArgumentException("auth bridge native library missing");
+        String stage = "bootstrap";
         try {
             java.nio.file.Path bootstrap = java.nio.file.Path.of(options).getParent().resolve("auth-bootstrap.jar");
             instrumentation.appendToBootstrapClassLoaderSearch(new java.util.jar.JarFile(bootstrap.toFile()));
+            stage = "native IPC";
             Class.forName("me.aomona.auth.NativeIO", true, null).getMethod("initialize", String.class).invoke(null, options);
+            stage = "signature provider";
             Class.forName("me.aomona.auth.RemoteProvider", true, null).getMethod("install").invoke(null);
         } catch (ReflectiveOperationException | java.io.IOException error) {
-            throw new IllegalStateException("Authentication IPC initialization failed");
+            Throwable cause = error;
+            while (cause instanceof java.lang.reflect.InvocationTargetException wrapped && wrapped.getCause() != null)
+                cause = wrapped.getCause();
+            String detail = cause.getClass().getSimpleName();
+            // Only a fixed native diagnostic with numeric OS status may cross into the log.
+            String message = cause.getMessage();
+            if (cause instanceof java.io.IOException && message != null
+                && message.matches("Authentication IPC prepare failed: win32=[0-9]+ type=[0-9]+")) detail += ": " + message;
+            if (cause instanceof UnsatisfiedLinkError && message != null && message.contains("dependent libraries"))
+                detail += ": native dependency unavailable";
+            throw new IllegalStateException("Authentication IPC initialization failed at " + stage + " (" + detail + ")");
         }
         instrumentation.addTransformer(new ClassFileTransformer() {
             @Override public byte[] transform(ClassLoader loader, String name, Class<?> redefined,

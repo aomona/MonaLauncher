@@ -1,5 +1,6 @@
 #include <jni.h>
 #include <stdint.h>
+#include <stdio.h>
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -17,8 +18,14 @@ static void fail(JNIEnv *env) {
 JNIEXPORT void JNICALL Java_me_aomona_auth_NativeIO_prepare(JNIEnv *env, jclass type, jlong handle) {
     (void) type;
 #ifdef _WIN32
-    if (GetFileType((HANDLE)(intptr_t)handle) != FILE_TYPE_PIPE
-        || !SetHandleInformation((HANDLE)(intptr_t)handle, HANDLE_FLAG_INHERIT, 0)) fail(env);
+    DWORD kind = GetFileType((HANDLE)(intptr_t)handle);
+    if (kind != FILE_TYPE_PIPE || !SetHandleInformation((HANDLE)(intptr_t)handle, HANDLE_FLAG_INHERIT, 0)) {
+        DWORD code = GetLastError();
+        char message[128];
+        snprintf(message, sizeof(message), "Authentication IPC prepare failed: win32=%lu type=%lu", (unsigned long)code, (unsigned long)kind);
+        jclass exception = (*env)->FindClass(env, "java/io/IOException");
+        if (exception) (*env)->ThrowNew(env, exception, message);
+    }
 #else
     if (handle < 0 || handle > INT32_MAX) { fail(env); return; }
     int flags = fcntl((int)handle, F_GETFL);
