@@ -158,4 +158,4 @@ LinuxのPermissionsも同じ保存APIとSwitchを使用する。Wayland優先と
 
 ## アカウント認証の仲介（2026-09-13）
 
-Permissionsの「通信とデスクトップ」に既存Switchで表示する。保存値は `accountAuthentication: disabled | brokered`、初期値はdisabled。旧 `accessToken` のboolも読み込み、trueはbrokered、falseはdisabledとして保存し直す。新旧フィールドの重複は拒否する。ONでは実トークンをRust側で保持して限定認証APIを仲介し、ゲームには固定の無効なトークン値だけを渡す。通信許可とは独立して保存し、デモ・未ログイン時は仲介しない。すべてのModが起動中は許可済み認証操作を利用できることを説明する。Windowsは仲介未対応として解除操作を提供する。現在の対応バージョン、署名付きチャットの未対応、オンライン接続の未検証を表示する。失敗時の元の設定・再試行・成功Toastを維持する。原本8.2を更新し、色・寸法は既存Switchを使うためトークンJSON・生成設定は変更しない。
+Permissionsの「通信とデスクトップ」に既存Switchで表示する。保存値は `accountAuthentication: disabled | brokered`、初期値はdisabled。旧 `accessToken` のboolも読み込み、trueはbrokered、falseはdisabledとして保存し直す。新旧フィールドの重複は拒否する。ONでは実トークンをRust側で保持して限定認証APIを仲介し、ゲームには固定の無効なトークン値だけを渡す。通信許可とは独立して保存し、デモ・未ログイン時は仲介しない。すべてのModが起動中は許可済み認証操作を利用できることを説明する。Windowsでも専用IPCの実装によりSwitchを有効にする。現在の試験対応バージョン、署名鍵をゲームに渡さないこと、実アカウントのオンライン接続はmacOSで検証済み・Windows/Linuxでは未検証であることを表示する。失敗時の元の設定・再試行・成功Toastを維持する。原本8.2を更新し、色・寸法は既存Switchを使うためトークンJSON・生成設定は変更しない。

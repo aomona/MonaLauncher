@@ -173,3 +173,17 @@ Linux検証VMでは、既存のAppArmor設定でuser namespaceの作成を許可
 結果は `instance-isolation-2026-09-14.json`。macOSの1.21.8・26.2とLinux ARM64検証VMの26.2で、各2つのFabric 0.19.5ゲームを同時起動し、上記の鍵分離・相手ファイルの非読取・片方の終了後の署名継続・待機中の失効と次回署名拒否が成功した。macOSのRustチェックは133件成功・9件スキップ、両OSのClippyは警告をエラー扱いにして成功。ゲームとVMは検証後に停止した。
 
 Linuxの実アカウントによるオンライン検証は未実施。既存の `auth/token_store.rs` はLinuxで資格情報の保存・読込を `UnsupportedPlatform` としており、安全なアカウント取得経路を用意する必要がある。今回の合成鍵試験で、その前提を解消したとは扱わない。
+
+## Windowsの認証IPC（2026-09-14）
+
+Windowsにも起動ごとの認証チャネルを実装した。ランチャー内で接続済みのoverlapped named pipeを作り、子側のHANDLEだけを `PROC_THREAD_ATTRIBUTE_HANDLE_LIST` に追加する。親側は継承しない。名前はゲームに渡さず、DACLはSYSTEMと所有者だけに限定し、AppContainerへの接続許可を追加しない。最大1インスタンス・初回作成限定・リモート接続拒否とし、接続したPIDがランチャー自身であることも検査する。名前の秘匿だけを保護根拠とせず、終了後に新規の待受・再接続をしない。[CreateNamedPipeW](https://learn.microsoft.com/en-us/windows/win32/api/namedpipeapi/nf-namedpipeapi-createnamedpipew)、[ハンドルの明示継承](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-updateprocthreadattribute)。
+
+Javaへ渡すのはプロセス内でのみ意味を持つHANDLE番号。JNI初期化で継承フラグを解除する。Rustの読取待ちは250ms、書込は3秒、Javaの転送は35秒で期限を設け、タイムアウト時はoverlapped I/Oのキャンセル完了までバッファを保持する。共通プロトコルのサイズ・要求ID・レート・通信権限・失効の検査はUnixと共用する。終了・失効時にはワーカーが終了して接続を閉じる。実行中の公式HTTPS処理は自身の30秒期限まで継続し得るが、失効後に成功結果を返さない。
+
+CIでは次を個別に実行する。
+
+- 共通のプロトコルテスト、およびWindowsで親HANDLEが非継承・子HANDLEが継承可能であること、読まれないパイプのI/Oが期限内に終了すること。
+- `windows_smoke::appcontainer_java_uses_inherited_auth_channel`: 実AppContainer内のJVM/JNIで通信OFF拒否、合成証明書の公開情報だけの返却、別のChatKeys所有者の識別子拒否、自分の鍵での署名と公開鍵検証。OSネットワークcapabilityは付与しない。
+- `interop::official_game_chat_signer_uses_opaque_key_over_real_ipc`: 公式1.21.8 / Java 21と26.2 / Java 25のauthlib・Crypt・Signerを実AppContainer内で呼び出す。秘密鍵のエンコード不可、保存形式が識別子だけ、署名の検証、古い識別子・連番再送の拒否、通常RSAの維持を確認する。
+
+公式クラスの準備は `python tools/auth-broker-probe/prepare_chat_smoke.py VERSION ROOT`。メタデータをSHA-1に固定し、各JARのサイズとSHA-1を検査する。テストは専用AppContainerプロフィールを作成してJDKに読取ACLを付け、終了時にそのACLとプロフィールを削除する。公開の合成鍵だけを使い、Minecraft画面・実Fabricクライアント全体・実アカウント・オンライン参加のWindows検証とは区別する。過去の記録にある「Windows IPC未実装」は、その記録時点の状態を指す。

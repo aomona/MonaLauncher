@@ -190,7 +190,8 @@ async function mockDesktop(
                 return {
                   platform,
                   editable: platform !== "unsupported",
-                  accountAuthentication: platform === "macos" || platform === "linux",
+                  accountAuthentication:
+                    platform === "windows" || platform === "macos" || platform === "linux",
                   audioOutput: platform === "macos" || platform === "linux",
                   desktopIntegration: platform === "macos",
                   graphicsCache: platform === "macos" || platform === "linux",
@@ -1136,14 +1137,10 @@ for (const platform of ["windows", "macos", "linux"] as const) {
     ).toBeChecked();
     const network = page.getByRole("switch", { name: "ネットワーク通信", exact: true });
     const token = page.getByRole("switch", { name: "アカウント認証の仲介", exact: true });
-    if (platform === "windows") {
-      await expect(token).toHaveCount(0);
-    } else {
-      await expect(token).not.toBeChecked();
-      await token.focus();
-      await page.keyboard.press("Space");
-      await expect(token).toBeChecked();
-    }
+    await expect(token).not.toBeChecked();
+    await token.focus();
+    await page.keyboard.press("Space");
+    await expect(token).toBeChecked();
     await expect(network).not.toBeChecked();
     await network.click();
     await expect(network).toBeChecked();
@@ -1152,11 +1149,9 @@ for (const platform of ["windows", "macos", "linux"] as const) {
     await expect(worlds).not.toBeChecked();
     await expect(network).toBeChecked();
     await expect(skin).not.toBeChecked();
-    if (platform !== "windows") {
-      await expect(token).toBeChecked();
-      await token.click();
-      await expect(token).not.toBeChecked();
-    }
+    await expect(token).toBeChecked();
+    await token.click();
+    await expect(token).not.toBeChecked();
     await expect(network).toBeChecked();
     await page.getByRole("switch", { name: "ゲームデータへの書き込み", exact: true }).click();
     await expect(worlds).toBeDisabled();
@@ -1204,9 +1199,10 @@ test("permissions imported from another OS can be reduced without silently widen
   ).toHaveCount(0);
   await page.getByRole("button", { name: "クリップボードの追加許可を解除", exact: true }).click();
   await page.getByRole("button", { name: "通常音声を許可に戻す", exact: true }).click();
-  await page
-    .getByRole("button", { name: "アカウント認証の仲介の追加許可を解除", exact: true })
-    .click();
+  const broker = page.getByRole("switch", { name: "アカウント認証の仲介", exact: true });
+  await expect(broker).toBeChecked();
+  await broker.click();
+  await expect(broker).not.toBeChecked();
   await expect(
     page.getByText("別のOSの設定が残っているため、このままでは起動できません。"),
   ).toHaveCount(0);
@@ -1718,7 +1714,7 @@ test("the entire news row opens its article and aligns the image with the title"
 test("broker permission failures preserve the saved mode without granting network", async ({
   page,
 }) => {
-  await mockDesktop(page, 2, "macos");
+  await mockDesktop(page, 2, "windows");
   await openSurvival(page);
   await page.getByRole("tab", { name: "Permissions", exact: true }).click();
   const broker = page.getByRole("switch", { name: "アカウント認証の仲介", exact: true });
