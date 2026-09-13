@@ -1239,6 +1239,7 @@ mod tests {
         let changed = InstancePermissions {
             game_write: false,
             narrator: false,
+            access_token: true,
             ..InstancePermissions::default()
         };
         save_permissions(&paths, "trusted", changed).unwrap();

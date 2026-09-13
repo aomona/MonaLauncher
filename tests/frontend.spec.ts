@@ -28,6 +28,7 @@ async function mockDesktop(
             gameWrite: true,
             narrator: true,
             network: false,
+            accessToken: false,
             audioOutput: true,
             microphone: false,
             clipboard: false,
@@ -56,6 +57,7 @@ async function mockDesktop(
             gameWrite: true,
             narrator: true,
             network: false,
+            accessToken: false,
             audioOutput: true,
             microphone: false,
             clipboard: false,
@@ -951,6 +953,12 @@ test("permission controls reflow in both themes and remain usable with accessibi
       await page.screenshot({
         path: testInfo.outputPath(`permissions-${theme}-${size.width}.png`),
       });
+      await page
+        .getByRole("switch", { name: "アクセストークンの受け渡し", exact: true })
+        .scrollIntoViewIfNeeded();
+      await page.screenshot({
+        path: testInfo.outputPath(`access-token-${theme}-${size.width}.png`),
+      });
     }
   }
   await page.emulateMedia({ forcedColors: "active", reducedMotion: "reduce" });
@@ -966,6 +974,12 @@ test("permission controls reflow in both themes and remain usable with accessibi
     .poll(() => page.getByRole("tabpanel").evaluate((el) => el.scrollWidth <= el.clientWidth))
     .toBe(true);
   await page.screenshot({ path: testInfo.outputPath("permissions-high-contrast-200.png") });
+  const token = page.getByRole("switch", { name: "アクセストークンの受け渡し", exact: true });
+  await token.focus();
+  await page.keyboard.press("Space");
+  await expect(token).toBeChecked();
+  await expect(token).toBeInViewport();
+  await page.screenshot({ path: testInfo.outputPath("access-token-high-contrast-200.png") });
 });
 
 test("toast tones stay compact at the window corner in light and dark themes", async ({
@@ -1120,6 +1134,11 @@ for (const platform of ["windows", "macos", "linux"] as const) {
       page.getByRole("switch", { name: "Modファイルの変更", exact: true }),
     ).toBeChecked();
     const network = page.getByRole("switch", { name: "ネットワーク通信", exact: true });
+    const token = page.getByRole("switch", { name: "アクセストークンの受け渡し", exact: true });
+    await expect(token).not.toBeChecked();
+    await token.focus();
+    await page.keyboard.press("Space");
+    await expect(token).toBeChecked();
     await expect(network).not.toBeChecked();
     await network.click();
     await expect(network).toBeChecked();
@@ -1128,6 +1147,10 @@ for (const platform of ["windows", "macos", "linux"] as const) {
     await expect(worlds).not.toBeChecked();
     await expect(network).toBeChecked();
     await expect(skin).not.toBeChecked();
+    await expect(token).toBeChecked();
+    await token.click();
+    await expect(token).not.toBeChecked();
+    await expect(network).toBeChecked();
     await page.getByRole("switch", { name: "ゲームデータへの書き込み", exact: true }).click();
     await expect(worlds).toBeDisabled();
     await expect(network).toBeEnabled();

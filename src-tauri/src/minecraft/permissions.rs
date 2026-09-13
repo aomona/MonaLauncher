@@ -15,6 +15,8 @@ pub struct InstancePermissions {
     pub narrator: bool,
     #[serde(default)]
     pub network: bool,
+    #[serde(default)]
+    pub access_token: bool,
     #[serde(default = "enabled")]
     pub audio_output: bool,
     #[serde(default)]
@@ -53,6 +55,7 @@ impl Default for InstancePermissions {
             game_write: true,
             narrator: true,
             network: false,
+            access_token: false,
             audio_output: true,
             microphone: false,
             clipboard: false,
@@ -223,6 +226,7 @@ mod tests {
         assert!(!old.game_write && old.worlds_write && old.audio_output);
         assert!(old.skin_cache && old.desktop_integration && old.graphics_cache);
         assert!(!old.network && !old.microphone && !old.clipboard);
+        assert!(!old.access_token && !InstancePermissions::default().access_token);
         assert_eq!(
             serde_json::from_str::<InstancePermissions>(&serde_json::to_string(&old).unwrap())
                 .unwrap(),

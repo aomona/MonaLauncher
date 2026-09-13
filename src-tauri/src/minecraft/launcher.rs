@@ -194,10 +194,39 @@ pub struct SpawnedMinecraft {
     pub cursor_broker: Option<Arc<crate::platform::windows::cursor_broker::CursorBroker>>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct MinecraftIdentity {
     pub player_name: String,
     pub uuid: String,
+    pub access_token: Option<String>,
+}
+
+fn authentication_substitutions(
+    demo: bool,
+    permissions: super::permissions::InstancePermissions,
+    identity: Option<&MinecraftIdentity>,
+) -> HashMap<&'static str, String> {
+    let identity = identity.filter(|_| !demo);
+    let player_name = identity
+        .map(|identity| identity.player_name.as_str())
+        .unwrap_or(if demo { "DemoPlayer" } else { "Player" });
+    let uuid = identity
+        .map(|identity| identity.uuid.as_str())
+        .unwrap_or("00000000000000000000000000000000");
+    // Enforce the persisted permission at the final argument boundary as well.
+    let token = identity
+        .filter(|_| permissions.access_token)
+        .and_then(|identity| identity.access_token.as_deref())
+        .filter(|token| !token.is_empty());
+    HashMap::from([
+        ("${auth_player_name}", player_name.to_owned()),
+        ("${auth_uuid}", uuid.to_owned()),
+        ("${auth_access_token}", token.unwrap_or("0").to_owned()),
+        (
+            "${user_type}",
+            if token.is_some() { "msa" } else { "legacy" }.to_owned(),
+        ),
+    ])
 }
 
 #[derive(Debug)]
@@ -315,21 +344,9 @@ pub fn spawn_instance(
         .collect::<Vec<_>>()
         .join(classpath_separator());
 
-    let player_name = identity
-        .map(|identity| identity.player_name.clone())
-        .unwrap_or_else(|| {
-            if instance.demo {
-                "DemoPlayer"
-            } else {
-                "Player"
-            }
-            .to_owned()
-        });
-    let uuid = identity
-        .map(|identity| identity.uuid.clone())
-        .unwrap_or_else(|| "00000000000000000000000000000000".to_owned());
-    let substitutions = HashMap::from([
-        ("${auth_player_name}", player_name),
+    let mut substitutions =
+        authentication_substitutions(instance.demo, instance.permissions, identity);
+    substitutions.extend([
         (
             "${version_name}",
             fabric
@@ -348,11 +365,8 @@ pub fn spawn_instance(
                 .into_owned(),
         ),
         ("${assets_index_name}", version.assets.clone()),
-        ("${auth_uuid}", uuid),
-        ("${auth_access_token}", "0".to_owned()),
         ("${clientid}", String::new()),
         ("${auth_xuid}", String::new()),
-        ("${user_type}", "legacy".to_owned()),
         ("${version_type}", version.version_type.clone()),
         (
             "${natives_directory}",
@@ -1234,6 +1248,51 @@ mod tests {
     }
     use super::*;
     use crate::minecraft::model::{Rule, RuleOs};
+
+    #[test]
+    fn game_arguments_receive_a_token_only_for_an_authorized_non_demo_instance() {
+        use crate::minecraft::permissions::InstancePermissions;
+        let identity = MinecraftIdentity {
+            player_name: "TestPlayer".into(),
+            uuid: "0123456789abcdef0123456789abcdef".into(),
+            access_token: Some("test-minecraft-secret".into()),
+        };
+        let allowed = InstancePermissions {
+            access_token: true,
+            ..InstancePermissions::default()
+        };
+        let arguments = [
+            Argument::Plain("--accessToken".into()),
+            Argument::Plain("${auth_access_token}".into()),
+            Argument::Plain("--userType".into()),
+            Argument::Plain("${user_type}".into()),
+        ];
+        for (demo, permissions, identity, expected) in [
+            (false, InstancePermissions::default(), Some(&identity), "0"),
+            (false, allowed, Some(&identity), "test-minecraft-secret"),
+            (true, allowed, Some(&identity), "0"),
+            (false, allowed, None, "0"),
+        ] {
+            let substitutions = authentication_substitutions(demo, permissions, identity);
+            let expanded = expand_arguments(&arguments, &HashMap::new(), &substitutions);
+            assert_eq!(expanded[1], expected);
+            assert_eq!(expanded[3], if expected == "0" { "legacy" } else { "msa" });
+            // Older metadata uses a single string instead of the modern argument array.
+            assert_eq!(
+                substitute("--accessToken ${auth_access_token}", &substitutions),
+                format!("--accessToken {expected}")
+            );
+        }
+        let missing_token = MinecraftIdentity {
+            access_token: None,
+            ..identity
+        };
+        assert_eq!(
+            authentication_substitutions(false, allowed, Some(&missing_token))
+                ["${auth_access_token}"],
+            "0"
+        );
+    }
 
     #[test]
     fn expands_only_matching_conditional_arguments() {

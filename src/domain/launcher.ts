@@ -2,6 +2,7 @@ export type InstancePermissions = {
   gameWrite: boolean;
   narrator: boolean;
   network: boolean;
+  accessToken: boolean;
   audioOutput: boolean;
   microphone: boolean;
   clipboard: boolean;

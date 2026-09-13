@@ -102,6 +102,12 @@ export const permissionGroups: { label: string; items: Permission[] }[] = [
           "インターネット・LANへの送受信を許可します。すべてのModにも適用され、読み取れるゲームデータを外部へ送信できるようになります。Windowsのlocalhost制限は別に適用されます。",
       },
       {
+        key: "accessToken",
+        label: "アクセストークンの受け渡し",
+        description:
+          "ログイン中のMinecraftアカウントのアクセストークンをゲームに渡します。すべてのModもこのトークンを読み取り、アカウントの認証に利用できます。初期設定はOFFです。認証が必要なサーバーへの接続には、ログインとネットワーク通信の許可も必要です。デモ・未ログイン時は渡しません。",
+      },
+      {
         key: "audioOutput",
         label: "通常音声",
         description:
