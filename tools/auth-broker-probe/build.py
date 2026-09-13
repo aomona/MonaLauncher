@@ -24,6 +24,7 @@ if system not in ("Darwin", "Linux"):
     raise SystemExit("Native memory probe supports macOS and Linux only")
 settings = subprocess.run([args.javac, "-J-XshowSettings:properties", "-version"], capture_output=True, text=True, check=True)
 java_home = Path(re.search(r"java.home = (.+)", settings.stderr).group(1).strip())
+subprocess.run([str(java_home / "bin/java"), "-cp", str(classes), "me.aomona.probe.SecretPatternScanner"], check=True)
 native_name = "libmona-memory-probe." + ("dylib" if system == "Darwin" else "so")
 native = build / native_name
 subprocess.run(["cc", "-shared", "-fPIC", "-Wall", "-Wextra", "-Werror", "-I" + str(java_home / "include"),

@@ -7,3 +7,6 @@ pub mod service;
 
 #[cfg(all(test, unix))]
 mod interop;
+
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+mod game_key_probe;

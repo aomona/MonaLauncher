@@ -34,6 +34,10 @@ public final class TokenReadProbe implements ClientModInitializer {
                     OnlineConnectionProbe.run(game);
                     return;
                 }
+                if (Boolean.parseBoolean(config.getProperty("chatKeyProbe", "false"))) {
+                    ChatKeyReadProbe.run(game, config);
+                    return;
+                }
                 expected = config.getProperty("sha256");
                 tokenLength = Integer.parseInt(config.getProperty("length"));
                 if (expected == null || !expected.matches("[a-f0-9]{64}") || tokenLength < 32 || tokenLength > 32768)

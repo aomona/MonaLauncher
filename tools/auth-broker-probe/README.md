@@ -63,7 +63,7 @@ cargo test --manifest-path src-tauri/Cargo.toml --locked --lib \
 
 署名追加後のFabric起動回帰では、新しいModが実CryptクラスをFabric経由で読み込み、chatAdapterPresentを追加検査する。署名要求自体は通信OFFのため実行しない。結果は `chat-adapter-macos-2026-09-14.json`。このModのSHA-256は追加のクラス読み込み検査により以前の比較記録と異なる。
 
-署名鍵のFabricヒープ探索は未検証。実証明書によるオンライン接続・署名チャットは後述の26.2 / macOS試験へ進み、既存の公式秘密鍵キャッシュを起動前に取り除く移行処理も追加した。他の構成のオンライン検証が揃うまで、一般向けのsecure profile対応としてはまだ表示しない。
+公開の合成RSA鍵による実Fabricヒープ探索は後述の3構成で実施済み。実アカウント秘密鍵のヒープ探索は未実施。実証明書によるオンライン接続・署名チャットは後述の26.2 / macOS試験へ進み、既存の公式秘密鍵キャッシュを起動前に取り除く移行処理も追加した。他の構成のオンライン検証が揃うまで、一般向けのsecure profile対応としてはまだ表示しない。
 
 Linuxの同じUTM検証VMでも、26.2 / authlib 9.0.75 / Java 25の公式クラスによる署名互換試験と、Fabric 0.19.5実ゲームでのCrypt差し替え・IPC・生存中ヒープの回帰検査が成功した。結果は `chat-adapter-linux-2026-09-14.json`。1.21.8は既存インストーラーがLWJGL freetype 3.3.3のLinux ARM64ネイティブを未対応として起動前に拒否したため、このVMでの成功には含めない。
 
@@ -117,3 +117,24 @@ cargo test --manifest-path src-tauri/Cargo.toml --locked --lib \
 サーバー26.2の公式クラスを静的確認したところ、署名がない・サーバー側で期限切れのメッセージは `PlayerList.verifyChatTrusted` から `MinecraftServer.logChatMessage` を経由して `Not Secure` 付きで記録される。静的確認自体は実通信成功の証拠ではない。オンライン試験は合成トークン探索とは別の検証で、実秘密鍵の全ヒープ探索を行ったことにはならない。
 
 2026-09-14の実行結果は `online-macos-26.2-2026-09-14.json`。macOS / Java 25 / authlib 9.0.75 / Fabric 0.19.5で、実アカウントによる2回の個別起動・接続と、サーバーが信頼済みとして扱ったチャットの受信が成功した。検証後はゲーム・サーバーを終了した。キャッシュ移行を含む3構成の合成トークン試験は `cache-migration-2026-09-14.json`。
+
+## 実Fabricゲームによるチャット秘密鍵の探索
+
+`ChatKeyReadProbe` と `SecretPatternScanner` を追加した。保存済みアカウントを使わず、リポジトリ内の公開された検証用RSA鍵を使う。通常のゲーム起動処理・Java Agent・JNI・専用IPCを通し、Rustのテスト内だけで認証操作を合成証明書へ置き換える。製品のTauriコマンド、環境変数、ゲームから指定できるHTTP接続先は追加しない。
+
+直接渡す対照では、検証用PEMをゲーム内の一時ファイルから読み、Minecraft自身のCryptで通常の秘密鍵を作ってから入力ファイルを削除する。仲介側では、実authlibの証明書取得呼び出しがRustのChatKeysへ到達し、同じCryptが不透明な鍵を作る。どちらもModが `PrivateKey.getEncoded()` を呼び、Cryptのシリアライズ結果を専用ファイルへ書いて読み戻し、生存中Javaヒープをダンプして全バイトを検査する。専用ファイルは公式のアカウントキャッシュJSONを再現するものではない。
+
+探索条件としてゲームへ渡すのは、秘密指数の32バイト断片と、Base64表現の24バイト分に対応するASCII・UTF-16 BE/LE断片についての長さ・rolling hash・SHA-256だけ。秘密そのものを探索器へ埋め込まない。rolling hashで候補を絞ってSHA-256で確定する。Base64の3通りの位置と複数の断片を使い、64桁・76桁の改行をテストした。入力バッファ境界をまたぐ検出と、rolling hashだけが一致してSHA-256が異なる候補の拒否も、JARビルド時の別JVM対照で確認する。
+
+```sh
+MONALAUNCHER_KEY_PROBE_ROOT="/absolute/path/to/minecraft" \
+MONALAUNCHER_KEY_PROBE_JAR="/absolute/path/to/mona-token-read-probe.jar" \
+MONALAUNCHER_KEY_PROBE_VERSION="26.2" \
+MONALAUNCHER_KEY_PROBE_REPORT="/absolute/path/to/chat-key-heap.json" \
+cargo test --manifest-path src-tauri/Cargo.toml --locked --lib \
+  actual_fabric_private_key_heap_comparison -- --ignored --nocapture
+```
+
+合格条件は、同じJAR・探索条件による直接対照で鍵エンコード・保存ファイル・生存中ヒープから検出され、仲介後は全て非検出となり、鍵エンコードが返らないこと。検査後のヒープダンプは削除する。合成証明書の発行者署名は無効で、この試験自体は実サーバー接続や署名チャットの証明には使わない。公開fixtureの既知断片以外の表現、死んだオブジェクト、ネイティブメモリ全体、実アカウント秘密鍵のヒープ探索は範囲外。
+
+2026-09-14の結果は `chat-key-heap-2026-09-14.json`。macOSの1.21.8 / Java 21と26.2 / Java 25、Linuxの26.2 / Java 25（いずれもFabric 0.19.5）で、計6回の直接対照・仲介比較が成功した。約306–308 MBの生存中ヒープから、直接対照では秘密指数のバイナリ断片とBase64断片を検出し、仲介後は検出しなかった。通常のOfficialOperationsを使う26.2 / macOSの合成トークン試験も回帰確認した。

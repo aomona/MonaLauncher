@@ -264,6 +264,28 @@ pub fn spawn_instance(
     instance_id: &str,
     identity: Option<&MinecraftIdentity>,
 ) -> Result<SpawnedMinecraft, MinecraftLaunchError> {
+    spawn_instance_with_factory(paths, instance_id, identity, |source, uuid, schema| {
+        crate::auth::broker::service::OfficialOperations::new(source, uuid, schema).map(
+            |operations| Box::new(operations) as Box<dyn crate::auth::broker::service::Operations>,
+        )
+    })
+}
+
+// Kept inside the Rust crate; tests can substitute synthetic operations without adding a
+// command, environment variable or game-visible route to change production service endpoints.
+pub(crate) fn spawn_instance_with_factory(
+    paths: &MinecraftPaths,
+    instance_id: &str,
+    identity: Option<&MinecraftIdentity>,
+    create_operations: impl FnOnce(
+        Arc<dyn crate::auth::broker::service::SessionSource>,
+        String,
+        crate::auth::broker::service::UserAttributesSchema,
+    ) -> Result<
+        Box<dyn crate::auth::broker::service::Operations>,
+        crate::auth::broker::protocol::BrokerError,
+    >,
+) -> Result<SpawnedMinecraft, MinecraftLaunchError> {
     let instance = load_instance(paths, instance_id)?;
     if !instance.sandboxed {
         return Err(MinecraftLaunchError::SandboxRequired);
@@ -297,13 +319,12 @@ pub fn spawn_instance(
                 .map_err(MinecraftLaunchError::Sandbox)?;
                 super::auth_compatibility::verify_authlib(paths, adapter)
                     .map_err(MinecraftLaunchError::Sandbox)?;
-                let operations = crate::auth::broker::service::OfficialOperations::new(
+                create_operations(
                     Arc::clone(source),
                     identity.expect("identity exists").uuid.clone(),
                     adapter.schema,
                 )
-                .map_err(|error| MinecraftLaunchError::Sandbox(error.to_string()))?;
-                Ok(Box::new(operations) as Box<dyn crate::auth::broker::service::Operations>)
+                .map_err(|error| MinecraftLaunchError::Sandbox(error.to_string()))
             })
             .transpose()?
     } else {
