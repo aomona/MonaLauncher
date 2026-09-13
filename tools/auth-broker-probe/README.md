@@ -87,3 +87,9 @@ Linuxの同じUTM検証VMでも、26.2 / authlib 9.0.75 / Java 25の公式クラ
 バックエンドは1.21.8 / authlib 6.0.58 / Java 21と26.2 / authlib 9.0.75 / Java 25を照合し、VanillaまたはFabric 0.19.5に限定する。メタデータだけでなくauthlib JARのサイズとSHA-256を検査する。未知の構成、Java不一致、authlib差し替え・重複・破損を拒否し、実トークンの直接受け渡しへ戻さない。
 
 `compatibility-2026-09-14.json` にRustソースのハッシュと、判定追加後のmacOS 1.21.8・26.2 / Linux 26.2の実Fabric試験を記録。3実行とも合成トークン非検出、IPC往復成功、限定した親メモリ読み取り拒否を確認した。Linux ARM64の1.21.8、Windows、オンライン参加はこの成功に含まない。
+
+## 実オンライン検証サーバーの準備
+
+`python3 tools/auth-broker-probe/prepare_online_server.py` は公式26.2サーバーを固定URLから取得し、サイズとSHA-1を検証する。出力は無視対象の `build/online-server-26.2/`。`127.0.0.1:35565` のみで待ち受ける設定とし、`online-mode=true`、`enforce-secure-profile=true`、RCON・query無効で準備する。既存の異なる設定は上書きせず停止する。
+
+このスクリプトはサーバーを起動せず、新規の `eula.txt` を `eula=false` にする。実行には利用者による [Minecraft EULA](https://www.minecraft.net/en-us/eula) への同意が必要。実アカウントによる接続・署名チャットの検証は未実施で、合成トークン用の読取ハーネスだけでは代替できない。2026-09-14に取得・ハッシュ検証・再実行時の設定維持を確認した。
