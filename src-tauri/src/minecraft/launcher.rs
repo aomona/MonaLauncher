@@ -362,6 +362,13 @@ pub fn spawn_instance(
     fs::create_dir_all(launch_root.join("tmp"))?;
     let policy = super::sandbox_policy::policy_for_instance(paths, &instance, launch_root)
         .map_err(|error| MinecraftLaunchError::Sandbox(error.to_string()))?;
+    // Old direct-token launches could persist real chat private keys. Clear this cache even
+    // when authentication is disabled or no account is available for the new launch.
+    super::chat_cache::clear(&physical_game_directory).map_err(|_| {
+        MinecraftLaunchError::Sandbox(
+            "以前のチャット認証鍵キャッシュを削除できませんでした。ゲームを終了し、profilekeysのアクセス権を確認して再試行してください".into(),
+        )
+    })?;
     let assets_root = policy
         .caches
         .as_ref()

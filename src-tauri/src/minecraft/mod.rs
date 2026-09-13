@@ -1,4 +1,5 @@
 mod auth_compatibility;
+mod chat_cache;
 pub mod diagnostics;
 pub mod fabric;
 pub(crate) mod file_io;
