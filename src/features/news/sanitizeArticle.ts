@@ -23,6 +23,7 @@ export function sanitizeArticle(content: string): string {
       "code",
       "hr",
       "a",
+      "img",
       "table",
       "thead",
       "tbody",
@@ -30,7 +31,7 @@ export function sanitizeArticle(content: string): string {
       "th",
       "td",
     ],
-    ALLOWED_ATTR: ["href", "title", "start"],
+    ALLOWED_ATTR: ["href", "title", "start", "src", "alt"],
     ALLOW_DATA_ATTR: false,
     ALLOW_ARIA_ATTR: false,
     ALLOWED_URI_REGEXP: /^https:\/\//i,
@@ -42,6 +43,20 @@ export function sanitizeArticle(content: string): string {
       if (url.protocol !== "https:" || url.username || url.password) anchor.removeAttribute("href");
     } catch {
       anchor.removeAttribute("href");
+    }
+  }
+  for (const image of fragment.querySelectorAll("img")) {
+    try {
+      const url = new URL(image.getAttribute("src") ?? "");
+      if (url.protocol !== "https:" || url.username || url.password)
+        throw new Error("Unsupported image URL");
+      image.src = url.href;
+      image.alt = image.getAttribute("alt") ?? "";
+      image.loading = "lazy";
+      image.decoding = "async";
+      image.referrerPolicy = "no-referrer";
+    } catch {
+      image.replaceWith(document.createTextNode(image.getAttribute("alt") ?? ""));
     }
   }
   const container = document.createElement("div");

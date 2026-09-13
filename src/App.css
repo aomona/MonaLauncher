@@ -111,6 +111,9 @@
   .news-article-body a[href] {
     @apply design-focus underline;
   }
+  .news-article-body img {
+    @apply block max-w-full h-auto rounded-image;
+  }
   .news-article-body blockquote {
     @apply border-l border-border-control pl-4 text-text-secondary;
   }

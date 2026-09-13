@@ -57,3 +57,5 @@ Newsは `src/features/news/` に置く。`useNews` はAppの寿命で取得結�
 Mojang v2ニュースとJavaパッチノートはRust側で並行取得し、形式を正規化して公開日時順に統合する。キャッシュは配信元別に分け、一方の更新失敗時も他方を表示する。パッチノートには外部記事URLがないため、バージョンから公式記事のURLを生成する。旧版で共有された記事の例外は `commands/news/links.rs` に記録する。すべての過去記事URLの到達確認はしていない。
 
 MonaLauncherのRSSも同じ並行取得・キャッシュ・統合処理に参加する。`commands/news/launcher.rs`がサイズ・XMLノード数を制限し、DTDを無効にしてRSS 2.0を読む。記事URLは設定された配信元の`news/`以下に限定する。`news.config.json`のURLを生成スクリプトと共有し、`NEWS_SITE_URL`は生成時とRustビルド時の上書きに使う。IPC名は互換性のため既存の`fetch_minecraft_news`・`cached_minecraft_news`を維持する。
+
+記事本文の画像はsanitizeArticleでHTTPS・認証情報なしのURLだけを残す。イベント属性・srcset・任意のサイズ指定は除去し、alt・遅延読み込み・no-referrerを設定する。Tauriの画像CSPはHTTPSを許可し、本文画像を表示するためにconnect-srcやscript-srcは変更しない。

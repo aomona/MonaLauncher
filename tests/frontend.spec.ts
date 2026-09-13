@@ -1241,13 +1241,13 @@ async function loadNewsFixture(page: Page, showImage = false) {
   await expect(page.locator(".news-row")).toHaveCount(3);
 }
 
-async function loadLauncherNewsFixture(page: Page) {
+async function loadLauncherNewsFixture(page: Page, sourceDir = "tests/fixtures/news") {
   await loadNewsFixture(page);
   // Exercise the real Markdown generator without depending on production article contents.
   const outputDir = await mkdtemp(join(tmpdir(), "mona-article-ui-"));
   let xml: string;
   try {
-    ({ xml } = await generateFeed({ sourceDir: "tests/fixtures/news", outputDir }));
+    ({ xml } = await generateFeed({ sourceDir, outputDir }));
   } finally {
     await rm(outputDir, { recursive: true, force: true });
   }
@@ -1346,7 +1346,7 @@ test("launcher article sanitizes untrusted markup and reflows with an accessible
   await page.evaluate(() => {
     const entry = (window as any).__test.newsFeed.entries[0];
     entry.contentHtml += `<script>window.__articleExecuted = true</script>
-      <img src="https://evil.test/pixel" onerror="window.__articleExecuted = true">
+      <img src="javascript:alert(1)" onerror="window.__articleExecuted = true">
       <iframe src="https://evil.test/frame"></iframe><form><input autofocus name="x"></form>
       <svg onload="window.__articleExecuted = true"></svg>
       <p style="position:fixed" onclick="window.__articleExecuted = true">安全な本文</p>
@@ -1399,6 +1399,78 @@ test("launcher article sanitizes untrusted markup and reflows with an accessible
   await page.screenshot({ path: testInfo.outputPath("article-200percent-contrast.png") });
   await page.keyboard.press("Enter");
   await expect(dialog).toHaveCount(0);
+});
+
+test("Markdown article images load over HTTPS and fit the modal without allowing active content", async ({
+  page,
+}, testInfo) => {
+  const requests: string[] = [];
+  await page.route("https://images.example.test/**", (route) => {
+    requests.push(route.request().url());
+    expect(route.request().headers()["referer"]).toBeUndefined();
+    return route.request().url().endsWith("wide.svg")
+      ? route.fulfill({
+          contentType: "image/svg+xml",
+          body: '<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="400"><rect width="1600" height="400" fill="#ccc"/><rect x="32" y="32" width="1536" height="336" fill="#555"/></svg>',
+        })
+      : route.abort();
+  });
+  await loadLauncherNewsFixture(page, "tests/fixtures/news-images");
+  expect(requests).toHaveLength(0);
+  await page.evaluate(() => {
+    const entry = (window as any).__test.newsFeed.entries[0];
+    entry.contentHtml += `<img alt="安全でない画像" src="data:image/svg+xml,test" onerror="window.__articleExecuted = true">
+      <img alt="ローカルファイル" src="file:///etc/passwd">
+      <img alt="認証情報付き" src="https://user:secret@images.example.test/private">
+      <img alt="HTTP画像" src="http://images.example.test/plain">
+      <img src="https://" srcset="https://images.example.test/unwanted 2x">
+      <img alt="追加画像" src="https://images.example.test/news/wide.svg" onload="window.__articleExecuted = true" style="width:99999px" width="99999" referrerpolicy="unsafe-url">`;
+  });
+  await page.getByRole("button", { name: "更新", exact: true }).click();
+  await page
+    .getByRole("button", { name: "MonaLauncherニュース配信のサンプル", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog");
+  const image = dialog.getByRole("img", { name: "ランチャーの画面", exact: true });
+  await image.scrollIntoViewIfNeeded();
+  await expect
+    .poll(() => image.evaluate((element: HTMLImageElement) => element.naturalWidth))
+    .toBe(1600);
+  await expect(dialog.locator("img")).toHaveCount(3);
+  await expect(image).toHaveAttribute("loading", "lazy");
+  await expect(image).toHaveAttribute("referrerpolicy", "no-referrer");
+  await expect(
+    dialog.locator("[srcset], [onerror], [onload], article [style], article [width]"),
+  ).toHaveCount(0);
+  await expect(dialog.getByRole("article")).toContainText("安全でない画像");
+  const missing = dialog.getByRole("img", { name: "取得できない画像の説明" });
+  await missing.scrollIntoViewIfNeeded();
+  await expect
+    .poll(() => missing.evaluate((element: HTMLImageElement) => element.complete))
+    .toBe(true);
+  expect(await missing.evaluate((element: HTMLImageElement) => element.naturalWidth)).toBe(0);
+  for (const theme of ["light", "dark"]) {
+    await page.evaluate((theme) => {
+      document.documentElement.dataset.theme = theme;
+    }, theme);
+    for (const width of [1440, 1024, 320]) {
+      await page.setViewportSize({ width, height: width === 1440 ? 900 : 640 });
+      await image.scrollIntoViewIfNeeded();
+      const box = (await image.boundingBox())!;
+      expect(box.width / box.height).toBeCloseTo(4, 1);
+      expect(
+        await dialog
+          .locator(".dialog-body")
+          .evaluate((element) => element.scrollWidth <= element.clientWidth),
+      ).toBe(true);
+      await expect(dialog.getByRole("button", { name: "閉じる" })).toBeInViewport();
+      await page.screenshot({ path: testInfo.outputPath(`article-image-${theme}-${width}.png`) });
+    }
+  }
+  expect(requests.every((url) => url.endsWith("wide.svg") || url.endsWith("missing.png"))).toBe(
+    true,
+  );
+  expect(await page.evaluate(() => (window as any).__articleExecuted)).toBeUndefined();
 });
 
 test("news shares Home's latest three and opens articles directly in the browser", async ({
