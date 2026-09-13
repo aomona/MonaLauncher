@@ -30,6 +30,10 @@ public final class TokenReadProbe implements ClientModInitializer {
                 try (var input = Files.newInputStream(game.resolve("auth-probe.properties"))) {
                     config.load(input);
                 }
+                if (Boolean.parseBoolean(config.getProperty("onlineConnection", "false"))) {
+                    OnlineConnectionProbe.run(game);
+                    return;
+                }
                 expected = config.getProperty("sha256");
                 tokenLength = Integer.parseInt(config.getProperty("length"));
                 if (expected == null || !expected.matches("[a-f0-9]{64}") || tokenLength < 32 || tokenLength > 32768)
@@ -106,6 +110,7 @@ public final class TokenReadProbe implements ClientModInitializer {
                 }
                 if (Boolean.parseBoolean(config.getProperty("heapDump", "true"))) scanLiveHeap(game);
                 String result = "{\"schema\":1,\"fabricEntrypointRan\":true,\"tokenDetected\":" + !detected.isEmpty()
+                    + ",\"legacyProfileKeyCacheVisible\":" + Files.exists(game.resolve("profilekeys/legacy-auth-probe.json"), LinkOption.NOFOLLOW_LINKS)
                     + ",\"detectedSurfaces\":" + jsonArray(detected) + ",\"completedSurfaces\":" + jsonArray(completed)
                     + ",\"unavailableSurfaces\":" + jsonArray(unavailable)
                     + ",\"objectsVisited\":" + objects + ",\"wholeHeapScanned\":false"

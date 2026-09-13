@@ -63,7 +63,7 @@ cargo test --manifest-path src-tauri/Cargo.toml --locked --lib \
 
 署名追加後のFabric起動回帰では、新しいModが実CryptクラスをFabric経由で読み込み、chatAdapterPresentを追加検査する。署名要求自体は通信OFFのため実行しない。結果は `chat-adapter-macos-2026-09-14.json`。このModのSHA-256は追加のクラス読み込み検査により以前の比較記録と異なる。
 
-署名鍵のFabricヒープ探索と、実証明書によるオンライン接続・署名チャットは未検証。既存の秘密鍵キャッシュを取り除く移行処理も別途必要。一般向けのsecure profile対応としてはまだ表示しない。
+署名鍵のFabricヒープ探索は未検証。実証明書によるオンライン接続・署名チャットは後述の26.2 / macOS試験へ進み、既存の公式秘密鍵キャッシュを起動前に取り除く移行処理も追加した。他の構成のオンライン検証が揃うまで、一般向けのsecure profile対応としてはまだ表示しない。
 
 Linuxの同じUTM検証VMでも、26.2 / authlib 9.0.75 / Java 25の公式クラスによる署名互換試験と、Fabric 0.19.5実ゲームでのCrypt差し替え・IPC・生存中ヒープの回帰検査が成功した。結果は `chat-adapter-linux-2026-09-14.json`。1.21.8は既存インストーラーがLWJGL freetype 3.3.3のLinux ARM64ネイティブを未対応として起動前に拒否したため、このVMでの成功には含めない。
 
@@ -93,3 +93,27 @@ Linuxの同じUTM検証VMでも、26.2 / authlib 9.0.75 / Java 25の公式クラ
 `python3 tools/auth-broker-probe/prepare_online_server.py` は公式26.2サーバーを固定URLから取得し、サイズとSHA-1を検証する。出力は無視対象の `build/online-server-26.2/`。`127.0.0.1:35565` のみで待ち受ける設定とし、`online-mode=true`、`enforce-secure-profile=true`、RCON・query無効で準備する。既存の異なる設定は上書きせず停止する。
 
 このスクリプトはサーバーを起動せず、新規の `eula.txt` を `eula=false` にする。実行には利用者による [Minecraft EULA](https://www.minecraft.net/en-us/eula) への同意が必要。実アカウントによる接続・署名チャットの検証は未実施で、合成トークン用の読取ハーネスだけでは代替できない。2026-09-14に取得・ハッシュ検証・再実行時の設定維持を確認した。
+
+## キャッシュ移行の攻撃側検証
+
+起動前に合成トークンを `profilekeys/legacy-auth-probe.json` へ置く。起動処理は公式の再取得可能な `profilekeys` ディレクトリを、認証権限のON/OFFやログイン状態によらず削除する。削除できなければ起動しない。Modが確認する `legacyProfileKeyCacheVisible=false` を既存の非検出・IPC・ヒープ・ネイティブ読取試験に追加した。Rustでは全アカウント分の削除、通常ゲームファイルの保持、リンク先の保持、想定外のファイルによる失敗を検査する。
+
+この処理は既存の鍵を復元不能に消去したり、Modが別の場所へ複製した鍵を回収したりするものではない。ディレクトリ内のリンクをたどらない削除には [Rustのremove_dir_all](https://doc.rust-lang.org/std/fs/fn.remove_dir_all.html) を使用する。
+
+## 実アカウントによる26.2接続試験
+
+実アカウントの試験は明示的なignored testとして分離した。準備済みの26.2サーバーを、利用者がEULAに同意した後で起動し、既存ランチャーでサインインを済ませる。キーチェーンの許可が求められた場合は利用者が操作する。トークン・秘密鍵・アカウント識別子は検証結果に出力しない。
+
+```sh
+MONALAUNCHER_ONLINE_ROOT="/absolute/path/to/minecraft" \
+MONALAUNCHER_ONLINE_PROBE_JAR="/absolute/path/to/mona-token-read-probe.jar" \
+MONALAUNCHER_ONLINE_SERVER="/absolute/path/to/online-server-26.2" \
+cargo test --manifest-path src-tauri/Cargo.toml --locked --lib \
+  saved_account_joins_secure_profile_server_and_sends_chat -- --ignored --nocapture
+```
+
+テストは専用の `auth-online-26-2` インスタンスで通信と認証仲介を有効にし、通常のアカウント更新・仲介・サンドボックス起動処理を使用する。Modは26.2の実ゲームから `127.0.0.1:35565` へ接続し、実チャットセッション内の秘密鍵が `RemotePrivateKey` でエンコード不能であること、公式キャッシュに秘密鍵PEMがないことを確認する。通常の `sendChat` で固定の検証文を1回送信し、接続継続を確認する。Rust側は今回の起動後に増えたサーバーログだけを検査し、検証文が受信され、`Not Secure` と判定されていないことを確認する。
+
+サーバー26.2の公式クラスを静的確認したところ、署名がない・サーバー側で期限切れのメッセージは `PlayerList.verifyChatTrusted` から `MinecraftServer.logChatMessage` を経由して `Not Secure` 付きで記録される。静的確認自体は実通信成功の証拠ではない。オンライン試験は合成トークン探索とは別の検証で、実秘密鍵の全ヒープ探索を行ったことにはならない。
+
+2026-09-14の実行結果は `online-macos-26.2-2026-09-14.json`。macOS / Java 25 / authlib 9.0.75 / Fabric 0.19.5で、実アカウントによる2回の個別起動・接続と、サーバーが信頼済みとして扱ったチャットの受信が成功した。検証後はゲーム・サーバーを終了した。キャッシュ移行を含む3構成の合成トークン試験は `cache-migration-2026-09-14.json`。

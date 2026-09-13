@@ -11,6 +11,10 @@ use crate::auth::token_store::{delete_refresh_token, load_refresh_token, save_re
 
 const MAX_SIGN_IN_POLL_INTERVAL: Duration = Duration::from_secs(60);
 
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+#[path = "auth_online_probe.rs"]
+mod online_probe;
+
 #[derive(Clone, Default)]
 pub struct MicrosoftAuthState {
     pending: Arc<Mutex<Option<PendingAuthorization>>>,

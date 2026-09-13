@@ -84,6 +84,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     getrandom::fill(&mut bytes).map_err(|_| "random source unavailable")?;
     let secret: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
     let fingerprint = format!("{:x}", Sha256::digest(secret.as_bytes()));
+    // A prior direct-token launch could leave secrets in this regeneratable cache. The
+    // real launch path must remove it before the adversarial Mod starts scanning files.
+    fs::create_dir_all(game.join("profilekeys"))?;
+    fs::write(game.join("profilekeys/legacy-auth-probe.json"), &secret)?;
     fs::write(
         game.join("auth-probe.properties"),
         format!(
@@ -190,6 +194,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         || observation["launcherMemoryReadAllowed"] != false
         || observation["launcherMemoryReadError"] != if cfg!(target_os = "macos") { 5 } else { 1 }
         || observation["tokenDetected"] != false
+        || observation["legacyProfileKeyCacheVisible"] != false
         || observation["agentAdapterPresent"] != true
         || observation["chatAdapterPresent"] != true
         || observation["brokerHandshakeCompleted"] != true

@@ -1,0 +1,43 @@
+{
+  "schema": 1,
+  "date": "2026-09-14",
+  "baseCommit": "b11e92e",
+  "sourceSha256": {
+    "src-tauri/src/minecraft/chat_cache.rs": "aba1db1909135ebfe2e64a12eee787c4b8aeb0f3d5c26fac92b601af72272ef6",
+    "src-tauri/src/minecraft/launcher.rs": "5c957a6e9dfa9cdd454186b7c2cbd633cb4d622eab58ee7f9466d5e46dd3e51b",
+    "src-tauri/src/bin/auth_broker_probe.rs": "c5808b8189b7796191d86e3ee7e1fb660b0af6c5c9a057de8dbb8390773c3f1d",
+    "tools/auth-broker-probe/src/me/aomona/probe/TokenReadProbe.java": "cde5cf566ee51bfe0919b68aa189d2dfae49312fefd12a9abe273609bfffad7d",
+    "tools/auth-broker-probe/src/me/aomona/probe/OnlineConnectionProbe.java": "9348865a8f0887f0f5f04f5b49443c0a5b1b497bb026c8381447596f0a89e5ae",
+    "src-tauri/src/commands/auth.rs": "586d72d387e434c7af4d250cec9915c5ab7129aec2fb31d349113bd97716c701",
+    "src-tauri/src/commands/auth_online_probe.rs": "d51390d801ca0cabf3e3585bd9025cf478dc1d1ea3f8aa38b7c52b57a5c1f267"
+  },
+  "platform": "macos",
+  "sandbox": "Seatbelt",
+  "minecraft": "26.2",
+  "authlib": "9.0.75",
+  "java": 25,
+  "loader": "Fabric 0.19.5",
+  "probeSha256": "a5a82c1087412ca9cae66ebd26b2c57378b2b95876f0bd475e659c3c46a747ee",
+  "server": {
+    "jarSha256": "cdacdfb25898de5e4b4b0e5ddcc2722f77067e46605709c2d886c000ebb63ec5",
+    "endpoint": "127.0.0.1:35565",
+    "onlineMode": true,
+    "enforceSecureProfile": true,
+    "userAcceptedEula": true,
+    "stoppedAfterTest": true
+  },
+  "successfulLaunches": 2,
+  "freshServerMessagesReceived": 2,
+  "allServerMessagesTrusted": true,
+  "latestClientObservation": {
+    "schema": 1,
+    "connected": true,
+    "chatSessionOpaque": true,
+    "privateKeyEncoded": false,
+    "privateKeyCacheAbsent": true,
+    "chatSent": true,
+    "stillConnected": true
+  },
+  "credentialHandling": "Existing saved account through production Rust refresh and account lease. No tokens, private keys, account names or UUIDs in this record.",
+  "scope": "Two separate actual Fabric launches using real official account/certificate services. Opaque private-key object, official cache PEM absence, server-accepted signed chat and reconnect. Not a real-private-key heap scan, expiry test, simultaneous-instance test, Vanilla result, or evidence for another OS/version."
+}
