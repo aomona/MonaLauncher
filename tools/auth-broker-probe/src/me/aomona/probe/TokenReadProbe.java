@@ -31,7 +31,7 @@ public final class TokenReadProbe implements ClientModInitializer {
                     config.load(input);
                 }
                 if (Boolean.parseBoolean(config.getProperty("onlineConnection", "false"))) {
-                    OnlineConnectionProbe.run(game);
+                    OnlineConnectionProbe.run(game, config);
                     return;
                 }
                 if (Boolean.parseBoolean(config.getProperty("chatKeyProbe", "false"))) {

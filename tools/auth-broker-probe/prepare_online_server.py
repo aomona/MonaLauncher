@@ -1,14 +1,15 @@
-"""Prepare the pinned, loopback-only 26.2 server without accepting its EULA or starting it."""
+"""Prepare a pinned loopback server without accepting its EULA or starting it."""
+import argparse
 import hashlib
 import json
 from pathlib import Path
 import tempfile
 import urllib.request
 
-ROOT = Path(__file__).resolve().parent / "build" / "online-server-26.2"
-URL = "https://piston-data.mojang.com/v1/objects/823e2250d24b3ddac457a60c92a6a941943fcd6a/server.jar"
-SHA1 = "823e2250d24b3ddac457a60c92a6a941943fcd6a"
-SIZE = 60894273
+PINS = {
+    "1.21.8": ("6bce4ef400e4efaa63a13d5e6f6b500be969ef81", 57555044),
+    "26.2": ("823e2250d24b3ddac457a60c92a6a941943fcd6a", 60894273),
+}
 PROPERTIES = """server-ip=127.0.0.1
 server-port=35565
 online-mode=true
@@ -25,6 +26,12 @@ motd=MonaLauncher local authentication validation
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("version", nargs="?", default="26.2", choices=PINS)
+    version = parser.parse_args().version
+    SHA1, SIZE = PINS[version]
+    URL = f"https://piston-data.mojang.com/v1/objects/{SHA1}/server.jar"
+    ROOT = Path(__file__).resolve().parent / "build" / f"online-server-{version}"
     ROOT.mkdir(parents=True, exist_ok=True)
     jar = ROOT / "server.jar"
     if jar.is_symlink():
@@ -59,7 +66,7 @@ def main():
     eula = ROOT / "eula.txt"
     if not eula.exists():
         eula.write_text("# https://www.minecraft.net/en-us/eula\neula=false\n")
-    report = {"minecraft": "26.2", "jarSource": URL, "jarSha1": SHA1,
+    report = {"minecraft": version, "jarSource": URL, "jarSha1": SHA1,
               "jarSha256": hashlib.sha256(data).hexdigest(), "jarSize": len(data),
               "endpoint": "127.0.0.1:35565", "onlineMode": True, "enforceSecureProfile": True,
               "eulaAccepted": "eula=true" in eula.read_text().splitlines(), "serverStarted": False}

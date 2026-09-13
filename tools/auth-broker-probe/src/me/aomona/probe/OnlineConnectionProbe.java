@@ -3,11 +3,11 @@ package me.aomona.probe;
 import java.lang.reflect.*;
 import java.nio.file.*;
 import java.security.PrivateKey;
+import java.util.Properties;
 import java.util.concurrent.*;
 
-/** Opt-in 26.2 test against the explicitly prepared loopback server. No credential output. */
+/** Opt-in test against the explicitly prepared loopback server. No credential output. */
 final class OnlineConnectionProbe {
-    static final String MESSAGE = "MONA_AUTH_PROBE_SIGNED_CHAT_26_2";
     interface Action { Object run() throws Exception; }
 
     private static Object onClient(Object client, Action action) throws Exception {
@@ -19,48 +19,37 @@ final class OnlineConnectionProbe {
         return future.get(15, TimeUnit.SECONDS);
     }
 
-    static void run(Path game) throws Exception {
+    static void run(Path game, Properties config) throws Exception {
         String phase = "startup";
         try {
             Thread.sleep(10000);
-            Class<?> minecraft = Class.forName("net.minecraft.client.Minecraft");
-            Object client = minecraft.getMethod("getInstance").invoke(null);
+            String version = config.getProperty("onlineVersion", "26.2");
+            OnlineGameAdapter adapter = new OnlineGameAdapter(version);
+            String message = "MONA_AUTH_PROBE_SIGNED_CHAT_" + version.replace('.', '_');
+            Object client = adapter.client();
             phase = "connecting";
             onClient(client, () -> {
-                Class<?> screen = Class.forName("net.minecraft.client.gui.screens.Screen");
-                Class<?> address = Class.forName("net.minecraft.client.multiplayer.resolver.ServerAddress");
-                Class<?> data = Class.forName("net.minecraft.client.multiplayer.ServerData");
-                Class<?> type = Class.forName("net.minecraft.client.multiplayer.ServerData$Type");
-                Object server = data.getConstructor(String.class, String.class, type)
-                    .newInstance("Mona local auth probe", "127.0.0.1:35565", type.getField("OTHER").get(null));
-                Class.forName("net.minecraft.client.gui.screens.ConnectScreen").getMethod("startConnecting",
-                    screen, minecraft, address, data, boolean.class, Class.forName("net.minecraft.client.multiplayer.TransferState"))
-                    .invoke(null, Class.forName("net.minecraft.client.gui.screens.TitleScreen").getConstructor().newInstance(),
-                        client, address.getMethod("parseString", String.class).invoke(null, "127.0.0.1:35565"), server, false, null);
+                adapter.connect(client);
                 return null;
             });
             long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(75);
             Object connection = null;
             while (System.nanoTime() < deadline) {
-                connection = onClient(client, () -> minecraft.getField("player").get(client) == null
-                    ? null : minecraft.getMethod("getConnection").invoke(client));
+                connection = onClient(client, () -> adapter.connection(client));
                 if (connection != null) break;
                 Thread.sleep(250);
             }
             if (connection == null) throw new IllegalStateException();
             Object liveConnection = connection;
             phase = "chat_session";
-            Field sessionField = connection.getClass().getDeclaredField("chatSession");
-            sessionField.setAccessible(true);
             Object session = null;
             while (System.nanoTime() < deadline) {
-                session = onClient(client, () -> sessionField.get(liveConnection));
+                session = onClient(client, () -> adapter.chatSession(liveConnection));
                 if (session != null) break;
                 Thread.sleep(250);
             }
             if (session == null) throw new IllegalStateException();
-            Object pair = session.getClass().getMethod("keyPair").invoke(session);
-            PrivateKey key = (PrivateKey) pair.getClass().getMethod("privateKey").invoke(pair);
+            PrivateKey key = adapter.privateKey(session);
             if (!key.getClass().getName().equals("me.aomona.auth.RemotePrivateKey") || key.getEncoded() != null || key.getFormat() != null)
                 throw new IllegalStateException();
             phase = "cache_check";
@@ -76,11 +65,11 @@ final class OnlineConnectionProbe {
             }
             phase = "chat_send";
             onClient(client, () -> {
-                liveConnection.getClass().getMethod("sendChat", String.class).invoke(liveConnection, MESSAGE);
+                adapter.sendChat(liveConnection, message);
                 return null;
             });
             Thread.sleep(5000);
-            if (!(Boolean) onClient(client, () -> minecraft.getMethod("getConnection").invoke(client) == liveConnection))
+            if (!(Boolean) onClient(client, () -> adapter.connection(client) == liveConnection))
                 throw new IllegalStateException();
             Files.writeString(game.resolve("online-probe-result.json"), "{\"schema\":1,\"connected\":true,\"chatSessionOpaque\":true,\"privateKeyEncoded\":false,\"privateKeyCacheAbsent\":true,\"chatSent\":true,\"stillConnected\":true}");
             System.out.println("MONALAUNCHER_ONLINE_PROBE_COMPLETE");
