@@ -7,7 +7,7 @@ pub mod service;
 #[cfg(windows)]
 mod windows_channel;
 
-#[cfg(all(test, unix))]
+#[cfg(all(test, any(unix, windows)))]
 mod interop;
 
 #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]

@@ -63,7 +63,8 @@ public final class WindowsIpcSmoke {
         if (!foreign.contains("\"error\":\"revoked\"")) throw new IllegalStateException("foreign key accepted");
         String result = rpc("{\"type\":\"sign\",\"key_id\":\""+id+"\",\"message\":\""+encoded+"\"}");
         String pem = Files.readString(Path.of(args[1])).replace("-----BEGIN PUBLIC KEY-----", "")
-            .replace("-----END PUBLIC KEY-----", "").replaceAll("\\s", "");
+            .replace("-----END PUBLIC KEY-----", "").replace("-----BEGIN RSA PUBLIC KEY-----", "")
+            .replace("-----END RSA PUBLIC KEY-----", "").replaceAll("\\s", "");
         PublicKey publicKey = KeyFactory.getInstance("RSA").generatePublic(new X509EncodedKeySpec(Base64.getDecoder().decode(pem)));
         Signature verifier = Signature.getInstance("SHA256withRSA"); verifier.initVerify(publicKey); verifier.update(message);
         if (!verifier.verify(Base64.getDecoder().decode(field(result,"signature")))) throw new IllegalStateException("signature mismatch");

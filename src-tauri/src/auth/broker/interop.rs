@@ -88,7 +88,7 @@ fn official_game_chat_signer_uses_opaque_key_over_real_ipc() {
         }
     }
     let prepared = PreparedBroker::new(Box::new(Fixture(ChatKeys::default())), true).unwrap();
-    let mut command = ProcessCommand::new(java);
+    let mut command = ProcessCommand::new(&java);
     command
         .arg(format!(
             "-javaagent:{}={}",
@@ -100,8 +100,58 @@ fn official_game_chat_signer_uses_opaque_key_over_real_ipc() {
         .arg("me.aomona.authsmoke.ChatSigningSmoke")
         .arg(&version)
         .current_dir(output);
+    #[cfg(unix)]
     prepared.configure(&mut command).unwrap();
+    #[cfg(unix)]
     let mut child = command.spawn().unwrap();
+    #[cfg(windows)]
+    let profile_guard = super::windows_smoke::ProbeProfile::new(
+        java.parent().unwrap().parent().unwrap(),
+        "official",
+    );
+    #[cfg(windows)]
+    let (mut child, readers) = {
+        use std::{io::Read, os::windows::io::AsRawHandle};
+        let profile = &profile_guard.profile;
+        for path in [
+            output,
+            root.as_path(),
+            java.parent().unwrap().parent().unwrap(),
+        ] {
+            super::windows_smoke::grant_read(path, &profile.sid);
+        }
+        let mut args: Vec<std::ffi::OsString> =
+            command.get_args().map(|value| value.to_owned()).collect();
+        args.insert(
+            0,
+            format!(
+                "-Dmonalauncher.auth.handle={}",
+                prepared.child_handle().as_raw_handle() as usize
+            )
+            .into(),
+        );
+        let mut child = crate::platform::windows::appcontainer_process::launch_with_network(
+            &profile.name,
+            &java,
+            &args,
+            output,
+            false,
+            Some(&prepared),
+        )
+        .unwrap();
+        assert!(child.token_info.is_app_container);
+        let readers: Vec<_> = [child.take_stdout().unwrap(), child.take_stderr().unwrap()]
+            .into_iter()
+            .map(|mut file| {
+                std::thread::spawn(move || {
+                    let mut value = String::new();
+                    file.read_to_string(&mut value).unwrap();
+                    value
+                })
+            })
+            .collect();
+        (child, readers)
+    };
     let guard = prepared.into_guard();
     let deadline = Instant::now() + Duration::from_secs(60);
     let status = loop {
@@ -116,5 +166,19 @@ fn official_game_chat_signer_uses_opaque_key_over_real_ipc() {
         std::thread::sleep(Duration::from_millis(50));
     };
     drop(guard);
+    #[cfg(windows)]
+    {
+        let output = readers
+            .into_iter()
+            .map(|reader| reader.join().unwrap())
+            .collect::<String>();
+        assert!(
+            status.success() && output.contains("CHAT_SIGNING_SMOKE_OK"),
+            "official AppContainer signing probe failed: {output}"
+        );
+        println!(
+            "CHAT_SIGNING_SMOKE_OK {version}; actual Windows AppContainer and official classes"
+        );
+    }
     assert!(status.success(), "official game chat signing smoke failed");
 }

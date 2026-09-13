@@ -37,7 +37,7 @@ impl Operations for Fixture {
         }
     }
 }
-fn grant_read(path: &Path, sid: &str) {
+pub(super) fn grant_read(path: &Path, sid: &str) {
     assert!(
         ProcessCommand::new("icacls.exe")
             .arg(path)
@@ -48,6 +48,44 @@ fn grant_read(path: &Path, sid: &str) {
             .success(),
         "grant probe runtime read access"
     );
+}
+pub(super) struct ProbeProfile {
+    pub(super) profile: crate::platform::windows::appcontainer_profile::AppContainerProfile,
+    java_home: std::path::PathBuf,
+}
+impl ProbeProfile {
+    pub(super) fn new(java_home: &Path, suffix: &str) -> Self {
+        let profile =
+            ensure_appcontainer_profile(&format!("auth-ipc-{}-{suffix}", std::process::id()))
+                .unwrap();
+        assert!(profile.created, "probe must use a new disposable profile");
+        Self {
+            profile,
+            java_home: java_home.to_owned(),
+        }
+    }
+}
+impl Drop for ProbeProfile {
+    fn drop(&mut self) {
+        let acl = ProcessCommand::new("icacls.exe")
+            .arg(&self.java_home)
+            .args(["/remove:g", &format!("*{}", self.profile.sid), "/T", "/Q"])
+            .output();
+        let name: Vec<u16> = self.profile.name.encode_utf16().chain(Some(0)).collect();
+        // SAFETY: a NUL-terminated name of a dedicated profile created by this test only.
+        let deleted = unsafe {
+            windows::Win32::Security::Isolation::DeleteAppContainerProfile(windows::core::PCWSTR(
+                name.as_ptr(),
+            ))
+        };
+        if !std::thread::panicking() {
+            assert!(
+                acl.is_ok_and(|output| output.status.success()),
+                "remove disposable JDK ACL"
+            );
+            assert!(deleted.is_ok(), "delete disposable AppContainer profile");
+        }
+    }
 }
 #[test]
 #[ignore = "requires Windows, JAVA_HOME JDK 21+, javac; creates dedicated AppContainer profiles and grants them JDK read access"]
@@ -93,12 +131,8 @@ fn appcontainer_java_uses_inherited_auth_channel() {
         .strip_prefix("MONALAUNCHER_REMOTE_CHAT_KEY:")
         .unwrap();
     for network in [false, true] {
-        let profile = ensure_appcontainer_profile(&format!(
-            "auth-ipc-{}-{}",
-            std::process::id(),
-            if network { "on" } else { "off" }
-        ))
-        .unwrap();
+        let profile_guard = ProbeProfile::new(&java_home, if network { "on" } else { "off" });
+        let profile = &profile_guard.profile;
         grant_read(root, &profile.sid);
         grant_read(&java_home, &profile.sid);
         let broker = PreparedBroker::new(Box::new(Fixture(ChatKeys::default())), network).unwrap();

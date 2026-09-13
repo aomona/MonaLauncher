@@ -88,6 +88,32 @@ jobs:
         if: runner.os == 'Windows'
         working-directory: src-tauri
         run: cargo test --locked --lib auth::broker::windows_smoke::appcontainer_java_uses_inherited_auth_channel -- --ignored --exact --nocapture
+      - name: Verify official Minecraft 1.21.8 signing in AppContainer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          python tools/auth-broker-probe/prepare_chat_smoke.py 1.21.8 "$env:RUNNER_TEMP/auth-chat-classes"
+          $env:MONALAUNCHER_CHAT_SMOKE_ROOT = "$env:RUNNER_TEMP/auth-chat-classes"
+          $env:MONALAUNCHER_CHAT_SMOKE_JAVA = "$env:JAVA_HOME/bin/java.exe"
+          $env:MONALAUNCHER_CHAT_SMOKE_VERSION = "1.21.8"
+          Set-Location src-tauri
+          cargo test --locked --lib auth::broker::interop::official_game_chat_signer_uses_opaque_key_over_real_ipc -- --ignored --exact --nocapture
+      - name: Install Java 25 for Minecraft 26.2 signing probe
+        if: runner.os == 'Windows'
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "25"
+      - name: Verify official Minecraft 26.2 signing in AppContainer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          python tools/auth-broker-probe/prepare_chat_smoke.py 26.2 "$env:RUNNER_TEMP/auth-chat-classes"
+          $env:MONALAUNCHER_CHAT_SMOKE_ROOT = "$env:RUNNER_TEMP/auth-chat-classes"
+          $env:MONALAUNCHER_CHAT_SMOKE_JAVA = "$env:JAVA_HOME/bin/java.exe"
+          $env:MONALAUNCHER_CHAT_SMOKE_VERSION = "26.2"
+          Set-Location src-tauri
+          cargo test --locked --lib auth::broker::interop::official_game_chat_signer_uses_opaque_key_over_real_ipc -- --ignored --exact --nocapture
       - name: Verify Windows sandbox ACL boundaries
         if: runner.os == 'Windows'
         run: ./src-tauri/target/debug/sandbox_probe.exe --acl
