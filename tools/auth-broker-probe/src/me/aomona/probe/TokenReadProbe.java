@@ -112,9 +112,10 @@ public final class TokenReadProbe implements ClientModInitializer {
                 if (Boolean.parseBoolean(config.getProperty("nativeProbe", "false"))) {
                     nativeResult = NativeMemoryProbe.run(game, Integer.parseInt(config.getProperty("parentPid")),
                         Long.parseUnsignedLong(config.getProperty("parentAddress")), tokenLength);
-                    if (nativeResult.parentBytes() != null)
+                    if (nativeResult.parentBytes() != null) {
                         scan("native_launcher_memory", new String(nativeResult.parentBytes(), StandardCharsets.US_ASCII));
-                    completed.add("native_launcher_memory");
+                        completed.add("native_launcher_memory");
+                    } else unavailable.add("native_launcher_memory");
                 }
                 if (Boolean.parseBoolean(config.getProperty("heapDump", "true"))) scanLiveHeap(game);
                 String result = "{\"schema\":1,\"fabricEntrypointRan\":true,\"tokenDetected\":" + !detected.isEmpty()

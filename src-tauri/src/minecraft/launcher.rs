@@ -304,7 +304,7 @@ pub(crate) fn spawn_instance_with_factory(
         identity
             .and_then(|identity| identity.broker.as_ref())
             .map(|source| {
-                if !cfg!(any(target_os = "macos", target_os = "linux")) {
+                if !cfg!(any(windows, target_os = "macos", target_os = "linux")) {
                     return Err(MinecraftLaunchError::Sandbox(
                         "このOS・Minecraftバージョンでは認証の仲介が未対応です".into(),
                     ));
@@ -1404,6 +1404,10 @@ fn require_file(path: &Path) -> Result<(), MinecraftLaunchError> {
         Err(MinecraftLaunchError::MissingFile(path.to_owned()))
     }
 }
+
+#[cfg(test)]
+#[path = "launcher_auth_tests.rs"]
+pub(crate) mod auth_startup_tests;
 
 #[cfg(test)]
 mod tests {

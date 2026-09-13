@@ -41,6 +41,7 @@ fn official_game_chat_signer_uses_opaque_key_over_real_ipc() {
         PathBuf::from(std::env::var_os("MONALAUNCHER_CHAT_SMOKE_JAVA").expect("Java executable"));
     let version = std::env::var("MONALAUNCHER_CHAT_SMOKE_VERSION").expect("game version");
     assert!(["1.21.8", "26.2"].contains(&version.as_str()));
+    crate::minecraft::launcher::auth_startup_tests::assert_brokered_startup(&root, &version);
     let metadata: Value = serde_json::from_slice(
         &std::fs::read(root.join(format!("versions/{version}/{version}.json"))).unwrap(),
     )
