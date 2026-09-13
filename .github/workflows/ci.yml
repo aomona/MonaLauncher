@@ -84,6 +84,10 @@ jobs:
       - name: Verify AppContainer isolation
         if: runner.os == 'Windows'
         run: ./src-tauri/target/debug/sandbox_probe.exe --appcontainer
+      - name: Verify Windows authentication IPC in an actual AppContainer JVM
+        if: runner.os == 'Windows'
+        working-directory: src-tauri
+        run: cargo test --locked --lib auth::broker::windows_smoke::appcontainer_java_uses_inherited_auth_channel -- --ignored --exact --nocapture
       - name: Verify Windows sandbox ACL boundaries
         if: runner.os == 'Windows'
         run: ./src-tauri/target/debug/sandbox_probe.exe --acl

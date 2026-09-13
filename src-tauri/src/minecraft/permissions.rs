@@ -170,7 +170,7 @@ pub fn permission_support() -> PermissionSupport {
             "unsupported"
         },
         editable: cfg!(any(windows, target_os = "macos", target_os = "linux")),
-        account_authentication: cfg!(any(target_os = "macos", target_os = "linux")),
+        account_authentication: cfg!(any(windows, target_os = "macos", target_os = "linux")),
         audio_output: cfg!(any(target_os = "macos", target_os = "linux")),
         microphone: cfg!(target_os = "macos"),
         clipboard: cfg!(target_os = "macos"),

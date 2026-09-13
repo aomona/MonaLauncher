@@ -688,10 +688,24 @@ fn spawn_sandboxed(
 ) -> Result<SpawnedMinecraft, MinecraftLaunchError> {
     use crate::platform::windows::appcontainer_process::launch_with_policy;
     use crate::platform::windows::sandbox_acl::grant_policy_access;
-    if broker.is_some() {
-        return Err(MinecraftLaunchError::Sandbox(
-            "Windows authentication IPC is not yet supported".into(),
-        ));
+    use std::os::windows::io::AsRawHandle;
+    let broker = broker
+        .map(|operations| {
+            crate::auth::broker::channel::PreparedBroker::new(
+                operations,
+                instance.permissions.network,
+            )
+        })
+        .transpose()?;
+    let mut arguments = arguments.to_vec();
+    if let Some(broker) = &broker {
+        arguments.insert(
+            0,
+            OsString::from(format!(
+                "-Dmonalauncher.auth.handle={}",
+                broker.child_handle().as_raw_handle() as usize
+            )),
+        );
     }
 
     grant_policy_access(policy, &sandbox.sid)
@@ -700,11 +714,15 @@ fn spawn_sandboxed(
     let mut child = launch_with_policy(
         &sandbox.profile_name,
         &java_path,
-        arguments,
+        &arguments,
         game_directory,
         policy,
+        broker.as_ref(),
     )
     .map_err(|error| MinecraftLaunchError::Sandbox(error.to_string()))?;
+    if let Some(broker) = broker {
+        child.retain_auth_broker(broker.into_guard());
+    }
     if !child.token_info.is_app_container {
         let _ = child.kill();
         return Err(MinecraftLaunchError::SandboxedProcessNotIsolated);

@@ -17,7 +17,8 @@ static void fail(JNIEnv *env) {
 JNIEXPORT void JNICALL Java_me_aomona_auth_NativeIO_prepare(JNIEnv *env, jclass type, jlong handle) {
     (void) type;
 #ifdef _WIN32
-    if (!SetHandleInformation((HANDLE)(intptr_t)handle, HANDLE_FLAG_INHERIT, 0)) fail(env);
+    if (GetFileType((HANDLE)(intptr_t)handle) != FILE_TYPE_PIPE
+        || !SetHandleInformation((HANDLE)(intptr_t)handle, HANDLE_FLAG_INHERIT, 0)) fail(env);
 #else
     if (handle < 0 || handle > INT32_MAX) { fail(env); return; }
     int flags = fcntl((int)handle, F_GETFL);
@@ -34,10 +35,25 @@ static jint transfer(JNIEnv *env, jlong handle, jbyteArray array, jint offset, j
     if (!bytes) return -1;
     int result = -1;
 #ifdef _WIN32
-    DWORD completed = 0;
-    BOOL ok = writing ? WriteFile((HANDLE)(intptr_t)handle, bytes + offset, (DWORD)count, &completed, NULL)
-                      : ReadFile((HANDLE)(intptr_t)handle, bytes + offset, (DWORD)count, &completed, NULL);
-    if (ok) result = (int)completed;
+    HANDLE pipe = (HANDLE)(intptr_t)handle;
+    OVERLAPPED operation = {0};
+    operation.hEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
+    if (operation.hEvent) {
+        DWORD completed = 0;
+        BOOL ok = writing ? WriteFile(pipe, bytes + offset, (DWORD)count, NULL, &operation)
+                          : ReadFile(pipe, bytes + offset, (DWORD)count, NULL, &operation);
+        if (ok || GetLastError() == ERROR_IO_PENDING) {
+            DWORD wait = WaitForSingleObject(operation.hEvent, 35000);
+            if (wait != WAIT_OBJECT_0) {
+                CancelIoEx(pipe, &operation);
+                /* Keep both the OVERLAPPED and Java buffer alive until cancellation completes. */
+                GetOverlappedResult(pipe, &operation, &completed, TRUE);
+            } else if (GetOverlappedResult(pipe, &operation, &completed, TRUE)) {
+                result = (int)completed;
+            }
+        }
+        CloseHandle(operation.hEvent);
+    }
 #else
     struct pollfd fd = { .fd = (int)handle, .events = writing ? POLLOUT : POLLIN, .revents = 0 };
     int ready;

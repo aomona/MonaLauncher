@@ -11,6 +11,7 @@ fn main() {
     println!("cargo:rerun-if-changed=java/cursor-agent-smoke");
     println!("cargo:rerun-if-env-changed=MONALAUNCHER_MICROSOFT_CLIENT_ID");
     println!("cargo:rerun-if-changed=java/auth-bridge");
+    println!("cargo:rerun-if-changed=java/auth-bridge-smoke");
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     if matches!(target_os.as_str(), "windows" | "macos" | "linux") {
         build_narrator_bridge();

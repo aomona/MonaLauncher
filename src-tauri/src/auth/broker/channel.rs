@@ -5,12 +5,6 @@ use super::{
 use serde_json::json;
 use std::{
     io::{self, Read, Write},
-    net::Shutdown,
-    os::{
-        fd::AsRawFd,
-        unix::{net::UnixStream, process::CommandExt},
-    },
-    process::Command as ProcessCommand,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -19,22 +13,37 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(windows)]
+use super::windows_channel::Stream;
+#[cfg(unix)]
+use std::{
+    net::Shutdown,
+    os::{
+        fd::AsRawFd,
+        unix::{net::UnixStream as Stream, process::CommandExt},
+    },
+    process::Command as ProcessCommand,
+};
+
+#[cfg(unix)]
 pub const CHILD_FD: i32 = 3;
 
 pub struct PreparedBroker {
-    child: UnixStream,
+    child: Stream,
     guard: BrokerGuard,
 }
 
 pub struct BrokerGuard {
     active: Arc<AtomicBool>,
-    shutdown: UnixStream,
+    #[cfg(unix)]
+    shutdown: Stream,
     worker: Option<JoinHandle<()>>,
 }
 
 impl Drop for BrokerGuard {
     fn drop(&mut self) {
         self.active.store(false, Ordering::Release);
+        #[cfg(unix)]
         let _ = self.shutdown.shutdown(Shutdown::Both);
         // An in-flight HTTPS request is bounded by its own 30s deadline. It may finish on its
         // worker, but the active/generation check prevents any reply after revocation.
@@ -50,10 +59,12 @@ impl Drop for BrokerGuard {
 
 impl PreparedBroker {
     pub fn new(operations: Box<dyn Operations>, network: bool) -> io::Result<Self> {
-        let (parent, child) = UnixStream::pair()?;
+        let (parent, child) = Stream::pair()?;
         parent.set_read_timeout(Some(Duration::from_millis(250)))?;
         parent.set_write_timeout(Some(Duration::from_secs(3)))?;
+        #[cfg(unix)]
         let shutdown = parent.try_clone()?;
+        #[cfg(unix)]
         let shutdown_on_exit = parent.try_clone()?;
         let active = Arc::new(AtomicBool::new(true));
         let running = Arc::clone(&active);
@@ -61,18 +72,21 @@ impl PreparedBroker {
             .name("minecraft-auth-broker".into())
             .spawn(move || {
                 let _ = serve(parent, operations, network, running);
+                #[cfg(unix)]
                 let _ = shutdown_on_exit.shutdown(Shutdown::Both);
             })?;
         Ok(Self {
             child,
             guard: BrokerGuard {
                 active,
+                #[cfg(unix)]
                 shutdown,
                 worker: Some(worker),
             },
         })
     }
 
+    #[cfg(unix)]
     pub fn configure(&self, command: &mut ProcessCommand) -> io::Result<()> {
         let child = self.child.try_clone()?;
         // SAFETY: dup2 and fcntl are async-signal-safe. The captured owned socket keeps its
@@ -90,18 +104,23 @@ impl PreparedBroker {
         Ok(())
     }
 
+    #[cfg(windows)]
+    pub(crate) fn child_handle(&self) -> std::os::windows::io::BorrowedHandle<'_> {
+        self.child.borrow_handle()
+    }
+
     pub fn into_guard(self) -> BrokerGuard {
         self.guard
     }
 
     #[cfg(test)]
-    fn test_peer(&self) -> UnixStream {
+    fn test_peer(&self) -> Stream {
         self.child.try_clone().unwrap()
     }
 }
 
 fn read_exact_until(
-    stream: &mut UnixStream,
+    stream: &mut Stream,
     mut bytes: &mut [u8],
     active: &AtomicBool,
     operations: &dyn Operations,
@@ -133,7 +152,7 @@ fn read_exact_until(
 }
 
 fn serve(
-    mut stream: UnixStream,
+    mut stream: Stream,
     mut operations: Box<dyn Operations>,
     network: bool,
     active: Arc<AtomicBool>,
@@ -225,7 +244,7 @@ mod tests {
             Ok(json!({"called":true}))
         }
     }
-    fn request(peer: &mut UnixStream, value: serde_json::Value) -> serde_json::Value {
+    fn request(peer: &mut Stream, value: serde_json::Value) -> serde_json::Value {
         let body = serde_json::to_vec(&value).unwrap();
         peer.write_all(&(body.len() as u32).to_be_bytes()).unwrap();
         peer.write_all(&body).unwrap();

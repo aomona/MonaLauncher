@@ -1,9 +1,11 @@
 //! Credential-bearing operations live outside the game process. The Java adapter is untrusted.
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub mod channel;
 pub mod chat;
 pub mod protocol;
 pub mod service;
+#[cfg(windows)]
+mod windows_channel;
 
 #[cfg(all(test, unix))]
 mod interop;
@@ -13,3 +15,6 @@ mod game_key_probe;
 
 #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
 mod game_isolation_probe;
+
+#[cfg(all(test, windows))]
+mod windows_smoke;

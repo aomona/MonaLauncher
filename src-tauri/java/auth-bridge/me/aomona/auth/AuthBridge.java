@@ -127,7 +127,7 @@ public final class AuthBridge {
     private static void transfer(byte[] bytes, boolean writing) throws IOException {
         int offset = 0;
         while (offset < bytes.length) {
-            int count = writing ? NativeIO.write(3, bytes, offset, bytes.length - offset) : NativeIO.read(3, bytes, offset, bytes.length - offset);
+            int count = writing ? NativeIO.write(NativeIO.channel(), bytes, offset, bytes.length - offset) : NativeIO.read(NativeIO.channel(), bytes, offset, bytes.length - offset);
             if (count <= 0) throw new IOException("Authentication channel closed");
             offset += count;
         }
