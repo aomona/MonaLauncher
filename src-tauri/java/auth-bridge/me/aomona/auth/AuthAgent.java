@@ -26,6 +26,19 @@ public final class AuthAgent {
                 && message.matches("Authentication IPC prepare failed: win32=[0-9]+ type=[0-9]+")) detail += ": " + message;
             if (cause instanceof UnsatisfiedLinkError && message != null && message.contains("dependent libraries"))
                 detail += ": native dependency unavailable";
+            if (cause instanceof InternalError && "Error loading java.security file".equals(message))
+                detail += ": Java security configuration unavailable";
+            // Class/method names identify JDK initialization failures without printing paths,
+            // property values or arbitrary exception messages.
+            Throwable nested = cause;
+            for (int depth = 0; nested != null && depth < 5; depth++, nested = nested.getCause()) {
+                if (depth > 0) detail += " > " + nested.getClass().getSimpleName();
+                StackTraceElement[] trace = nested.getStackTrace();
+                for (int i = 0; i < Math.min(trace.length, 4); i++) {
+                    if (trace[i].getClassName().startsWith("java.") || trace[i].getClassName().startsWith("sun."))
+                        detail += " [" + trace[i].getClassName() + "." + trace[i].getMethodName() + ":" + trace[i].getLineNumber() + "]";
+                }
+            }
             throw new IllegalStateException("Authentication IPC initialization failed at " + stage + " (" + detail + ")");
         }
         instrumentation.addTransformer(new ClassFileTransformer() {
