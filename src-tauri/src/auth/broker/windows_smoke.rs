@@ -160,15 +160,18 @@ fn appcontainer_java_uses_inherited_auth_channel() {
             foreign_id.into(),
         ];
         // The broker uses a local synthetic operation. Neither JVM has any network capability.
+        let drive =
+            crate::platform::windows::sandbox_drive::SandboxDrive::create(&java_home).unwrap();
         let mut child = launch_with_network(
             &profile.name,
-            &java_home.join("bin/java.exe"),
+            &drive.root().join("bin/java.exe"),
             &arguments,
             root,
             false,
             Some(&broker),
         )
         .unwrap();
+        child.retain_sandbox_drive(drive);
         child.retain_auth_broker(broker.into_guard());
         assert!(child.token_info.is_app_container);
         let readers: Vec<_> = [child.take_stdout().unwrap(), child.take_stderr().unwrap()]

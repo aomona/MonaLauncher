@@ -186,4 +186,4 @@ CIでは次を個別に実行する。
 - `windows_smoke::appcontainer_java_uses_inherited_auth_channel`: 実AppContainer内のJVM/JNIで通信OFF拒否、合成証明書の公開情報だけの返却、別のChatKeys所有者の識別子拒否、自分の鍵での署名と公開鍵検証。OSネットワークcapabilityは付与しない。
 - `interop::official_game_chat_signer_uses_opaque_key_over_real_ipc`: 公式1.21.8 / Java 21と26.2 / Java 25のauthlib・Crypt・Signerを実AppContainer内で呼び出す。秘密鍵のエンコード不可、保存形式が識別子だけ、署名の検証、古い識別子・連番再送の拒否、通常RSAの維持を確認する。
 
-公式クラスの準備は `python tools/auth-broker-probe/prepare_chat_smoke.py VERSION ROOT`。メタデータをSHA-1に固定し、各JARのサイズとSHA-1を検査する。テストは専用AppContainerプロフィールを作成してJDKに読取ACLを付け、終了時にそのACLとプロフィールを削除する。公開の合成鍵だけを使い、Minecraft画面・実Fabricクライアント全体・実アカウント・オンライン参加のWindows検証とは区別する。過去の記録にある「Windows IPC未実装」は、その記録時点の状態を指す。
+公式クラスの準備は `python tools/auth-broker-probe/prepare_chat_smoke.py VERSION ROOT`。メタデータをSHA-1に固定し、各JARのサイズとSHA-1を検査する。テストは専用AppContainerプロフィールを作成してJDKに読取ACLを付け、製品と同じ `SandboxDrive` のドライブ別名からJavaを起動する。Java 25のセキュリティ設定読込では `toRealPath` が親ディレクトリを列挙するため、この経路も必要になる。JDK外の親ディレクトリに読取権限を追加せず、終了時にドライブ別名・ACL・プロフィールを削除する。公開の合成鍵だけを使い、Minecraft画面・実Fabricクライアント全体・実アカウント・オンライン参加のWindows検証とは区別する。過去の記録にある「Windows IPC未実装」は、その記録時点の状態を指す。

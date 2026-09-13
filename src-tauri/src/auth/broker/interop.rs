@@ -130,15 +130,31 @@ fn official_game_chat_signer_uses_opaque_key_over_real_ipc() {
             )
             .into(),
         );
+        // Match the production launcher: Java 25 resolves java.security with toRealPath,
+        // which enumerates path ancestors. The drive alias keeps those ancestors inside the
+        // granted runtime instead of requiring access to the host's JDK installation parents.
+        let drive = crate::platform::windows::sandbox_drive::SandboxDrive::create(
+            java.parent().unwrap().parent().unwrap(),
+        )
+        .unwrap();
+        args.insert(
+            0,
+            format!(
+                "-Dmonalauncher.auth.smoke.runtimeRoot={}",
+                drive.root().display()
+            )
+            .into(),
+        );
         let mut child = crate::platform::windows::appcontainer_process::launch_with_network(
             &profile.name,
-            &java,
+            &drive.root().join("bin/java.exe"),
             &args,
             output,
             false,
             Some(&prepared),
         )
         .unwrap();
+        child.retain_sandbox_drive(drive);
         assert!(child.token_info.is_app_container);
         let readers: Vec<_> = [child.take_stdout().unwrap(), child.take_stderr().unwrap()]
             .into_iter()

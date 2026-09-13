@@ -18,6 +18,9 @@ public final class ChatSigningSmoke {
     }
     public static void main(String[] args) throws Exception {
         boolean modern = args[0].equals("26.2");
+        String runtimeRoot = System.getProperty("monalauncher.auth.smoke.runtimeRoot");
+        if (runtimeRoot != null) require(java.nio.file.Path.of(System.getProperty("java.home")).getRoot()
+            .equals(java.nio.file.Path.of(runtimeRoot).getRoot()), "runtime uses the launcher drive alias");
         Class<?> clientType = Class.forName("com.mojang.authlib.minecraft.client.MinecraftClient");
         Object client = clientType.getConstructor(String.class, java.net.Proxy.class)
             .newInstance("MONALAUNCHER_BROKERED_NO_ACCESS_TOKEN", java.net.Proxy.NO_PROXY);
