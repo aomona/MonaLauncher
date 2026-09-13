@@ -4,7 +4,7 @@ use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::sandbox::{Backend, FileAccess, SandboxPolicy};
+use crate::sandbox::{Backend, FileAccess, GameDirectory, SandboxPolicy};
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
@@ -115,12 +115,12 @@ pub fn grant_policy_access(
     // Never recurse ACL changes through game-controlled junctions or symlinks.
     crate::sandbox::game_files::validate_tree(&policy.resources().game)
         .map_err(|e| SandboxAclError::Policy(e.to_string()))?;
-    update_deny(&policy.resources().game, appcontainer_sid, None, true)?;
+    remove_legacy_denies(&policy.resources().game, appcontainer_sid)?;
     if let Some(caches) = &policy.caches {
         for path in [&caches.skins, &caches.graphics] {
             crate::sandbox::game_files::validate_tree(path)
                 .map_err(|e| SandboxAclError::Policy(e.to_string()))?;
-            update_deny(path, appcontainer_sid, None, true)?;
+            remove_legacy_denies(path, appcontainer_sid)?;
         }
     }
     for path in &plan.traverse {
@@ -146,54 +146,45 @@ pub fn grant_policy_access(
             }
         }
     }
-    if let Some(caches) = &policy.caches {
-        if !policy.skin_cache {
-            update_deny(
-                &caches.skins,
-                appcontainer_sid,
-                Some("(OI)(CI)(WD,AD,WEA,WA,DE,DC,WDAC,WO)"),
-                true,
-            )?;
+    // AppContainer package SIDs do not enforce DENY ACEs. Remove inherited write
+    // grants at each managed boundary instead. Refresh every boundary on every launch
+    // so both per-area toggles and the global game-write toggle remain reversible.
+    // The parent grant is M (not F), which does not include DELETE_CHILD; a protected
+    // child therefore cannot be renamed/replaced through the parent's permissions.
+    let game_writable = plan
+        .files
+        .iter()
+        .any(|file| file.path == policy.resources().game && file.access == FileAccess::ReadWrite);
+    for directory in [
+        GameDirectory::Worlds,
+        GameDirectory::Screenshots,
+        GameDirectory::ResourcePacks,
+        GameDirectory::ShaderPacks,
+        GameDirectory::Mods,
+        GameDirectory::Config,
+        GameDirectory::Logs,
+    ] {
+        let path = policy.resources().game.join(directory.name());
+        if path.exists() {
+            let writable = game_writable && !policy.readonly_game_directories().contains(&path);
+            replace_tree_access(&path, appcontainer_sid, if writable { "M" } else { "RX" })?;
         }
     }
-    if !policy.readonly_game_directories().is_empty() {
-        // Parent DELETE_CHILD must not allow replacement of a protected directory.
-        update_deny(
-            &policy.resources().game,
+    if let Some(caches) = &policy.caches {
+        replace_tree_access(
+            &caches.skins,
             appcontainer_sid,
-            Some("(DC)"),
-            false,
+            if policy.skin_cache { "M" } else { "RX" },
         )?;
-        for path in policy.readonly_game_directories() {
-            update_deny(
-                path,
-                appcontainer_sid,
-                Some("(OI)(CI)(WD,AD,WEA,WA,DE,DC,WDAC,WO)"),
-                true,
-            )?;
-        }
     }
     Ok(())
 }
 
-fn update_deny(
-    path: &Path,
-    sid: &str,
-    rights: Option<&str>,
-    recursive: bool,
-) -> Result<(), SandboxAclError> {
+fn remove_legacy_denies(path: &Path, sid: &str) -> Result<(), SandboxAclError> {
     let mut command = Command::new("icacls.exe");
-    command.arg(path);
-    if let Some(rights) = rights {
-        command.arg("/deny").arg(format!("*{sid}:{rights}"));
-    } else {
-        command.arg("/remove:d").arg(format!("*{sid}"));
-    }
-    if recursive {
-        command.arg("/T");
-    }
+    command.arg(path).arg("/remove:d").arg(format!("*{sid}"));
     let output = command
-        .args(["/L", "/Q"])
+        .args(["/T", "/L", "/Q"])
         .creation_flags(CREATE_NO_WINDOW)
         .output()?;
     if !output.status.success() {
@@ -205,6 +196,39 @@ fn update_deny(
                 String::from_utf8_lossy(&output.stderr)
             ),
         });
+    }
+    Ok(())
+}
+
+/// Isolate a launcher-managed subtree's package grant while retaining the host's
+/// existing ACEs. Copy inherited ACEs at the root, remove only this package's grants,
+/// then replace explicit grants throughout the validated tree (including older runs).
+fn replace_tree_access(path: &Path, sid: &str, permission: &str) -> Result<(), SandboxAclError> {
+    for arguments in [
+        vec!["/inheritance:d".to_owned()],
+        vec!["/remove:g".to_owned(), format!("*{sid}"), "/T".to_owned()],
+        vec![
+            "/grant:r".to_owned(),
+            format!("*{sid}:(OI)(CI){permission}"),
+            "/T".to_owned(),
+        ],
+    ] {
+        let output = Command::new("icacls.exe")
+            .arg(path)
+            .args(arguments)
+            .args(["/L", "/Q"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()?;
+        if !output.status.success() {
+            return Err(SandboxAclError::GrantFailed {
+                path: path.to_owned(),
+                details: format!(
+                    "{}{}",
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                ),
+            });
+        }
     }
     Ok(())
 }

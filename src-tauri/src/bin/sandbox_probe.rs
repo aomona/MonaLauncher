@@ -68,6 +68,8 @@ struct AclProbeResult {
     mod_registry_writable: bool,
     game_writable: bool,
     game_areas: Vec<GameAreaProbe>,
+    skin_cache_readable: bool,
+    skin_cache_writable: bool,
     launch_directory_writable: bool,
     shared_file_readable: bool,
     shared_file_writable: bool,
@@ -81,7 +83,9 @@ struct GameAreaProbe {
     name: String,
     readable: bool,
     writable: bool,
+    nested_writable: bool,
     creatable: bool,
+    nested_creatable: bool,
     renamable: bool,
 }
 
@@ -212,19 +216,35 @@ fn run_acl_probe_in(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
         "logs",
     ] {
         let path = paths.instance_game_directory(instance_id).join(name);
-        fs::create_dir_all(&path)?;
+        fs::create_dir_all(path.join("nested"))?;
         fs::write(path.join("fixture"), b"fixture")?;
+        fs::write(path.join("nested/fixture"), b"fixture")?;
+        // Existing explicit grants must also be reduced, not just inherited ones.
+        grant_legacy_instance_access(&path.join("nested"), &profile.sid)?;
     }
-    for (game_write, areas_write) in [(true, true), (true, false), (true, true), (false, true)] {
+    let skins = paths
+        .instance(instance_id)
+        .join("runtime-cache/assets/skins");
+    fs::create_dir_all(&skins)?;
+    fs::write(skins.join("fixture"), b"skin")?;
+    for (game_write, areas_write, worlds_write) in [
+        (true, true, true),
+        (true, false, false),
+        (true, true, false),
+        (true, true, true),
+        (false, true, true),
+        (true, true, true),
+    ] {
         let mut instance = instance.clone();
         instance.permissions.game_write = game_write;
-        instance.permissions.worlds_write = areas_write;
+        instance.permissions.worlds_write = worlds_write;
         instance.permissions.screenshots_write = areas_write;
         instance.permissions.resource_packs_write = areas_write;
         instance.permissions.shader_packs_write = areas_write;
         instance.permissions.mods_write = areas_write;
         instance.permissions.config_write = areas_write;
         instance.permissions.logs_write = areas_write;
+        instance.permissions.skin_cache = areas_write;
         let policy = monalauncher_lib::minecraft::sandbox_policy::policy_for_instance(
             &paths,
             &instance,
@@ -276,11 +296,21 @@ fn run_acl_probe_in(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
             && report.game_writable == game_write
             && report.game_areas.len() == 7
             && report.game_areas.iter().all(|a| {
+                let writable = game_write
+                    && if a.name == "saves" {
+                        worlds_write
+                    } else {
+                        areas_write
+                    };
                 a.readable
-                    && a.writable == (game_write && areas_write)
-                    && a.creatable == (game_write && areas_write)
-                    && a.renamable == (game_write && areas_write)
+                    && a.writable == writable
+                    && a.nested_writable == writable
+                    && a.creatable == writable
+                    && a.nested_creatable == writable
+                    && a.renamable == writable
             })
+            && report.skin_cache_readable
+            && report.skin_cache_writable == areas_write
             && report.launch_directory_writable
             && report.shared_file_readable
             && !report.shared_file_writable
@@ -291,7 +321,7 @@ fn run_acl_probe_in(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
             let game = paths.instance_game_directory(instance_id);
             let acl = Command::new("icacls.exe").arg(&game).arg("/T").output()?;
             eprintln!(
-                "ACL probe policy: game_write={game_write}, areas_write={areas_write}, SID={}\nGame ACLs ({}):\n{}{}",
+                "ACL probe policy: game_write={game_write}, areas_write={areas_write}, worlds_write={worlds_write}, SID={}\nGame ACLs ({}):\n{}{}",
                 profile.sid, game.display(), String::from_utf8_lossy(&acl.stdout), String::from_utf8_lossy(&acl.stderr)
             );
             return Err(format!("ACL least-privilege invariant failed: {report:?}").into());
@@ -359,7 +389,12 @@ fn run_acl_child() -> Result<(), Box<dyn std::error::Error>> {
             let path = paths.instance_game_directory(&instance_id).join(name);
             let readable = fs::read(path.join("fixture")).is_ok();
             let writable = can_write_existing(&path.join("fixture"));
-            let creatable = fs::write(path.join("new"), b"fixture").is_ok();
+            let nested_writable = can_write_existing(&path.join("nested/fixture"));
+            // Each child creates a fresh name, so this cannot accidentally test overwrite.
+            let new_name = format!("new-{}", std::process::id());
+            let creatable = fs::write(path.join(&new_name), b"fixture").is_ok();
+            let nested_creatable =
+                fs::write(path.join("nested").join(&new_name), b"fixture").is_ok();
             let moved = path.with_file_name(format!("{name}-moved"));
             let renamable = fs::rename(&path, &moved).is_ok();
             if renamable {
@@ -369,11 +404,24 @@ fn run_acl_child() -> Result<(), Box<dyn std::error::Error>> {
                 name: name.into(),
                 readable,
                 writable,
+                nested_writable,
                 creatable,
+                nested_creatable,
                 renamable,
             }
         })
         .collect(),
+        skin_cache_readable: fs::read(
+            paths
+                .instance(&instance_id)
+                .join("runtime-cache/assets/skins/fixture"),
+        )
+        .is_ok(),
+        skin_cache_writable: can_write_existing(
+            &paths
+                .instance(&instance_id)
+                .join("runtime-cache/assets/skins/fixture"),
+        ),
         game_writable: fs::write(
             paths
                 .instance_game_directory(&instance_id)
