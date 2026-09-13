@@ -136,7 +136,7 @@ fn appcontainer_java_uses_inherited_auth_channel() {
         grant_read(root, &profile.sid);
         grant_read(&java_home, &profile.sid);
         let broker = PreparedBroker::new(Box::new(Fixture(ChatKeys::default())), network).unwrap();
-        let arguments: Vec<OsString> = vec![
+        let mut arguments: Vec<OsString> = vec![
             format!(
                 "-Dmonalauncher.auth.handle={}",
                 broker.child_handle().as_raw_handle() as usize
@@ -162,6 +162,7 @@ fn appcontainer_java_uses_inherited_auth_channel() {
         // The broker uses a local synthetic operation. Neither JVM has any network capability.
         let drive =
             crate::platform::windows::sandbox_drive::SandboxDrive::create(&java_home).unwrap();
+        arguments.insert(0, format!("-Djava.home={}", drive.root().display()).into());
         let mut child = launch_with_network(
             &profile.name,
             &drive.root().join("bin/java.exe"),

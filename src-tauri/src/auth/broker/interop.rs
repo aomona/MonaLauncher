@@ -137,6 +137,7 @@ fn official_game_chat_signer_uses_opaque_key_over_real_ipc() {
             java.parent().unwrap().parent().unwrap(),
         )
         .unwrap();
+        args.insert(0, format!("-Djava.home={}", drive.root().display()).into());
         args.insert(
             0,
             format!(

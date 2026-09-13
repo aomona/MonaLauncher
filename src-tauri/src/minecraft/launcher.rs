@@ -711,6 +711,14 @@ fn spawn_sandboxed(
     grant_policy_access(policy, &sandbox.sid)
         .map_err(|error| MinecraftLaunchError::Sandbox(error.to_string()))?;
     let java_path = sandbox_alias(sandbox, Path::new(&instance.java_path))?;
+    // The JVM can resolve its executable to the host path even when launched through SUBST.
+    // Java 25's security configuration canonicalization then enumerates ungranted ancestors.
+    // Keep java.home on the same verified runtime inside the existing drive namespace.
+    let java_home = sandbox_alias(sandbox, &policy.resources().java_home)?;
+    arguments.insert(
+        0,
+        OsString::from(format!("-Djava.home={}", java_home.display())),
+    );
     let mut child = launch_with_policy(
         &sandbox.profile_name,
         &java_path,
