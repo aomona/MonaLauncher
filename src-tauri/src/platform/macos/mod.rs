@@ -303,6 +303,41 @@ mod tests {
             fs::read(root.join("game/saves/existing")).unwrap(),
             b"protected"
         );
+
+        // Exercise the production process owner, not just the rendered policy. A
+        // grandchild retaining stdout makes EOF a check that the whole group died.
+        let mut child = spawn(
+            command(Path::new("/bin/sh"), &granular).unwrap(),
+            &[
+                "-c".into(),
+                "/bin/sleep 30 & printf 'ready\\n'; wait".into(),
+            ],
+            root.join("launch"),
+        )
+        .unwrap();
+        let stdout = child.take_stdout().unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let reader = std::thread::spawn(move || {
+            use std::io::BufRead;
+            let mut reader = std::io::BufReader::new(stdout);
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            tx.send(line == "ready\n").unwrap();
+            line.clear();
+            let eof = reader.read_line(&mut line).unwrap() == 0;
+            let _ = tx.send(eof);
+        });
+        let timeout = std::time::Duration::from_secs(5);
+        assert_eq!(rx.recv_timeout(timeout), Ok(true), "child did not start");
+        assert!(child.try_wait().unwrap().is_none());
+        drop(child);
+        assert_eq!(
+            rx.recv_timeout(timeout),
+            Ok(true),
+            "grandchild retained stdout"
+        );
+        reader.join().unwrap();
+        assert!(!root.join("launch").exists());
         fs::remove_dir_all(root).unwrap();
     }
 }
