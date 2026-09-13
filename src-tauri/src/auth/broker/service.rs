@@ -1,8 +1,15 @@
-use super::protocol::{BrokerError, Command, MAX_RESPONSE};
+use super::{
+    chat::ChatKeys,
+    protocol::{BrokerError, Command, MAX_RESPONSE},
+};
 use crate::auth::minecraft_services::MinecraftSession;
 use reqwest::blocking::{Client, Response};
 use serde_json::{json, Value};
-use std::{io::Read, sync::Arc, time::Duration};
+use std::{
+    io::Read,
+    sync::Arc,
+    time::{Duration, SystemTime},
+};
 
 /// A launch-scoped account lease; implementations must reject account switches and sign-out.
 pub trait SessionSource: Send + Sync {
@@ -26,6 +33,7 @@ pub struct OfficialOperations {
     account_id: String,
     attributes_schema: UserAttributesSchema,
     client: Client,
+    chat_keys: ChatKeys,
     #[cfg(test)]
     test_origin: Option<String>,
 }
@@ -49,6 +57,7 @@ impl OfficialOperations {
             account_id,
             attributes_schema,
             client,
+            chat_keys: ChatKeys::default(),
             #[cfg(test)]
             test_origin: None,
         })
@@ -69,10 +78,12 @@ impl Operations for OfficialOperations {
     }
     fn execute(&mut self, command: &Command) -> Result<Value, BrokerError> {
         if !self.source.valid() {
+            self.chat_keys.clear();
             return Err(BrokerError::Revoked);
         }
         let session = self.source.current()?;
         if session.uuid != self.account_id || !self.source.valid() {
+            self.chat_keys.clear();
             return Err(BrokerError::Revoked);
         }
         let result = match command {
@@ -107,9 +118,30 @@ impl Operations for OfficialOperations {
                     .map_err(|_| BrokerError::Unavailable)?;
                 sanitize_blocks(read_response(response)?)
             }
-            _ => Err(BrokerError::Unsupported),
+            Command::Certificate {} => {
+                if let Some(cached) = self.chat_keys.cached(SystemTime::now()) {
+                    Ok(cached)
+                } else {
+                    let response = self
+                        .client
+                        .post(
+                            self.endpoint("https://api.minecraftservices.com/player/certificates"),
+                        )
+                        .bearer_auth(&session.access_token)
+                        .send()
+                        .map_err(|_| BrokerError::Unavailable)?;
+                    self.chat_keys
+                        .install(read_response(response)?, SystemTime::now())
+                }
+            }
+            Command::Sign { key_id, message } => {
+                self.chat_keys
+                    .sign(key_id, message, &self.account_id, SystemTime::now())
+            }
+            Command::Hello {} => Err(BrokerError::Unsupported),
         };
         if !self.source.valid() {
+            self.chat_keys.clear();
             return Err(BrokerError::Revoked);
         }
         // Defense in depth: even an unexpected service echo must not return this credential.
@@ -319,6 +351,61 @@ mod tests {
         .unwrap();
         operations.test_origin = Some(origin);
         (operations, worker, valid)
+    }
+
+    #[test]
+    fn certificate_is_filtered_cached_and_revoked_with_its_account() {
+        use super::super::chat::tests::{certificate, message, ACCOUNT};
+        use base64::{engine::general_purpose::STANDARD, Engine};
+        let now = SystemTime::now();
+        let raw = certificate(now);
+        let (mut operations, worker, valid) = fixture("200 OK", raw.to_string(), || {});
+        let public = operations.execute(&Command::Certificate {}).unwrap();
+        let request = String::from_utf8(worker.join().unwrap()).unwrap();
+        assert!(request.starts_with("POST /player/certificates HTTP/1.1\r\n"));
+        assert!(request.contains("authorization: Bearer only-the-test-parent-has-this-credential"));
+        assert!(!public
+            .to_string()
+            .contains(raw["keyPair"]["privateKey"].as_str().unwrap()));
+        assert_eq!(
+            operations.execute(&Command::Certificate {}),
+            Ok(public.clone())
+        );
+        let key_id = public["keyPair"]["privateKey"]
+            .as_str()
+            .unwrap()
+            .strip_prefix(super::super::chat::KEY_MARKER)
+            .unwrap()
+            .to_owned();
+        let command = Command::Sign {
+            key_id,
+            message: STANDARD.encode(message(now, 1, 0)),
+        };
+        assert!(operations.execute(&command).is_ok());
+        assert_eq!(operations.account_id, ACCOUNT);
+        valid.store(false, Ordering::Release);
+        assert_eq!(operations.execute(&command), Err(BrokerError::Revoked));
+        assert!(operations.chat_keys.cached(now).is_none());
+    }
+
+    #[test]
+    fn certificate_revoked_during_fetch_is_neither_returned_nor_retained() {
+        let valid = Arc::new(AtomicBool::new(true));
+        let revoke = valid.clone();
+        let (mut operations, worker, _) = fixture(
+            "200 OK",
+            super::super::chat::tests::certificate(SystemTime::now()).to_string(),
+            move || {
+                revoke.store(false, Ordering::Release);
+            },
+        );
+        operations.source = Arc::new(Source(valid));
+        assert_eq!(
+            operations.execute(&Command::Certificate {}),
+            Err(BrokerError::Revoked)
+        );
+        worker.join().unwrap();
+        assert!(operations.chat_keys.cached(SystemTime::now()).is_none());
     }
 
     #[test]

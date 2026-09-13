@@ -41,6 +41,9 @@ fn build_auth_bridge(target_os: &str) {
         "AuthBridge.java",
         "MethodAdapter.java",
         "NativeIO.java",
+        "RemotePrivateKey.java",
+        "RemoteProvider.java",
+        "RemoteSignature.java",
     ];
     let status = Command::new("javac")
         .args(["--release", "21", "-d"])
@@ -83,6 +86,15 @@ fn build_auth_bridge(target_os: &str) {
         .arg("-C")
         .arg(&classes)
         .arg("me/aomona/auth/NativeIO.class")
+        .arg("-C")
+        .arg(&classes)
+        .arg("me/aomona/auth/RemotePrivateKey.class")
+        .arg("-C")
+        .arg(&classes)
+        .arg("me/aomona/auth/RemoteProvider.class")
+        .arg("-C")
+        .arg(&classes)
+        .arg("me/aomona/auth/RemoteSignature.class")
         .status()
         .unwrap()
         .success());

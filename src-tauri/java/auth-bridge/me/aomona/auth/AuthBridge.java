@@ -10,6 +10,10 @@ import java.util.Map;
 public final class AuthBridge {
     private static long nextId;
     private static boolean greeted;
+    private static final String KEY_MARKER = "MONALAUNCHER_REMOTE_CHAT_KEY:";
+    private static final java.util.Set<String> issuedKeys = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private static volatile Object signingClient;
+    private static volatile Object signingMapper;
     private AuthBridge() {}
 
     public static Object request(Object client, URL url, Object body, Class<?> responseType, int method) throws Throwable {
@@ -40,8 +44,42 @@ public final class AuthBridge {
         try { value = rpc(client, mapper, command); }
         catch (IOException error) { throw failure(client, 503); }
         if (value == null) return null;
+        if (address.equals("https://api.minecraftservices.com/player/certificates")) {
+            if (!(value instanceof Map<?,?> certificate) || !(certificate.get("keyPair") instanceof Map<?,?> pair)
+                || !(pair.get("privateKey") instanceof String marker) || !marker.matches(KEY_MARKER + "[a-f0-9]{64}"))
+                throw failure(client, 503);
+            signingClient = client; signingMapper = mapper; issuedKeys.add(marker);
+        }
         String json = (String) mapper.getClass().getMethod("writeValueAsString", Object.class).invoke(mapper, value);
         return mapper.getClass().getMethod("readValue", String.class, Class.class).invoke(mapper, json, responseType);
+    }
+
+    public static java.security.PrivateKey readPrivateKey(Class<?> crypt, String value) throws Throwable {
+        if (issuedKeys.contains(value)) return new RemotePrivateKey(value.substring(KEY_MARKER.length()));
+        // Old-launch markers deliberately take the game's normal invalid-cache path and refetch.
+        try { return (java.security.PrivateKey) crypt.getMethod("mona$original$readPrivateKey", String.class).invoke(null, value); }
+        catch (InvocationTargetException error) { throw error.getCause(); }
+    }
+
+    public static String writePrivateKey(Class<?> crypt, java.security.PrivateKey key) throws Throwable {
+        if (key instanceof RemotePrivateKey remote) return KEY_MARKER + remote.id;
+        try { return (String) crypt.getMethod("mona$original$writePrivateKey", java.security.PrivateKey.class).invoke(null, key); }
+        catch (InvocationTargetException error) { throw error.getCause(); }
+    }
+
+    static byte[] signChat(String id, byte[] message) throws java.security.SignatureException {
+        try {
+            Object client = signingClient, mapper = signingMapper;
+            if (client == null || mapper == null || !id.matches("[a-f0-9]{64}") || message.length > 6208)
+                throw new IOException("Chat signing unavailable");
+            String encoded = java.util.Base64.getEncoder().encodeToString(message);
+            Object result = rpc(client, mapper, "{\"type\":\"sign\",\"key_id\":\"" + id + "\",\"message\":\"" + encoded + "\"}");
+            if (!(result instanceof Map<?,?> data) || !(data.get("signature") instanceof String signature))
+                throw new IOException("Chat signature unavailable");
+            byte[] bytes = java.util.Base64.getDecoder().decode(signature);
+            if (bytes.length != 256) throw new IOException("Chat signature size invalid");
+            return bytes;
+        } catch (Throwable error) { throw new java.security.SignatureException("Authentication broker refused chat signature"); }
     }
 
     private static RuntimeException failure(Object client, int status) throws ReflectiveOperationException {

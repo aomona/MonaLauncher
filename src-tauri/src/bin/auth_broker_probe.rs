@@ -184,10 +184,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if observation["liveJavaHeapDumpScanned"] != true
         || observation["tokenDetected"] != false
         || observation["agentAdapterPresent"] != true
+        || observation["chatAdapterPresent"] != true
         || observation["brokerHandshakeCompleted"] != true
     {
         return Err(
-            "brokered probe failed: secret detected or live heap/adapter/IPC check missing".into(),
+            "brokered probe failed: secret detected or live heap/auth/chat adapter/IPC check missing".into(),
         );
     }
     println!(

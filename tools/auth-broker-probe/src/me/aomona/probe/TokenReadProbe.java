@@ -74,6 +74,13 @@ public final class TokenReadProbe implements ClientModInitializer {
                     }
                 }
                 if (!completed.contains("user_session")) throw new IllegalStateException("User object unavailable");
+                // Force the real game Crypt class through Fabric's loader to check the adapter's
+                // mapped-name path. This loads no certificate and performs no remote operation.
+                try { Class.forName("net.minecraft.util.Crypt"); }
+                catch (ClassNotFoundException e) {
+                    Class.forName(FabricLoader.getInstance().getMappingResolver()
+                        .mapClassName("intermediary", "net.minecraft.class_3515"));
+                }
                 walk(client, 0);
                 completed.add("game_object_fields");
                 int files = 0;
@@ -98,6 +105,7 @@ public final class TokenReadProbe implements ClientModInitializer {
                     + ",\"heapDumpBytes\":" + heapBytes + "}";
                 result = result.substring(0, result.length() - 1)
                     + ",\"agentAdapterPresent\":" + "authlib-client-v1".equals(System.getProperty("monalauncher.auth.adapter"))
+                    + ",\"chatAdapterPresent\":" + "crypt-v1".equals(System.getProperty("monalauncher.auth.chat.adapter"))
                     + ",\"brokerHandshakeCompleted\":" + "true".equals(System.getProperty("monalauncher.auth.broker.handshake")) + "}";
                 Files.writeString(game.resolve("auth-probe-result.json"), result);
                 System.out.println("MONALAUNCHER_AUTH_PROBE_COMPLETE");

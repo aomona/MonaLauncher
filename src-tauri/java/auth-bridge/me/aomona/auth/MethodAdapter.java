@@ -10,9 +10,11 @@ final class MethodAdapter {
     private final Map<Integer, String> utf8 = new HashMap<>();
     private int count;
 
-    static byte[] transform(byte[] source) throws IOException { return new MethodAdapter().adapt(source); }
+    static byte[] transform(byte[] source) throws IOException { return new MethodAdapter().adapt(source, false); }
 
-    private byte[] adapt(byte[] source) throws IOException {
+    static byte[] transformPrivateKeys(byte[] source) throws IOException { return new MethodAdapter().adapt(source, true); }
+
+    private byte[] adapt(byte[] source, boolean crypt) throws IOException {
         DataInputStream in = new DataInputStream(new ByteArrayInputStream(source));
         int magic = in.readInt();
         if (magic != 0xcafebabe) throw new IOException("invalid class");
@@ -31,13 +33,16 @@ final class MethodAdapter {
         }
         ByteArrayOutputStream body = new ByteArrayOutputStream();
         DataOutputStream out = new DataOutputStream(body);
-        out.write(in.readNBytes(6)); // class access, this, super
+        byte[] classHeader = in.readNBytes(6); out.write(classHeader);
+        int thisClass = (classHeader[2] & 255) << 8 | (classHeader[3] & 255);
         int interfaces = in.readUnsignedShort(); out.writeShort(interfaces); out.write(in.readNBytes(interfaces * 2));
         int fields = in.readUnsignedShort(); out.writeShort(fields);
         for (int i = 0; i < fields; i++) copyMember(in, out);
         int methods = in.readUnsignedShort();
         List<byte[]> originals = new ArrayList<>(), wrappers = new ArrayList<>();
         int bridge = methodRef("me/aomona/auth/AuthBridge", "request", "(Ljava/lang/Object;Ljava/net/URL;Ljava/lang/Object;Ljava/lang/Class;I)Ljava/lang/Object;");
+        int readKey = methodRef("me/aomona/auth/AuthBridge", "readPrivateKey", "(Ljava/lang/Class;Ljava/lang/String;)Ljava/security/PrivateKey;");
+        int writeKey = methodRef("me/aomona/auth/AuthBridge", "writePrivateKey", "(Ljava/lang/Class;Ljava/security/PrivateKey;)Ljava/lang/String;");
         int codeName = text("Code");
         for (int i = 0; i < methods; i++) {
             int flags = in.readUnsignedShort(), name = in.readUnsignedShort(), desc = in.readUnsignedShort();
@@ -46,8 +51,14 @@ final class MethodAdapter {
             if ("get".equals(method) && "(Ljava/net/URL;Ljava/lang/Class;)Ljava/lang/Object;".equals(descriptor)) kind = 0;
             if ("post".equals(method) && "(Ljava/net/URL;Ljava/lang/Class;)Ljava/lang/Object;".equals(descriptor)) kind = 1;
             if ("post".equals(method) && "(Ljava/net/URL;Ljava/lang/Object;Ljava/lang/Class;)Ljava/lang/Object;".equals(descriptor)) kind = 2;
+            if (crypt) {
+                kind = -1;
+                if ((flags & 0x0008) != 0 && "(Ljava/lang/String;)Ljava/security/PrivateKey;".equals(descriptor)) kind = 3;
+                if ((flags & 0x0008) != 0 && "(Ljava/security/PrivateKey;)Ljava/lang/String;".equals(descriptor)) kind = 4;
+            }
+            String original = kind == 3 ? "readPrivateKey" : kind == 4 ? "writePrivateKey" : method;
             ByteArrayOutputStream saved = new ByteArrayOutputStream(); DataOutputStream member = new DataOutputStream(saved);
-            member.writeShort(flags); member.writeShort(kind < 0 ? name : text("mona$original$" + method)); member.writeShort(desc);
+            member.writeShort(flags); member.writeShort(kind < 0 ? name : text("mona$original$" + original)); member.writeShort(desc);
             copyAttributes(in, member);
             originals.add(saved.toByteArray());
             if (kind >= 0) {
@@ -55,13 +66,18 @@ final class MethodAdapter {
                 wrapper.writeShort(flags); wrapper.writeShort(name); wrapper.writeShort(desc); wrapper.writeShort(1);
                 byte[] code = { 0x2a, 0x2b, (byte)(kind == 2 ? 0x2c : 0x01), (byte)(kind == 2 ? 0x2d : 0x2c),
                     (byte)(0x03 + kind), (byte)0xb8, (byte)(bridge >>> 8), (byte)bridge, (byte)0xb0 };
+                if (crypt) {
+                    int target = kind == 3 ? readKey : writeKey;
+                    code = new byte[] { 0x13, (byte)(thisClass >>> 8), (byte)thisClass, 0x2a,
+                        (byte)0xb8, (byte)(target >>> 8), (byte)target, (byte)0xb0 };
+                }
                 wrapper.writeShort(codeName); wrapper.writeInt(12 + code.length);
-                wrapper.writeShort(5); wrapper.writeShort(kind == 2 ? 4 : 3);
+                wrapper.writeShort(crypt ? 2 : 5); wrapper.writeShort(crypt ? 1 : kind == 2 ? 4 : 3);
                 wrapper.writeInt(code.length); wrapper.write(code); wrapper.writeShort(0); wrapper.writeShort(0);
                 wrappers.add(bytes.toByteArray());
             }
         }
-        if (wrappers.size() != 3) throw new IOException("authlib signature mismatch");
+        if (wrappers.size() != (crypt ? 2 : 3)) throw new IOException("authlib signature mismatch");
         out.writeShort(methods + wrappers.size());
         for (byte[] method : originals) out.write(method);
         for (byte[] method : wrappers) out.write(method);

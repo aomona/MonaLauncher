@@ -11,16 +11,19 @@ public final class AuthAgent {
             java.nio.file.Path bootstrap = java.nio.file.Path.of(options).getParent().resolve("auth-bootstrap.jar");
             instrumentation.appendToBootstrapClassLoaderSearch(new java.util.jar.JarFile(bootstrap.toFile()));
             Class.forName("me.aomona.auth.NativeIO", true, null).getMethod("initialize", String.class).invoke(null, options);
+            Class.forName("me.aomona.auth.RemoteProvider", true, null).getMethod("install").invoke(null);
         } catch (ReflectiveOperationException | java.io.IOException error) {
             throw new IllegalStateException("Authentication IPC initialization failed");
         }
         instrumentation.addTransformer(new ClassFileTransformer() {
             @Override public byte[] transform(ClassLoader loader, String name, Class<?> redefined,
                                                ProtectionDomain domain, byte[] bytes) {
-                if (!"com/mojang/authlib/minecraft/client/MinecraftClient".equals(name)) return null;
+                boolean crypt = "net/minecraft/util/Crypt".equals(name) || "net/minecraft/class_3515".equals(name) || "bax".equals(name);
+                if (!crypt && !"com/mojang/authlib/minecraft/client/MinecraftClient".equals(name)) return null;
                 try {
-                    byte[] adapted = MethodAdapter.transform(bytes);
-                    System.setProperty("monalauncher.auth.adapter", "authlib-client-v1");
+                    byte[] adapted = crypt ? MethodAdapter.transformPrivateKeys(bytes) : MethodAdapter.transform(bytes);
+                    if (crypt) System.setProperty("monalauncher.auth.chat.adapter", "crypt-v1");
+                    else System.setProperty("monalauncher.auth.adapter", "authlib-client-v1");
                     return adapted;
                 }
                 catch (Throwable error) {
