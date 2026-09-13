@@ -489,7 +489,8 @@ pub async fn launch_minecraft_instance(
         let session = acquire_minecraft_session(&auth_state).await?;
         let broker = instance
             .permissions
-            .access_token
+            .account_authentication
+            .is_brokered()
             .then(|| super::auth::broker_source(&auth_state, session.uuid.clone(), generation));
         Some(MinecraftIdentity {
             player_name: session.player_name,

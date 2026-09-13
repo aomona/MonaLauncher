@@ -28,7 +28,7 @@ async function mockDesktop(
             gameWrite: true,
             narrator: true,
             network: false,
-            accessToken: false,
+            accountAuthentication: "disabled",
             audioOutput: true,
             microphone: false,
             clipboard: false,
@@ -57,7 +57,7 @@ async function mockDesktop(
             gameWrite: true,
             narrator: true,
             network: false,
-            accessToken: false,
+            accountAuthentication: "disabled",
             audioOutput: true,
             microphone: false,
             clipboard: false,
@@ -190,6 +190,7 @@ async function mockDesktop(
                 return {
                   platform,
                   editable: platform !== "unsupported",
+                  accountAuthentication: platform === "macos" || platform === "linux",
                   audioOutput: platform === "macos" || platform === "linux",
                   desktopIntegration: platform === "macos",
                   graphicsCache: platform === "macos" || platform === "linux",
@@ -925,7 +926,7 @@ test("unsupported platforms show permissions without offering ineffective edits"
 test("permission controls reflow in both themes and remain usable with accessibility settings", async ({
   page,
 }, testInfo) => {
-  await mockDesktop(page);
+  await mockDesktop(page, 2, "macos");
   await openSurvival(page);
   await page.getByRole("tab", { name: "Permissions", exact: true }).click();
   for (const theme of ["light", "dark"]) {
@@ -954,10 +955,10 @@ test("permission controls reflow in both themes and remain usable with accessibi
         path: testInfo.outputPath(`permissions-${theme}-${size.width}.png`),
       });
       await page
-        .getByRole("switch", { name: "アクセストークンの受け渡し", exact: true })
+        .getByRole("switch", { name: "アカウント認証の仲介", exact: true })
         .scrollIntoViewIfNeeded();
       await page.screenshot({
-        path: testInfo.outputPath(`access-token-${theme}-${size.width}.png`),
+        path: testInfo.outputPath(`auth-broker-${theme}-${size.width}.png`),
       });
     }
   }
@@ -974,12 +975,12 @@ test("permission controls reflow in both themes and remain usable with accessibi
     .poll(() => page.getByRole("tabpanel").evaluate((el) => el.scrollWidth <= el.clientWidth))
     .toBe(true);
   await page.screenshot({ path: testInfo.outputPath("permissions-high-contrast-200.png") });
-  const token = page.getByRole("switch", { name: "アクセストークンの受け渡し", exact: true });
+  const token = page.getByRole("switch", { name: "アカウント認証の仲介", exact: true });
   await token.focus();
   await page.keyboard.press("Space");
   await expect(token).toBeChecked();
   await expect(token).toBeInViewport();
-  await page.screenshot({ path: testInfo.outputPath("access-token-high-contrast-200.png") });
+  await page.screenshot({ path: testInfo.outputPath("auth-broker-high-contrast-200.png") });
 });
 
 test("toast tones stay compact at the window corner in light and dark themes", async ({
@@ -1134,11 +1135,15 @@ for (const platform of ["windows", "macos", "linux"] as const) {
       page.getByRole("switch", { name: "Modファイルの変更", exact: true }),
     ).toBeChecked();
     const network = page.getByRole("switch", { name: "ネットワーク通信", exact: true });
-    const token = page.getByRole("switch", { name: "アクセストークンの受け渡し", exact: true });
-    await expect(token).not.toBeChecked();
-    await token.focus();
-    await page.keyboard.press("Space");
-    await expect(token).toBeChecked();
+    const token = page.getByRole("switch", { name: "アカウント認証の仲介", exact: true });
+    if (platform === "windows") {
+      await expect(token).toHaveCount(0);
+    } else {
+      await expect(token).not.toBeChecked();
+      await token.focus();
+      await page.keyboard.press("Space");
+      await expect(token).toBeChecked();
+    }
     await expect(network).not.toBeChecked();
     await network.click();
     await expect(network).toBeChecked();
@@ -1147,9 +1152,11 @@ for (const platform of ["windows", "macos", "linux"] as const) {
     await expect(worlds).not.toBeChecked();
     await expect(network).toBeChecked();
     await expect(skin).not.toBeChecked();
-    await expect(token).toBeChecked();
-    await token.click();
-    await expect(token).not.toBeChecked();
+    if (platform !== "windows") {
+      await expect(token).toBeChecked();
+      await token.click();
+      await expect(token).not.toBeChecked();
+    }
     await expect(network).toBeChecked();
     await page.getByRole("switch", { name: "ゲームデータへの書き込み", exact: true }).click();
     await expect(worlds).toBeDisabled();
@@ -1183,7 +1190,12 @@ for (const platform of ["windows", "macos", "linux"] as const) {
 test("permissions imported from another OS can be reduced without silently widening access", async ({
   page,
 }) => {
-  await mockDesktop(page, 2, "windows", { microphone: true, clipboard: true, audioOutput: false });
+  await mockDesktop(page, 2, "windows", {
+    microphone: true,
+    clipboard: true,
+    audioOutput: false,
+    accountAuthentication: "brokered",
+  });
   await openSurvival(page);
   await page.getByRole("tab", { name: "Permissions", exact: true }).click();
   await page.getByRole("button", { name: "マイクの追加許可を解除", exact: true }).click();
@@ -1192,6 +1204,9 @@ test("permissions imported from another OS can be reduced without silently widen
   ).toHaveCount(0);
   await page.getByRole("button", { name: "クリップボードの追加許可を解除", exact: true }).click();
   await page.getByRole("button", { name: "通常音声を許可に戻す", exact: true }).click();
+  await page
+    .getByRole("button", { name: "アカウント認証の仲介の追加許可を解除", exact: true })
+    .click();
   await expect(
     page.getByText("別のOSの設定が残っているため、このままでは起動できません。"),
   ).toHaveCount(0);
@@ -1698,4 +1713,28 @@ test("the entire news row opens its article and aligns the image with the title"
       ),
     )
     .toBe(5);
+});
+
+test("broker permission failures preserve the saved mode without granting network", async ({
+  page,
+}) => {
+  await mockDesktop(page, 2, "macos");
+  await openSurvival(page);
+  await page.getByRole("tab", { name: "Permissions", exact: true }).click();
+  const broker = page.getByRole("switch", { name: "アカウント認証の仲介", exact: true });
+  const network = page.getByRole("switch", { name: "ネットワーク通信", exact: true });
+  await expect(broker).not.toBeChecked();
+  await page.evaluate(() => {
+    (window as unknown as { __test: { failPermissions: boolean } }).__test.failPermissions = true;
+  });
+  await broker.click();
+  await expect(page.getByText("保存できなかったため、元の設定を維持しています。")).toBeVisible();
+  await expect(broker).not.toBeChecked();
+  await expect(network).not.toBeChecked();
+  await page.evaluate(() => {
+    (window as unknown as { __test: { failPermissions: boolean } }).__test.failPermissions = false;
+  });
+  await page.getByRole("button", { name: "再試行", exact: true }).click();
+  await expect(broker).toBeChecked();
+  await expect(network).not.toBeChecked();
 });

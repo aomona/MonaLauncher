@@ -1239,7 +1239,7 @@ mod tests {
         let changed = InstancePermissions {
             game_write: false,
             narrator: false,
-            access_token: true,
+            account_authentication: crate::minecraft::permissions::AccountAuthentication::Brokered,
             ..InstancePermissions::default()
         };
         save_permissions(&paths, "trusted", changed).unwrap();

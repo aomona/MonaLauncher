@@ -214,7 +214,7 @@ fn authentication_substitutions(
         .unwrap_or("00000000000000000000000000000000");
     // Enforce the persisted permission at the final argument boundary as well.
     let brokered = identity
-        .filter(|_| permissions.access_token)
+        .filter(|_| permissions.account_authentication.is_brokered())
         .is_some_and(|identity| identity.broker.is_some());
     HashMap::from([
         ("${auth_player_name}", player_name.to_owned()),
@@ -277,7 +277,7 @@ pub fn spawn_instance(
     )?)?
     .for_current_platform()?;
     let fabric = load_instance_fabric_profile(paths, &instance)?;
-    let broker = if instance.permissions.access_token && !instance.demo {
+    let broker = if instance.permissions.account_authentication.is_brokered() && !instance.demo {
         identity
             .and_then(|identity| identity.broker.as_ref())
             .map(|source| {
@@ -1406,7 +1406,7 @@ mod tests {
             broker: Some(Arc::new(Source)),
         };
         let allowed = InstancePermissions {
-            access_token: true,
+            account_authentication: crate::minecraft::permissions::AccountAuthentication::Brokered,
             ..InstancePermissions::default()
         };
         let arguments = [

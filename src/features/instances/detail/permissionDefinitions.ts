@@ -5,7 +5,13 @@ type Permission = {
   label: string;
   description: string;
   file?: boolean;
-  support?: "audioOutput" | "microphone" | "clipboard" | "desktopIntegration" | "graphicsCache";
+  support?:
+    | "accountAuthentication"
+    | "audioOutput"
+    | "microphone"
+    | "clipboard"
+    | "desktopIntegration"
+    | "graphicsCache";
 };
 export function permissionDefault(key: keyof InstancePermissions) {
   return key === "audioOutput" || key === "desktopIntegration" || key === "graphicsCache";
@@ -102,10 +108,11 @@ export const permissionGroups: { label: string; items: Permission[] }[] = [
           "インターネット・LANへの送受信を許可します。すべてのModにも適用され、読み取れるゲームデータを外部へ送信できるようになります。Windowsのlocalhost制限は別に適用されます。",
       },
       {
-        key: "accessToken",
-        label: "アクセストークンの受け渡し",
+        key: "accountAuthentication",
+        support: "accountAuthentication",
+        label: "アカウント認証の仲介",
         description:
-          "ログイン中のMinecraftアカウントのアクセストークンをゲームに渡します。すべてのModもこのトークンを読み取り、アカウントの認証に利用できます。初期設定はOFFです。認証が必要なサーバーへの接続には、ログインとネットワーク通信の許可も必要です。デモ・未ログイン時は渡しません。",
+          "実アクセストークンをゲームへ渡さず、ランチャーが認証を仲介します。初期設定はOFFです。ONの間はすべてのModも許可された認証操作を利用できます。ログインと通信許可が必要で、デモ・未ログイン時は仲介しません。現在は1.21.8・26.2の試験対応です。署名付きチャットは未対応で、オンライン接続は未検証です。",
       },
       {
         key: "audioOutput",
@@ -141,6 +148,8 @@ export const permissionGroups: { label: string; items: Permission[] }[] = [
 export function unavailableReason(item: Permission, support: PermissionSupport | null) {
   if (!item.support || support?.[item.support]) return null;
   if (!support) return "対応状況を確認しています…";
+  if (item.key === "accountAuthentication")
+    return "このOSの認証仲介は未対応です。以前のON設定は解除できます。実トークンを直接渡して起動することはありません。";
   if (item.key === "desktopIntegration")
     return "このOSでは入力・全画面の連携を画面サービスから個別に遮断する設定は未対応です。OS・デスクトップ環境側の機能に従います。";
   if (item.key === "graphicsCache")
@@ -151,4 +160,23 @@ export function unavailableReason(item: Permission, support: PermissionSupport |
       ? "Linuxでは通常音声と同じPulseAudio接続に含まれ、録音だけの制御は未対応です。"
       : "このOSでのマイク権限の個別変更は未対応です。Windowsではマイク用capabilityを付与しません。";
   return "このOSでは画面接続からクリップボードだけを分離する制御は未対応です。利用可否はOS・画面サービス側の制約に従います。";
+}
+
+export function permissionValue(
+  permissions: InstancePermissions,
+  key: keyof InstancePermissions,
+): boolean {
+  return key === "accountAuthentication"
+    ? permissions.accountAuthentication === "brokered"
+    : permissions[key];
+}
+
+export function withPermission(
+  permissions: InstancePermissions,
+  key: keyof InstancePermissions,
+  enabled: boolean,
+): InstancePermissions {
+  return key === "accountAuthentication"
+    ? { ...permissions, accountAuthentication: enabled ? "brokered" : "disabled" }
+    : { ...permissions, [key]: enabled };
 }

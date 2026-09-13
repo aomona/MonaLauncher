@@ -8,6 +8,39 @@ use crate::sandbox::{
     FileAccess, GameDirectory, NetworkAccess, PolicyError, Resource, SandboxPolicy,
 };
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", try_from = "AuthenticationInput")]
+pub enum AccountAuthentication {
+    #[default]
+    Disabled,
+    Brokered,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum AuthenticationInput {
+    Mode(String),
+    Legacy(bool),
+}
+
+impl TryFrom<AuthenticationInput> for AccountAuthentication {
+    type Error = &'static str;
+    fn try_from(input: AuthenticationInput) -> Result<Self, Self::Error> {
+        match input {
+            AuthenticationInput::Legacy(false) => Ok(Self::Disabled),
+            AuthenticationInput::Legacy(true) => Ok(Self::Brokered),
+            AuthenticationInput::Mode(mode) if mode == "disabled" => Ok(Self::Disabled),
+            AuthenticationInput::Mode(mode) if mode == "brokered" => Ok(Self::Brokered),
+            _ => Err("accountAuthentication must be disabled or brokered"),
+        }
+    }
+}
+impl AccountAuthentication {
+    pub fn is_brokered(self) -> bool {
+        self == Self::Brokered
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct InstancePermissions {
@@ -15,8 +48,8 @@ pub struct InstancePermissions {
     pub narrator: bool,
     #[serde(default)]
     pub network: bool,
-    #[serde(default)]
-    pub access_token: bool,
+    #[serde(default, alias = "accessToken")]
+    pub account_authentication: AccountAuthentication,
     #[serde(default = "enabled")]
     pub audio_output: bool,
     #[serde(default)]
@@ -55,7 +88,7 @@ impl Default for InstancePermissions {
             game_write: true,
             narrator: true,
             network: false,
-            access_token: false,
+            account_authentication: AccountAuthentication::Disabled,
             audio_output: true,
             microphone: false,
             clipboard: false,
@@ -117,6 +150,7 @@ impl InstancePermissions {
 pub struct PermissionSupport {
     pub platform: &'static str,
     pub editable: bool,
+    pub account_authentication: bool,
     pub audio_output: bool,
     pub microphone: bool,
     pub clipboard: bool,
@@ -136,6 +170,7 @@ pub fn permission_support() -> PermissionSupport {
             "unsupported"
         },
         editable: cfg!(any(windows, target_os = "macos", target_os = "linux")),
+        account_authentication: cfg!(any(target_os = "macos", target_os = "linux")),
         audio_output: cfg!(any(target_os = "macos", target_os = "linux")),
         microphone: cfg!(target_os = "macos"),
         clipboard: cfg!(target_os = "macos"),
@@ -173,6 +208,12 @@ fn validate_change(
 ) -> Result<(), String> {
     // Imported settings may be incompatible. Permit unchanged fields and reductions so
     // the UI can repair them one at a time; launch still validates the entire policy.
+    if !support.account_authentication
+        && next.account_authentication.is_brokered()
+        && !previous.account_authentication.is_brokered()
+    {
+        return Err("このOSでは認証の仲介に対応していません".into());
+    }
     if (!support.audio_output && !next.audio_output && previous.audio_output)
         || (!support.desktop_integration
             && !next.desktop_integration
@@ -194,10 +235,32 @@ mod tests {
     use super::*;
 
     #[test]
+    fn migrates_legacy_authentication_without_ever_enabling_direct_tokens() {
+        for (legacy, expected) in [(false, "disabled"), (true, "brokered")] {
+            let permissions: InstancePermissions = serde_json::from_value(serde_json::json!({
+                "gameWrite": true, "narrator": true, "accessToken": legacy
+            }))
+            .unwrap();
+            let saved = serde_json::to_value(permissions).unwrap();
+            assert_eq!(saved["accountAuthentication"], expected);
+            assert!(saved.get("accessToken").is_none());
+            assert!(!permissions.network);
+        }
+        for value in [
+            serde_json::json!({"gameWrite":true,"narrator":true,"accountAuthentication":"direct"}),
+            serde_json::json!({"gameWrite":true,"narrator":true,"accountAuthentication":"brokered","accessToken":false}),
+            serde_json::json!({"gameWrite":true,"narrator":true,"accountAuthentication":"brokered","accessToken":true}),
+        ] {
+            assert!(serde_json::from_value::<InstancePermissions>(value).is_err());
+        }
+    }
+
+    #[test]
     fn incompatible_imports_can_be_repaired_without_accepting_new_unsupported_grants() {
         let support = PermissionSupport {
             platform: "windows",
             editable: true,
+            account_authentication: false,
             audio_output: false,
             microphone: false,
             clipboard: false,
@@ -226,7 +289,12 @@ mod tests {
         assert!(!old.game_write && old.worlds_write && old.audio_output);
         assert!(old.skin_cache && old.desktop_integration && old.graphics_cache);
         assert!(!old.network && !old.microphone && !old.clipboard);
-        assert!(!old.access_token && !InstancePermissions::default().access_token);
+        assert!(
+            !old.account_authentication.is_brokered()
+                && !InstancePermissions::default()
+                    .account_authentication
+                    .is_brokered()
+        );
         assert_eq!(
             serde_json::from_str::<InstancePermissions>(&serde_json::to_string(&old).unwrap())
                 .unwrap(),

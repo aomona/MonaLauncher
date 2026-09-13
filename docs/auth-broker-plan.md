@@ -10,6 +10,8 @@ macOS Seatbelt上の1.21.8 / 26.2 + Fabric 0.19.5で、実ゲームからRustへ
 
 固定のJoinServer / UserProperties / BlockListを実装し、HTTPモックでアカウント固定・redirect拒否・応答上限・失効時の結果破棄を検査。IPCは余分なフィールド、不正フレーム、再送、過剰要求、通信禁止、セッション失効を検査する。アダプターは未対応操作を明示的に拒否する。
 
+設定は `accountAuthentication: disabled | brokered` に移行済み。旧boolは読み込み時に変換し、保存時は新形式だけを出す。新旧フィールド重複は同じ値でも拒否する。権限画面は初期OFF・通信との独立・起動中のModによる仲介利用・未対応範囲を表示し、保存失敗時の設定維持と再試行を検査した。
+
 署名鍵・署名仲介、実online-mode接続、secure profile、Windows IPC、Linux実ゲーム、全ヒープ・ネイティブ・ランチャーメモリの探索はまだ未完了。以下のリリース判定を満たした状態ではない。
 
 ## 目的と保証の範囲

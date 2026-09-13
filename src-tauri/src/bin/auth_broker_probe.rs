@@ -66,7 +66,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &paths,
         &id,
         InstancePermissions {
-            access_token: true,
+            account_authentication:
+                monalauncher_lib::minecraft::permissions::AccountAuthentication::Brokered,
             network: false,
             narrator: false,
             ..InstancePermissions::default()
