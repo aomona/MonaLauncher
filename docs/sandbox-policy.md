@@ -93,7 +93,7 @@ Windowsでは既存CIの `cargo run --locked --bin sandbox_probe -- --acl` と `
 
 | 設定                           | Windows                                            | macOS                                | Linux                                          |
 | ------------------------------ | -------------------------------------------------- | ------------------------------------ | ---------------------------------------------- |
-| 全体・用途別のファイル書き込み | AppContainer SIDのACL/deny ACE                     | Seatbeltの書き込み拒否               | 子ディレクトリのread-only bind                 |
+| 全体・用途別のファイル書き込み | AppContainer SIDの許可ACLを用途別に置換            | Seatbeltの書き込み拒否               | 子ディレクトリのread-only bind                 |
 | 通信ON                         | Internet client/server・private network capability | TCP/UDP・DNSサービスの許可           | host network namespace + IPv4/IPv6 syscall許可 |
 | 通常音声OFF                    | 独立遮断は未対応                                   | CoreAudioのMach/共有メモリ許可を外す | PulseAudioソケットを公開しない                 |
 | マイクON                       | 個別変更未対応・capabilityなし                     | device-microphoneを許可。TCCは別途   | 音声サービスからの独立制御未対応               |
@@ -102,7 +102,9 @@ Windowsでは既存CIの `cargo run --locked --bin sandbox_probe -- --acl` と `
 
 用途別の対象は `saves/screenshots/resourcepacks/shaderpacks/mods/config/logs` だけ。ゲーム/Modを用途ごとに識別するものではなく、OFFでもそのデータの読み取りや別フォルダーへのコピーは可能。`options.txt` や独自の保存先は全体の書き込み設定に従う。読み取り専用にするとゲームやModの起動・保存が失敗する場合がある。
 
-細分化時はゲームツリーのシンボリックリンク・reparse point・既存hardlinkを拒否する。Windowsの再帰ACL更新でも同じ検査を行い、対象SIDの以前のdenyだけを消して再適用する。保護ディレクトリには書き込み/削除/ACL変更拒否、親には非継承のDELETE_CHILD拒否を設定する。ランチャー操作の直前に別のホストプロセスが同時にファイル構造を書き換える状況まで保証するものではない。
+細分化時はゲームツリーのシンボリックリンク・reparse point・既存hardlinkを拒否する。Windowsの再帰ACL更新でも同じ検査を行う。AppContainer SIDへのdeny ACEはアクセス拒否に使えないため、旧実装のdenyを削除し、用途別フォルダーとスキンキャッシュの許可ACLを置換する。各境界の継承ACLを明示ACLへコピーしてから、そのAppContainer SIDの許可だけを子孫も含めて `RX` または `M` に更新する。他のSIDの既存ACLは保持するが、境界では以後の親DACL変更の自動継承は止まる。ゲーム全体の親への許可は `DELETE_CHILD` を含まない `M` とし、読み取り専用の子フォルダーの改名・置換を防ぐ。設定を再びONにした場合も、同じ境界を毎回更新する。ランチャー操作の直前に別のホストプロセスが同時にファイル構造を書き換える状況まで保証するものではない。
+
+Windows CIのACLプローブは、AppContainer内で7用途の書き込み・新規作成・改名、既存の明示許可を持つ深い階層、スキンキャッシュを確認する。全用途ON→OFF、ワールドだけOFF、再度ON、ゲーム全体OFF→ONを同じツリーで順に実行し、拒否と復帰の両方を検査する。Windowsでの実行結果はCIログを参照し、macOS上のコンパイル確認だけで実適用の成功とは扱わない。
 
 通信ONはインターネットとLANへの送受信をまとめた許可で、宛先・Mod・ポートのフィルターではない。Windowsのloopback制限は自動解除しない。macOSはDNS用のmDNSResponder接続、LinuxはDNS/CA設定を公開する。通信OFFへ戻した次の起動ではこれらの追加許可を付けない。
 
