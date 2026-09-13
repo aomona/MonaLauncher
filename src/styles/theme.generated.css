@@ -62,8 +62,6 @@
   --text-article-body: 1rem;
   --text-article-body--line-height: 1.75;
   --text-article-body--font-weight: 400;
-  --container-home: 75rem;
-  --container-news: 62.5rem;
   --container-settings: 60rem;
   --container-gallery-2: 28.5rem;
   --container-gallery-3: 43.25rem;
@@ -149,9 +147,8 @@
     --mona-layout-title-to-content-gap: 1.5rem;
     --mona-layout-section-gap: 2rem;
     --mona-layout-toolbar-to-list-gap: 1rem;
-    --mona-layout-content-max-width-home: 75rem;
-    --mona-layout-content-max-width-news: 62.5rem;
     --mona-layout-content-max-width-settings: 60rem;
+    --mona-layout-news-article-max-width: 62.5rem;
     --mona-layout-instance-row-min-height: 4rem;
     --mona-layout-instance-icon-size: 2.5rem;
     --mona-layout-compact-row-min-height: 2.75rem;

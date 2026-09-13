@@ -159,12 +159,13 @@
     "sectionGap": 32,
     "toolbarToListGap": 16,
     "contentMaxWidth": {
-      "Home": 1200,
+      "Home": null,
       "Instances": null,
-      "News": 1000,
+      "News": null,
       "Gallery": null,
       "Settings": 960
     },
+    "newsArticleMaxWidth": 1000,
     "instanceRowMinHeight": 64,
     "instanceIconSize": 40,
     "compactRowMinHeight": 44,

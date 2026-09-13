@@ -48,7 +48,7 @@ Gallery、Resource Packs、Shader Packs、Worlds、Serversは取得APIがない�
 | `typography.pageTitle`                 | `text-page-title`（サイズ・行高・weightを含む）             |
 | `radius.control` / `.dialog`           | `rounded-control` / `rounded-dialog`                        |
 | `spacing` 4〜64                        | `1, 2, 3, 4, 5, 6, 8, 10, 12, 16`。例: `p-8` = 32px         |
-| `layout.contentMaxWidth.Home`          | `max-w-home`。News、Settingsも同様                          |
+| `layout.contentMaxWidth.Settings`      | `max-w-settings`。Home・Instances・News・Galleryは上限なし  |
 | `layout.sidebarWidth`                  | `w-(--mona-layout-sidebar-width)`                           |
 | `controls.minHeight`                   | `min-h-(--mona-controls-min-height)`                        |
 | `controls.buttonPaddingInline`         | `px-(--mona-controls-button-padding-inline)`                |
@@ -59,7 +59,7 @@ Gallery、Resource Packs、Shader Packs、Worlds、Serversは取得APIがない�
 | `log`                                  | `design-log`、`text-log-warning`、`text-log-error`          |
 | `imageCaption`                         | `bg-image-caption-background text-image-caption-foreground` |
 
-色・影は全Light/Dark値を `--mona-*` に保持し、`@theme inline` から参照する。レイアウト・Controlの数値は階層を保った `--mona-layout-*` / `--mona-controls-*`、Motionは `--mona-motion-*` で参照できる。例: `--mona-layout-instance-modal-footer-min-height`。原本の参照クライアント最小寸法はテスト条件であり、rootのmin-widthに使わない。Instances/Galleryの最大幅nullは上限なし。列数は単位なし、viewport閾値はpx、寸法・文字は16px基準のrem、行高は相対値、時間はmsへ変換する。
+色・影は全Light/Dark値を `--mona-*` に保持し、`@theme inline` から参照する。レイアウト・Controlの数値は階層を保った `--mona-layout-*` / `--mona-controls-*`、Motionは `--mona-motion-*` で参照できる。例: `--mona-layout-instance-modal-footer-min-height`。原本の参照クライアント最小寸法はテスト条件であり、rootのmin-widthに使わない。Home/Instances/News/Galleryの最大幅nullは上限なし。記事Modalは独立した`layout.newsArticleMaxWidth`（1000px）を使う。列数は単位なし、viewport閾値はpx、寸法・文字は16px基準のrem、行高は相対値、時間はmsへ変換する。
 
 `originalSemanticReferences` は色相の由来であり実装用パレットではない。本文の説明、Reduced motion方針、OSの選択色などをCSSの値として機械変換しない。JSONの全記述がutilityになるわけではない。
 

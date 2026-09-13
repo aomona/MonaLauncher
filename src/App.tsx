@@ -46,17 +46,7 @@ export default function App() {
         recent={history.recent}
         openInstance={dialog.openInstance}
       >
-        <div
-          className={
-            page === "Home"
-              ? "max-w-home"
-              : page === "News"
-                ? "max-w-news"
-                : page === "Settings"
-                  ? "max-w-settings"
-                  : ""
-          }
-        >
+        <div className={page === "Settings" ? "max-w-settings" : ""}>
           <header className="mb-6 flex flex-wrap items-center justify-between gap-4">
             <h1 className="text-page-title text-text-heading">{page}</h1>
             {(page === "Instances" || (page === "Home" && launcher.instances.length > 0)) &&

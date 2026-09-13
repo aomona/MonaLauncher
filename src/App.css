@@ -77,7 +77,7 @@
     @apply divide-y divide-border-subtle;
   }
   .news-article-dialog {
-    width: min(var(--mona-layout-content-max-width-news), calc(100vw - 4rem));
+    width: min(var(--mona-layout-news-article-max-width), calc(100vw - 4rem));
   }
   .news-article-dialog .dialog-header {
     flex-wrap: wrap-reverse;
