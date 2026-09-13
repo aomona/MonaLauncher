@@ -61,6 +61,7 @@ struct AppContainerProbeResult {
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AclProbeResult {
+    is_app_container: bool,
     manifest_readable: bool,
     manifest_writable: bool,
     fabric_profile_writable: bool,
@@ -267,7 +268,8 @@ fn run_acl_probe_in(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
             );
         }
         let report: AclProbeResult = serde_json::from_str(stdout_text.trim())?;
-        let expected = report.manifest_readable
+        let expected = report.is_app_container
+            && report.manifest_readable
             && !report.manifest_writable
             && !report.fabric_profile_writable
             && !report.mod_registry_writable
@@ -286,6 +288,12 @@ fn run_acl_probe_in(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
             && !report.java_writable
             && !report.other_manifest_readable;
         if !expected {
+            let game = paths.instance_game_directory(instance_id);
+            let acl = Command::new("icacls.exe").arg(&game).arg("/T").output()?;
+            eprintln!(
+                "ACL probe policy: game_write={game_write}, areas_write={areas_write}, SID={}\nGame ACLs ({}):\n{}{}",
+                profile.sid, game.display(), String::from_utf8_lossy(&acl.stdout), String::from_utf8_lossy(&acl.stderr)
+            );
             return Err(format!("ACL least-privilege invariant failed: {report:?}").into());
         }
         println!("{}", serde_json::to_string_pretty(&report)?);
@@ -332,6 +340,7 @@ fn run_acl_child() -> Result<(), Box<dyn std::error::Error>> {
         .join(PROBE_RUNTIME_CHECKSUM)
         .join("runtime/bin/java.exe");
     let report = AclProbeResult {
+        is_app_container: current_process_token_info()?.is_app_container,
         manifest_readable: fs::read(paths.instance_manifest(&instance_id)).is_ok(),
         manifest_writable: can_write_existing(&paths.instance_manifest(&instance_id)),
         fabric_profile_writable: can_write_existing(&paths.instance_fabric_profile(&instance_id)),
