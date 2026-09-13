@@ -1,0 +1,49 @@
+{
+  "date": "2026-09-13",
+  "observations": [
+    {
+      "completedSurfaces": [
+        "environment",
+        "game_files",
+        "game_object_fields",
+        "jvm_arguments",
+        "process_arguments",
+        "system_properties",
+        "user_session"
+      ],
+      "credentialKind": "random synthetic canary; no account credentials",
+      "detectedSurfaces": ["game_object_fields", "system_properties", "user_session"],
+      "fabricEntrypointRan": true,
+      "minecraft": "1.21.8",
+      "mode": "direct-positive-control",
+      "objectsVisited": 2229,
+      "platform": "macos",
+      "sandboxed": true,
+      "schema": 1,
+      "tokenDetected": true,
+      "wholeHeapScanned": false
+    },
+    {
+      "completedSurfaces": [
+        "environment",
+        "game_files",
+        "game_object_fields",
+        "jvm_arguments",
+        "process_arguments",
+        "system_properties",
+        "user_session"
+      ],
+      "credentialKind": "random synthetic canary; no account credentials",
+      "detectedSurfaces": ["game_object_fields", "system_properties", "user_session"],
+      "fabricEntrypointRan": true,
+      "minecraft": "26.2",
+      "mode": "direct-positive-control",
+      "objectsVisited": 1852,
+      "platform": "macos",
+      "sandboxed": true,
+      "schema": 1,
+      "tokenDetected": true,
+      "wholeHeapScanned": false
+    }
+  ]
+}

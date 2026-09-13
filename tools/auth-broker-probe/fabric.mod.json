@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "id": "mona_token_read_probe",
+  "version": "1.0.0",
+  "name": "Mona Token Read Probe",
+  "description": "Local adversarial authentication test; emits detection booleans only.",
+  "environment": "client",
+  "entrypoints": { "client": ["me.aomona.probe.TokenReadProbe"] },
+  "depends": { "fabricloader": ">=0.16.0", "minecraft": ["1.21.8", "26.2"], "java": ">=21" }
+}
