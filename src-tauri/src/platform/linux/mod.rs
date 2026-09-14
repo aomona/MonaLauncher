@@ -178,6 +178,7 @@ impl PreparedCommand {
         Ok(BubblewrapProcess {
             child,
             launch_root,
+            auth_broker: None,
             lifetime: Some(lifetime),
             spawn_thread: Some(spawn_thread),
         })
@@ -188,6 +189,15 @@ pub fn prepare(
     program: &Path,
     policy: &SandboxPolicy,
     desktop: Option<&Desktop>,
+) -> io::Result<PreparedCommand> {
+    prepare_with_broker(program, policy, desktop, None)
+}
+
+pub(crate) fn prepare_with_broker(
+    program: &Path,
+    policy: &SandboxPolicy,
+    desktop: Option<&Desktop>,
+    broker: Option<&crate::auth::broker::channel::PreparedBroker>,
 ) -> io::Result<PreparedCommand> {
     let plan = policy
         .compile_linux(
@@ -209,6 +219,19 @@ pub fn prepare(
         seccomp::program(policy.network == crate::sandbox::NetworkAccess::Internet)?,
     )?;
     let filter = File::open(filter_path)?;
+    let filter = if broker.is_some() && filter.as_raw_fd() == crate::auth::broker::channel::CHILD_FD
+    {
+        use std::os::fd::FromRawFd;
+        // SAFETY: F_DUPFD_CLOEXEC creates a new owned descriptor away from the child's IPC FD.
+        let duplicate = unsafe { libc::fcntl(filter.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 5) };
+        if duplicate == -1 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: duplicate is newly owned and will be closed by File.
+        unsafe { File::from_raw_fd(duplicate) }
+    } else {
+        filter
+    };
     let fd = filter.as_raw_fd();
     let mut command = Command::new(bwrap);
     command.args([
@@ -368,6 +391,8 @@ pub fn prepare(
             command.env("LIBGL_ALWAYS_SOFTWARE", "1");
         }
     }
+    // bubblewrap passes inherited non-CLOEXEC descriptors to the command; only its
+    // PID 1 reaper closes extras. No preserve-fds option exists in bubblewrap.
     command
         .arg("--seccomp")
         .arg(fd.to_string())
@@ -389,6 +414,9 @@ pub fn prepare(
             Ok(())
         });
     }
+    if let Some(broker) = broker {
+        broker.configure(&mut command)?;
+    }
     Ok(PreparedCommand {
         command,
         _filter: filter,
@@ -396,22 +424,33 @@ pub fn prepare(
 }
 
 pub struct BubblewrapProcess {
+    auth_broker: Option<crate::auth::broker::channel::BrokerGuard>,
     child: Child,
     launch_root: PathBuf,
     lifetime: Option<std::sync::mpsc::Sender<()>>,
     spawn_thread: Option<std::thread::JoinHandle<()>>,
 }
 impl BubblewrapProcess {
+    pub(crate) fn retain_auth_broker(&mut self, broker: crate::auth::broker::channel::BrokerGuard) {
+        self.auth_broker = Some(broker);
+    }
     pub fn id(&self) -> u32 {
         self.child.id()
     }
     pub fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
-        self.child.try_wait()
+        let status = self.child.try_wait()?;
+        if status.is_some() {
+            self.auth_broker.take();
+        }
+        Ok(status)
     }
     pub fn wait(&mut self) -> io::Result<ExitStatus> {
-        self.child.wait()
+        let status = self.child.wait()?;
+        self.auth_broker.take();
+        Ok(status)
     }
     pub fn kill(&mut self) -> io::Result<()> {
+        self.auth_broker.take();
         if self.child.try_wait()?.is_some() {
             return Ok(());
         }

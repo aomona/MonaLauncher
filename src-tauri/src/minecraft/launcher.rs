@@ -6,7 +6,6 @@ use std::fs;
 use std::io::{BufReader, Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::process::ExitStatus;
-#[cfg(windows)]
 use std::sync::Arc;
 #[cfg(windows)]
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -194,10 +193,46 @@ pub struct SpawnedMinecraft {
     pub cursor_broker: Option<Arc<crate::platform::windows::cursor_broker::CursorBroker>>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct MinecraftIdentity {
     pub player_name: String,
     pub uuid: String,
+    pub broker: Option<Arc<dyn crate::auth::broker::service::SessionSource>>,
+}
+
+fn authentication_substitutions(
+    demo: bool,
+    permissions: super::permissions::InstancePermissions,
+    identity: Option<&MinecraftIdentity>,
+) -> HashMap<&'static str, String> {
+    let identity = identity.filter(|_| !demo);
+    let player_name = identity
+        .map(|identity| identity.player_name.as_str())
+        .unwrap_or(if demo { "DemoPlayer" } else { "Player" });
+    let uuid = identity
+        .map(|identity| identity.uuid.as_str())
+        .unwrap_or("00000000000000000000000000000000");
+    // Enforce the persisted permission at the final argument boundary as well.
+    let brokered = identity
+        .filter(|_| permissions.account_authentication.is_brokered())
+        .is_some_and(|identity| identity.broker.is_some());
+    HashMap::from([
+        ("${auth_player_name}", player_name.to_owned()),
+        ("${auth_uuid}", uuid.to_owned()),
+        (
+            "${auth_access_token}",
+            if brokered {
+                crate::auth::broker::protocol::GAME_TOKEN
+            } else {
+                "0"
+            }
+            .to_owned(),
+        ),
+        (
+            "${user_type}",
+            if brokered { "msa" } else { "legacy" }.to_owned(),
+        ),
+    ])
 }
 
 #[derive(Debug)]
@@ -229,6 +264,28 @@ pub fn spawn_instance(
     instance_id: &str,
     identity: Option<&MinecraftIdentity>,
 ) -> Result<SpawnedMinecraft, MinecraftLaunchError> {
+    spawn_instance_with_factory(paths, instance_id, identity, |source, uuid, schema| {
+        crate::auth::broker::service::OfficialOperations::new(source, uuid, schema).map(
+            |operations| Box::new(operations) as Box<dyn crate::auth::broker::service::Operations>,
+        )
+    })
+}
+
+// Kept inside the Rust crate; tests can substitute synthetic operations without adding a
+// command, environment variable or game-visible route to change production service endpoints.
+pub(crate) fn spawn_instance_with_factory(
+    paths: &MinecraftPaths,
+    instance_id: &str,
+    identity: Option<&MinecraftIdentity>,
+    create_operations: impl FnOnce(
+        Arc<dyn crate::auth::broker::service::SessionSource>,
+        String,
+        crate::auth::broker::service::UserAttributesSchema,
+    ) -> Result<
+        Box<dyn crate::auth::broker::service::Operations>,
+        crate::auth::broker::protocol::BrokerError,
+    >,
+) -> Result<SpawnedMinecraft, MinecraftLaunchError> {
     let instance = load_instance(paths, instance_id)?;
     if !instance.sandboxed {
         return Err(MinecraftLaunchError::SandboxRequired);
@@ -243,6 +300,36 @@ pub fn spawn_instance(
     .for_current_platform()?;
     let fabric = load_instance_fabric_profile(paths, &instance)?;
     let detected_java_major = installed_java_major(paths, Path::new(&instance.java_path))?;
+    let broker = if instance.permissions.account_authentication.is_brokered() && !instance.demo {
+        identity
+            .and_then(|identity| identity.broker.as_ref())
+            .map(|source| {
+                if !cfg!(any(windows, target_os = "macos", target_os = "linux")) {
+                    return Err(MinecraftLaunchError::Sandbox(
+                        "このOS・Minecraftバージョンでは認証の仲介が未対応です".into(),
+                    ));
+                }
+                let adapter = super::auth_compatibility::validate(
+                    &instance.version_id,
+                    &version,
+                    detected_java_major,
+                    &instance.mod_loader,
+                    fabric.as_ref(),
+                )
+                .map_err(MinecraftLaunchError::Sandbox)?;
+                super::auth_compatibility::verify_authlib(paths, adapter)
+                    .map_err(MinecraftLaunchError::Sandbox)?;
+                create_operations(
+                    Arc::clone(source),
+                    identity.expect("identity exists").uuid.clone(),
+                    adapter.schema,
+                )
+                .map_err(|error| MinecraftLaunchError::Sandbox(error.to_string()))
+            })
+            .transpose()?
+    } else {
+        None
+    };
     if let Some(java_version) = &version.java_version {
         if detected_java_major < java_version.major_version {
             return Err(MinecraftLaunchError::IncompatibleJava {
@@ -264,7 +351,12 @@ pub fn spawn_instance(
         .map(|profile| build_fabric_classpath(paths, profile))
         .transpose()?
         .unwrap_or_default();
-    classpath.extend(build_classpath(paths, &version, instance.demo)?);
+    classpath.extend(build_classpath(
+        paths,
+        &version,
+        instance.demo,
+        fabric.as_ref(),
+    )?);
     let source_client_jar = paths.version_jar(&version.id);
     require_file(&source_client_jar)?;
 
@@ -291,6 +383,13 @@ pub fn spawn_instance(
     fs::create_dir_all(launch_root.join("tmp"))?;
     let policy = super::sandbox_policy::policy_for_instance(paths, &instance, launch_root)
         .map_err(|error| MinecraftLaunchError::Sandbox(error.to_string()))?;
+    // Old direct-token launches could persist real chat private keys. Clear this cache even
+    // when authentication is disabled or no account is available for the new launch.
+    super::chat_cache::clear(&physical_game_directory).map_err(|_| {
+        MinecraftLaunchError::Sandbox(
+            "以前のチャット認証鍵キャッシュを削除できませんでした。ゲームを終了し、profilekeysのアクセス権を確認して再試行してください".into(),
+        )
+    })?;
     let assets_root = policy
         .caches
         .as_ref()
@@ -315,21 +414,9 @@ pub fn spawn_instance(
         .collect::<Vec<_>>()
         .join(classpath_separator());
 
-    let player_name = identity
-        .map(|identity| identity.player_name.clone())
-        .unwrap_or_else(|| {
-            if instance.demo {
-                "DemoPlayer"
-            } else {
-                "Player"
-            }
-            .to_owned()
-        });
-    let uuid = identity
-        .map(|identity| identity.uuid.clone())
-        .unwrap_or_else(|| "00000000000000000000000000000000".to_owned());
-    let substitutions = HashMap::from([
-        ("${auth_player_name}", player_name),
+    let mut substitutions =
+        authentication_substitutions(instance.demo, instance.permissions, identity);
+    substitutions.extend([
         (
             "${version_name}",
             fabric
@@ -348,11 +435,8 @@ pub fn spawn_instance(
                 .into_owned(),
         ),
         ("${assets_index_name}", version.assets.clone()),
-        ("${auth_uuid}", uuid),
-        ("${auth_access_token}", "0".to_owned()),
         ("${clientid}", String::new()),
         ("${auth_xuid}", String::new()),
-        ("${user_type}", "legacy".to_owned()),
         ("${version_type}", version.version_type.clone()),
         (
             "${natives_directory}",
@@ -380,6 +464,32 @@ pub fn spawn_instance(
     ]);
 
     let mut arguments = vec![OsString::from("-Xms512M"), OsString::from("-Xmx2G")];
+    if broker.is_some() {
+        let layout = sandbox.as_ref().expect("sandbox prepared");
+        let agent = layout.launch_root.join("auth-bridge.jar");
+        fs::write(
+            layout.launch_root.join("auth-bootstrap.jar"),
+            include_bytes!(concat!(env!("OUT_DIR"), "/auth-bootstrap.jar")),
+        )?;
+        let native = layout.launch_root.join(env!("MONALAUNCHER_AUTH_NATIVE"));
+        fs::write(
+            &agent,
+            include_bytes!(concat!(env!("OUT_DIR"), "/auth-bridge.jar")),
+        )?;
+        fs::write(
+            &native,
+            include_bytes!(concat!(
+                env!("OUT_DIR"),
+                "/",
+                env!("MONALAUNCHER_AUTH_NATIVE")
+            )),
+        )?;
+        arguments.push(OsString::from(format!(
+            "-javaagent:{}={}",
+            sandbox_alias(layout, &agent)?.display(),
+            sandbox_alias(layout, &native)?.display()
+        )));
+    }
     let jvm_arguments = if version.arguments.jvm.is_empty() {
         vec![
             format!(
@@ -484,13 +594,13 @@ pub fn spawn_instance(
         MinecraftLaunchError::Sandbox("sandbox layout was not prepared".to_owned())
     })?;
     spawn_sandboxed(
-        paths,
         &instance,
         sandbox,
         &arguments,
         &game_directory,
         sandbox_narrator_token,
         &policy,
+        broker,
     )
 }
 
@@ -525,17 +635,31 @@ fn prepare_sandbox_layout(
 
 #[cfg(target_os = "macos")]
 fn spawn_sandboxed(
-    _paths: &MinecraftPaths,
     instance: &InstanceManifest,
     sandbox: &mut SandboxLayout,
     arguments: &[OsString],
     _game_directory: &Path,
     narrator_token: &str,
     policy: &crate::sandbox::SandboxPolicy,
+    broker: Option<Box<dyn crate::auth::broker::service::Operations>>,
 ) -> Result<SpawnedMinecraft, MinecraftLaunchError> {
     let java = fs::canonicalize(&instance.java_path)?;
-    let command = crate::platform::macos::command(&java, policy)?;
+    let mut command = crate::platform::macos::command(&java, policy)?;
+    let broker = broker
+        .map(|operations| {
+            crate::auth::broker::channel::PreparedBroker::new(
+                operations,
+                instance.permissions.network,
+            )
+        })
+        .transpose()?;
+    if let Some(broker) = &broker {
+        broker.configure(&mut command)?;
+    }
     let mut child = crate::platform::macos::spawn(command, arguments, sandbox.launch_root.clone())?;
+    if let Some(broker) = broker {
+        child.retain_auth_broker(broker.into_guard());
+    }
     sandbox.cleanup_on_drop = false; // The process now owns cleanup, including pipe setup failures.
     let stdout = child
         .take_stdout()
@@ -554,28 +678,59 @@ fn spawn_sandboxed(
 
 #[cfg(windows)]
 fn spawn_sandboxed(
-    _paths: &MinecraftPaths,
     instance: &InstanceManifest,
     sandbox: &mut SandboxLayout,
     arguments: &[OsString],
     game_directory: &Path,
     narrator_token: &str,
     policy: &crate::sandbox::SandboxPolicy,
+    broker: Option<Box<dyn crate::auth::broker::service::Operations>>,
 ) -> Result<SpawnedMinecraft, MinecraftLaunchError> {
     use crate::platform::windows::appcontainer_process::launch_with_policy;
     use crate::platform::windows::sandbox_acl::grant_policy_access;
+    use std::os::windows::io::AsRawHandle;
+    let broker = broker
+        .map(|operations| {
+            crate::auth::broker::channel::PreparedBroker::new(
+                operations,
+                instance.permissions.network,
+            )
+        })
+        .transpose()?;
+    let mut arguments = arguments.to_vec();
+    if let Some(broker) = &broker {
+        arguments.insert(
+            0,
+            OsString::from(format!(
+                "-Dmonalauncher.auth.handle={}",
+                broker.child_handle().as_raw_handle() as usize
+            )),
+        );
+    }
 
     grant_policy_access(policy, &sandbox.sid)
         .map_err(|error| MinecraftLaunchError::Sandbox(error.to_string()))?;
     let java_path = sandbox_alias(sandbox, Path::new(&instance.java_path))?;
+    // The JVM can resolve its executable to the host path even when launched through SUBST.
+    // Java 25's security configuration canonicalization then enumerates ungranted ancestors.
+    // Keep java.home on the same verified runtime inside the existing drive namespace.
+    let java_home = sandbox_alias(sandbox, &policy.resources().java_home)?;
+    arguments.insert(
+        0,
+        OsString::from(format!("-Djava.home={}", java_home.display())),
+    );
     let mut child = launch_with_policy(
         &sandbox.profile_name,
         &java_path,
-        arguments,
+        &arguments,
         game_directory,
         policy,
+        broker.as_ref(),
     )
     .map_err(|error| MinecraftLaunchError::Sandbox(error.to_string()))?;
+    if let Some(broker) = broker {
+        child.retain_auth_broker(broker.into_guard());
+    }
     if !child.token_info.is_app_container {
         let _ = child.kill();
         return Err(MinecraftLaunchError::SandboxedProcessNotIsolated);
@@ -621,19 +776,35 @@ fn spawn_sandboxed(
 
 #[cfg(target_os = "linux")]
 fn spawn_sandboxed(
-    _paths: &MinecraftPaths,
     instance: &InstanceManifest,
     sandbox: &mut SandboxLayout,
     arguments: &[OsString],
     _game_directory: &Path,
     narrator_token: &str,
     policy: &crate::sandbox::SandboxPolicy,
+    broker: Option<Box<dyn crate::auth::broker::service::Operations>>,
 ) -> Result<SpawnedMinecraft, MinecraftLaunchError> {
     let java = fs::canonicalize(&instance.java_path)?;
     let desktop = crate::platform::linux::Desktop::detect_with_audio(policy.desktop.audio_output)?;
     let arguments = linux_display_arguments(&instance.version_id, desktop.protocol(), arguments);
-    let command = crate::platform::linux::prepare(&java, policy, Some(&desktop))?;
+    let broker = broker
+        .map(|operations| {
+            crate::auth::broker::channel::PreparedBroker::new(
+                operations,
+                instance.permissions.network,
+            )
+        })
+        .transpose()?;
+    let command = crate::platform::linux::prepare_with_broker(
+        &java,
+        policy,
+        Some(&desktop),
+        broker.as_ref(),
+    )?;
     let mut child = command.spawn(&arguments, sandbox.launch_root.clone())?;
+    if let Some(broker) = broker {
+        child.retain_auth_broker(broker.into_guard());
+    }
     sandbox.cleanup_on_drop = false;
     let stdout = child
         .take_stdout()
@@ -672,13 +843,13 @@ fn linux_display_arguments(
 
 #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
 fn spawn_sandboxed(
-    _paths: &MinecraftPaths,
     _instance: &InstanceManifest,
     _sandbox: &mut SandboxLayout,
     _arguments: &[OsString],
     _game_directory: &Path,
     _narrator_token: &str,
     _policy: &crate::sandbox::SandboxPolicy,
+    _broker: Option<Box<dyn crate::auth::broker::service::Operations>>,
 ) -> Result<SpawnedMinecraft, MinecraftLaunchError> {
     Err(MinecraftLaunchError::Sandbox(
         "AppContainer is only available on Windows".to_owned(),
@@ -1124,11 +1295,20 @@ fn build_classpath(
     paths: &MinecraftPaths,
     version: &VersionMetadata,
     demo: bool,
+    fabric: Option<&FabricProfile>,
 ) -> Result<Vec<PathBuf>, MinecraftLaunchError> {
     let features = HashMap::from([("is_demo_user".to_owned(), demo)]);
     let mut classpath = Vec::new();
 
     for library in &version.libraries {
+        if fabric.is_some_and(|profile| {
+            profile
+                .libraries
+                .iter()
+                .any(|replacement| same_library_artifact(&library.name, &replacement.name))
+        }) {
+            continue;
+        }
         if !rules_allow(library.rules.as_deref(), &features) {
             continue;
         }
@@ -1157,6 +1337,16 @@ fn build_classpath(
     }
 
     Ok(classpath)
+}
+
+fn same_library_artifact(left: &str, right: &str) -> bool {
+    let left: Vec<_> = left.split(':').collect();
+    let right: Vec<_> = right.split(':').collect();
+    left.len() >= 3
+        && right.len() >= 3
+        && left[0] == right[0]
+        && left[1] == right[1]
+        && left.get(3) == right.get(3)
 }
 
 fn expand_arguments(
@@ -1216,7 +1406,27 @@ fn require_file(path: &Path) -> Result<(), MinecraftLaunchError> {
 }
 
 #[cfg(test)]
+#[path = "launcher_auth_tests.rs"]
+pub(crate) mod auth_startup_tests;
+
+#[cfg(test)]
 mod tests {
+    #[test]
+    fn fabric_library_versions_replace_vanilla_artifacts_but_not_native_classifiers() {
+        assert!(super::same_library_artifact(
+            "org.ow2.asm:asm:9.6",
+            "org.ow2.asm:asm:9.10.1"
+        ));
+        assert!(!super::same_library_artifact(
+            "org.ow2.asm:asm-tree:9.6",
+            "org.ow2.asm:asm:9.10.1"
+        ));
+        assert!(!super::same_library_artifact(
+            "org.lwjgl:lwjgl:3.3.3:natives-macos",
+            "org.lwjgl:lwjgl:3.3.3"
+        ));
+        assert!(!super::same_library_artifact("invalid", "invalid"));
+    }
     #[test]
     fn wayland_compatibility_flags_are_scoped_to_verified_version_and_display() {
         use crate::sandbox::LinuxDisplayProtocol::{Wayland, X11};
@@ -1234,6 +1444,73 @@ mod tests {
     }
     use super::*;
     use crate::minecraft::model::{Rule, RuleOs};
+
+    #[test]
+    fn game_arguments_never_receive_the_broker_credential() {
+        use crate::auth::{
+            broker::{
+                protocol::{BrokerError, GAME_TOKEN},
+                service::SessionSource,
+            },
+            minecraft_services::MinecraftSession,
+        };
+        use crate::minecraft::permissions::InstancePermissions;
+        struct Source;
+        impl SessionSource for Source {
+            fn valid(&self) -> bool {
+                true
+            }
+            fn current(&self) -> Result<MinecraftSession, BrokerError> {
+                Ok(MinecraftSession {
+                    player_name: "TestPlayer".into(),
+                    uuid: "0123456789abcdef0123456789abcdef".into(),
+                    access_token: "test-minecraft-secret".into(),
+                    expires_in: std::time::Duration::from_secs(300),
+                })
+            }
+        }
+        let identity = MinecraftIdentity {
+            player_name: "TestPlayer".into(),
+            uuid: "0123456789abcdef0123456789abcdef".into(),
+            broker: Some(Arc::new(Source)),
+        };
+        let allowed = InstancePermissions {
+            account_authentication: crate::minecraft::permissions::AccountAuthentication::Brokered,
+            ..InstancePermissions::default()
+        };
+        let arguments = [
+            Argument::Plain("--accessToken".into()),
+            Argument::Plain("${auth_access_token}".into()),
+            Argument::Plain("--userType".into()),
+            Argument::Plain("${user_type}".into()),
+        ];
+        for (demo, permissions, identity, expected) in [
+            (false, InstancePermissions::default(), Some(&identity), "0"),
+            (false, allowed, Some(&identity), GAME_TOKEN),
+            (true, allowed, Some(&identity), "0"),
+            (false, allowed, None, "0"),
+        ] {
+            let substitutions = authentication_substitutions(demo, permissions, identity);
+            let expanded = expand_arguments(&arguments, &HashMap::new(), &substitutions);
+            assert_eq!(expanded[1], expected);
+            assert!(!expanded.join(" ").contains("test-minecraft-secret"));
+            assert_eq!(expanded[3], if expected == "0" { "legacy" } else { "msa" });
+            // Older metadata uses a single string instead of the modern argument array.
+            assert_eq!(
+                substitute("--accessToken ${auth_access_token}", &substitutions),
+                format!("--accessToken {expected}")
+            );
+        }
+        let missing_token = MinecraftIdentity {
+            broker: None,
+            ..identity
+        };
+        assert_eq!(
+            authentication_substitutions(false, allowed, Some(&missing_token))
+                ["${auth_access_token}"],
+            "0"
+        );
+    }
 
     #[test]
     fn expands_only_matching_conditional_arguments() {

@@ -1,0 +1,48 @@
+{
+  "schema": 1,
+  "date": "2026-09-14",
+  "implementationCommit": "e89ffae",
+  "platform": "Ubuntu ARM64 in UTM 5.0.5, bubblewrap 0.9.0, Wayland",
+  "fabricRegression": {
+    "agentAdapterPresent": true,
+    "brokerHandshakeCompleted": true,
+    "chatAdapterPresent": true,
+    "completedSurfaces": [
+      "environment",
+      "game_files",
+      "game_object_fields",
+      "jvm_arguments",
+      "live_java_heap_dump",
+      "process_arguments",
+      "system_properties",
+      "user_session"
+    ],
+    "credentialKind": "random synthetic canary; no account credentials",
+    "detectedSurfaces": [],
+    "fabricEntrypointRan": true,
+    "heapDumpBytes": 307197014,
+    "liveJavaHeapDumpScanned": true,
+    "minecraft": "26.2",
+    "mode": "brokered-network-denied",
+    "objectsVisited": 1852,
+    "platform": "linux",
+    "probeSha256": "f2531cdfea01e0a45fe80c8f8c8c0401eaf44f27cce25be23a6ee455df69418d",
+    "sandboxed": true,
+    "schema": 1,
+    "tokenDetected": false,
+    "unavailableSurfaces": [],
+    "wholeHeapScanned": false
+  },
+  "officialClassChatSmoke": {
+    "minecraft": "26.2",
+    "authlib": "9.0.75",
+    "java": "25.0.4.1",
+    "result": "passed",
+    "scope": "Synthetic RSA key and invalid issuer signature; actual official game classes in separate JVM, real JNI/Unix IPC; no service traffic or online server"
+  },
+  "unsupportedAttempt": {
+    "minecraft": "1.21.8",
+    "stage": "installer preflight before game launch",
+    "reason": "Linux ARM64 native support is not pinned for LWJGL freetype 3.3.3; installer currently supports 3.4.1"
+  }
+}

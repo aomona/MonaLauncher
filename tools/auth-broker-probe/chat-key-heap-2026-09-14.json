@@ -1,0 +1,196 @@
+{
+  "schema": 1,
+  "date": "2026-09-14",
+  "baseCommit": "8a16049",
+  "sourceSha256": {
+    "src-tauri/src/minecraft/launcher.rs": "15caac2204f7fb462250cbe2dc8d74ca90c83c58f6f9e08be5521a8384049dd5",
+    "src-tauri/src/auth/broker/game_key_probe.rs": "402e39a51559df75ec2a47ba8ef73e06908d0c4a8354181014080f72d8425452",
+    "src-tauri/src/auth/broker/chat.rs": "884b4ad92f2e4aeeaacfa9f034246af71c6cfeeeec6db144bd3770d3845b0b61",
+    "tools/auth-broker-probe/build.py": "c36a0d70c70461901a7957ad0972c646406170954170715836a9e211c340fdb8",
+    "tools/auth-broker-probe/src/me/aomona/probe/TokenReadProbe.java": "51496f01aa3ee8a21deb1e3258cc4bef1ded60d25a05068783d1a7dc736f4f97",
+    "tools/auth-broker-probe/src/me/aomona/probe/ChatKeyReadProbe.java": "a132e388b5dc53eade705040add644fa95c6e4f1c13a14b80779f684a9f491cd",
+    "tools/auth-broker-probe/src/me/aomona/probe/SecretPatternScanner.java": "48376c965acb94386c912c138d1a36957374d340898410854abee7449ae9e7ee"
+  },
+  "checks": {
+    "macosRust": "133 passed, 8 ignored; all targets and features",
+    "macosClippy": "passed, all targets and features, warnings denied",
+    "linuxPatternFixtureTest": "passed",
+    "linuxClippy": "passed, all targets and features, warnings denied",
+    "scannerControl": "buffer-boundary match and rolling-hash-only false-positive rejection passed on macOS and Linux"
+  },
+  "scope": "Public synthetic RSA fixture. Real Fabric games and game Crypt classes; direct key object versus Rust ChatKeys via authlib, Java adapter and real IPC. Scanned binary private-exponent fragment and Base64 ASCII/UTF-16 fragments across all live Java heap dump bytes. Cache observation uses a dedicated file containing actual Crypt serialization, not the official account cache JSON. No real accounts, issuer-signature validation, server connection, dead-object heap, arbitrary transformed representations or whole native-memory scan in this test.",
+  "comparisons": [
+    {
+      "observations": [
+        {
+          "cachePrivateKeyDetected": true,
+          "encodedPrivateKeyDetected": true,
+          "fabricEntrypointRan": true,
+          "fixtureFileRemoved": true,
+          "heapBytes": 305742587,
+          "heapPrivateKeyDetected": true,
+          "keyEncodingAvailable": true,
+          "liveHeapScanned": true,
+          "matchedRepresentations": [
+            "private_base64_0_ascii",
+            "private_base64_24_ascii",
+            "private_exponent_der"
+          ],
+          "minecraft": "1.21.8",
+          "mode": "direct",
+          "opaquePrivateKey": false,
+          "platform": "macos",
+          "schema": 1,
+          "wholeHeapScanned": false
+        },
+        {
+          "cachePrivateKeyDetected": false,
+          "encodedPrivateKeyDetected": false,
+          "fabricEntrypointRan": true,
+          "fixtureFileRemoved": true,
+          "heapBytes": 305692585,
+          "heapPrivateKeyDetected": false,
+          "keyEncodingAvailable": false,
+          "liveHeapScanned": true,
+          "matchedRepresentations": [],
+          "minecraft": "1.21.8",
+          "mode": "brokered",
+          "opaquePrivateKey": true,
+          "platform": "macos",
+          "schema": 1,
+          "wholeHeapScanned": false
+        }
+      ],
+      "probeSha256": "7dbc6b046ce17f6c27c29e9358c0b324518cad51733b9f2f50f00df0d1793c1a",
+      "schema": 1,
+      "scope": "public synthetic RSA fixture, binary private exponent and Base64/UTF-16 representations; live Java heap only; no real accounts"
+    },
+    {
+      "observations": [
+        {
+          "cachePrivateKeyDetected": true,
+          "encodedPrivateKeyDetected": true,
+          "fabricEntrypointRan": true,
+          "fixtureFileRemoved": true,
+          "heapBytes": 308192034,
+          "heapPrivateKeyDetected": true,
+          "keyEncodingAvailable": true,
+          "liveHeapScanned": true,
+          "matchedRepresentations": [
+            "private_base64_0_ascii",
+            "private_base64_24_ascii",
+            "private_exponent_der"
+          ],
+          "minecraft": "26.2",
+          "mode": "direct",
+          "opaquePrivateKey": false,
+          "platform": "macos",
+          "schema": 1,
+          "wholeHeapScanned": false
+        },
+        {
+          "cachePrivateKeyDetected": false,
+          "encodedPrivateKeyDetected": false,
+          "fabricEntrypointRan": true,
+          "fixtureFileRemoved": true,
+          "heapBytes": 307490618,
+          "heapPrivateKeyDetected": false,
+          "keyEncodingAvailable": false,
+          "liveHeapScanned": true,
+          "matchedRepresentations": [],
+          "minecraft": "26.2",
+          "mode": "brokered",
+          "opaquePrivateKey": true,
+          "platform": "macos",
+          "schema": 1,
+          "wholeHeapScanned": false
+        }
+      ],
+      "probeSha256": "7dbc6b046ce17f6c27c29e9358c0b324518cad51733b9f2f50f00df0d1793c1a",
+      "schema": 1,
+      "scope": "public synthetic RSA fixture, binary private exponent and Base64/UTF-16 representations; live Java heap only; no real accounts"
+    },
+    {
+      "observations": [
+        {
+          "cachePrivateKeyDetected": true,
+          "encodedPrivateKeyDetected": true,
+          "fabricEntrypointRan": true,
+          "fixtureFileRemoved": true,
+          "heapBytes": 306524536,
+          "heapPrivateKeyDetected": true,
+          "keyEncodingAvailable": true,
+          "liveHeapScanned": true,
+          "matchedRepresentations": [
+            "private_base64_0_ascii",
+            "private_base64_24_ascii",
+            "private_exponent_der"
+          ],
+          "minecraft": "26.2",
+          "mode": "direct",
+          "opaquePrivateKey": false,
+          "platform": "linux",
+          "schema": 1,
+          "wholeHeapScanned": false
+        },
+        {
+          "cachePrivateKeyDetected": false,
+          "encodedPrivateKeyDetected": false,
+          "fabricEntrypointRan": true,
+          "fixtureFileRemoved": true,
+          "heapBytes": 306266959,
+          "heapPrivateKeyDetected": false,
+          "keyEncodingAvailable": false,
+          "liveHeapScanned": true,
+          "matchedRepresentations": [],
+          "minecraft": "26.2",
+          "mode": "brokered",
+          "opaquePrivateKey": true,
+          "platform": "linux",
+          "schema": 1,
+          "wholeHeapScanned": false
+        }
+      ],
+      "probeSha256": "5fda37647a2a702f3580c61d8d9c17755099924f9ec5c311ad75957bd25f9325",
+      "schema": 1,
+      "scope": "public synthetic RSA fixture, binary private exponent and Base64/UTF-16 representations; live Java heap only; no real accounts"
+    }
+  ],
+  "productionFactoryRegression": {
+    "agentAdapterPresent": true,
+    "brokerHandshakeCompleted": true,
+    "chatAdapterPresent": true,
+    "completedSurfaces": [
+      "environment",
+      "game_files",
+      "game_object_fields",
+      "jvm_arguments",
+      "live_java_heap_dump",
+      "native_launcher_memory",
+      "system_properties",
+      "user_session"
+    ],
+    "credentialKind": "random synthetic canary; no account credentials",
+    "detectedSurfaces": [],
+    "fabricEntrypointRan": true,
+    "heapDumpBytes": 308401597,
+    "launcherMemoryReadAllowed": false,
+    "launcherMemoryReadError": 5,
+    "legacyProfileKeyCacheVisible": false,
+    "liveJavaHeapDumpScanned": true,
+    "minecraft": "26.2",
+    "mode": "brokered-network-denied",
+    "nativeControlPassed": true,
+    "nativeMemoryProbeRan": true,
+    "nativeSelfReadAllowed": true,
+    "nativeSelfReadError": 0,
+    "objectsVisited": 1852,
+    "platform": "macos",
+    "probeSha256": "7dbc6b046ce17f6c27c29e9358c0b324518cad51733b9f2f50f00df0d1793c1a",
+    "sandboxed": true,
+    "schema": 1,
+    "tokenDetected": false,
+    "unavailableSurfaces": ["process_arguments"],
+    "wholeHeapScanned": false
+  }
+}

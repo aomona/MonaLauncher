@@ -13,19 +13,30 @@ use crate::sandbox::{Backend, Resource, SandboxPolicy};
 pub struct SeatbeltProcess {
     child: Child,
     launch_root: PathBuf,
+    auth_broker: Option<crate::auth::broker::channel::BrokerGuard>,
 }
 
 impl SeatbeltProcess {
+    pub(crate) fn retain_auth_broker(&mut self, broker: crate::auth::broker::channel::BrokerGuard) {
+        self.auth_broker = Some(broker);
+    }
     pub fn id(&self) -> u32 {
         self.child.id()
     }
     pub fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
-        self.child.try_wait()
+        let status = self.child.try_wait()?;
+        if status.is_some() {
+            self.auth_broker.take();
+        }
+        Ok(status)
     }
     pub fn wait(&mut self) -> io::Result<ExitStatus> {
-        self.child.wait()
+        let status = self.child.wait()?;
+        self.auth_broker.take();
+        Ok(status)
     }
     pub fn kill(&mut self) -> io::Result<()> {
+        self.auth_broker.take();
         // The child owns a fresh process group. Do not signal a possibly reused ID after reaping.
         if self.child.try_wait()?.is_some() {
             return Ok(());
@@ -119,7 +130,11 @@ pub fn spawn(
     launch_root: PathBuf,
 ) -> io::Result<SeatbeltProcess> {
     let child = command.args(arguments).spawn()?;
-    Ok(SeatbeltProcess { child, launch_root })
+    Ok(SeatbeltProcess {
+        child,
+        launch_root,
+        auth_broker: None,
+    })
 }
 
 #[cfg(test)]

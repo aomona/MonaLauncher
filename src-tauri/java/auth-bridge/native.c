@@ -1,0 +1,85 @@
+#include <jni.h>
+#include <stdint.h>
+#include <stdio.h>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <errno.h>
+#include <fcntl.h>
+#include <poll.h>
+#include <unistd.h>
+#endif
+
+static void fail(JNIEnv *env) {
+    jclass exception = (*env)->FindClass(env, "java/io/IOException");
+    if (exception) (*env)->ThrowNew(env, exception, "Authentication IPC unavailable");
+}
+
+JNIEXPORT void JNICALL Java_me_aomona_auth_NativeIO_prepare(JNIEnv *env, jclass type, jlong handle) {
+    (void) type;
+#ifdef _WIN32
+    DWORD kind = GetFileType((HANDLE)(intptr_t)handle);
+    if (kind != FILE_TYPE_PIPE || !SetHandleInformation((HANDLE)(intptr_t)handle, HANDLE_FLAG_INHERIT, 0)) {
+        DWORD code = GetLastError();
+        char message[128];
+        snprintf(message, sizeof(message), "Authentication IPC prepare failed: win32=%lu type=%lu", (unsigned long)code, (unsigned long)kind);
+        jclass exception = (*env)->FindClass(env, "java/io/IOException");
+        if (exception) (*env)->ThrowNew(env, exception, message);
+    }
+#else
+    if (handle < 0 || handle > INT32_MAX) { fail(env); return; }
+    int flags = fcntl((int)handle, F_GETFL);
+    if (flags < 0 || fcntl((int)handle, F_SETFD, FD_CLOEXEC) < 0
+        || fcntl((int)handle, F_SETFL, flags | O_NONBLOCK) < 0) fail(env);
+#endif
+}
+
+static jint transfer(JNIEnv *env, jlong handle, jbyteArray array, jint offset, jint count, int writing) {
+    if (!array || offset < 0 || count < 0 || count > 262144 || offset > (*env)->GetArrayLength(env, array) - count) {
+        fail(env); return -1;
+    }
+    jbyte *bytes = (*env)->GetByteArrayElements(env, array, NULL);
+    if (!bytes) return -1;
+    int result = -1;
+#ifdef _WIN32
+    HANDLE pipe = (HANDLE)(intptr_t)handle;
+    OVERLAPPED operation = {0};
+    operation.hEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
+    if (operation.hEvent) {
+        DWORD completed = 0;
+        BOOL ok = writing ? WriteFile(pipe, bytes + offset, (DWORD)count, NULL, &operation)
+                          : ReadFile(pipe, bytes + offset, (DWORD)count, NULL, &operation);
+        if (ok || GetLastError() == ERROR_IO_PENDING) {
+            DWORD wait = WaitForSingleObject(operation.hEvent, 35000);
+            if (wait != WAIT_OBJECT_0) {
+                CancelIoEx(pipe, &operation);
+                /* Keep both the OVERLAPPED and Java buffer alive until cancellation completes. */
+                GetOverlappedResult(pipe, &operation, &completed, TRUE);
+            } else if (GetOverlappedResult(pipe, &operation, &completed, TRUE)) {
+                result = (int)completed;
+            }
+        }
+        CloseHandle(operation.hEvent);
+    }
+#else
+    struct pollfd fd = { .fd = (int)handle, .events = writing ? POLLOUT : POLLIN, .revents = 0 };
+    int ready;
+    do { ready = poll(&fd, 1, 35000); } while (ready < 0 && errno == EINTR);
+    if (ready > 0) {
+        ssize_t size;
+        do { size = writing ? write((int)handle, bytes + offset, (size_t)count)
+                            : read((int)handle, bytes + offset, (size_t)count); } while (size < 0 && errno == EINTR);
+        result = (int)size;
+    }
+#endif
+    (*env)->ReleaseByteArrayElements(env, array, bytes, writing ? JNI_ABORT : 0);
+    if (result <= 0) { fail(env); return -1; }
+    return result;
+}
+
+JNIEXPORT jint JNICALL Java_me_aomona_auth_NativeIO_read(JNIEnv *env, jclass type, jlong handle, jbyteArray bytes, jint offset, jint count) {
+    (void) type; return transfer(env, handle, bytes, offset, count, 0);
+}
+JNIEXPORT jint JNICALL Java_me_aomona_auth_NativeIO_write(JNIEnv *env, jclass type, jlong handle, jbyteArray bytes, jint offset, jint count) {
+    (void) type; return transfer(env, handle, bytes, offset, count, 1);
+}

@@ -73,6 +73,8 @@ pub struct AssetObject {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Library {
+    #[serde(default)]
+    pub name: String,
     pub downloads: LibraryDownloads,
     pub rules: Option<Vec<Rule>>,
     pub natives: Option<HashMap<String, String>>,
@@ -362,6 +364,7 @@ mod tests {
             url: "https://example.invalid/native.jar".to_owned(),
         };
         let library = Library {
+            name: "org.lwjgl:lwjgl:3.3.3".into(),
             downloads: LibraryDownloads {
                 artifact: None,
                 classifiers: HashMap::from([("natives-windows-64".to_owned(), native)]),

@@ -1,5 +1,11 @@
 import { useId, useState } from "react";
-import { permissionDefault, permissionGroups, unavailableReason } from "./permissionDefinitions";
+import {
+  permissionDefault,
+  permissionGroups,
+  permissionValue,
+  withPermission,
+  unavailableReason,
+} from "./permissionDefinitions";
 import type { Launcher } from "../../../app/useLauncher";
 import { Button } from "../../../components/Button";
 import { ErrorMessage } from "../../../components/ErrorMessage";
@@ -41,7 +47,7 @@ export function PermissionsPanel({
     if (disabled || saving) return;
     setSaving(key);
     setFailed(null);
-    const ok = await onSave({ ...instance.permissions, [key]: value });
+    const ok = await onSave(withPermission(instance.permissions, key, value));
     setSaving(null);
     if (!ok) setFailed({ key, value });
   };
@@ -81,7 +87,7 @@ export function PermissionsPanel({
             const incompatible =
               unavailable &&
               l.permissionSupport?.editable &&
-              instance.permissions[key] !== permissionDefault(key);
+              permissionValue(instance.permissions, key) !== permissionDefault(key);
             const dependency =
               item.file && !instance.permissions.gameWrite
                 ? "ゲーム全体の書き込みがOFFのため、読み取り専用です。"
@@ -141,7 +147,7 @@ export function PermissionsPanel({
                       ? "個別制御未対応"
                       : item.file && !instance.permissions.gameWrite
                         ? "読み取り専用"
-                        : instance.permissions[key]
+                        : permissionValue(instance.permissions, key)
                           ? "許可"
                           : "不許可"}
                   </span>
@@ -151,7 +157,7 @@ export function PermissionsPanel({
                       aria-labelledby={`${id}-${key}-label`}
                       aria-describedby={`${id}-${key}-description${failed?.key === key ? ` ${id}-${key}-error` : ""}`}
                       aria-invalid={failed?.key === key || undefined}
-                      checked={instance.permissions[key]}
+                      checked={permissionValue(instance.permissions, key)}
                       disabled={disabled || Boolean(dependency)}
                       onCheckedChange={(value) => void save(key, value)}
                     />

@@ -92,10 +92,11 @@ impl From<reqwest::Error> for MinecraftAuthError {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct MinecraftSession {
     pub player_name: String,
     pub uuid: String,
+    pub access_token: String,
     pub expires_in: Duration,
 }
 
@@ -194,6 +195,7 @@ impl MinecraftServicesClient {
         Ok(MinecraftSession {
             player_name: profile.name,
             uuid: profile.id,
+            access_token: minecraft.access_token,
             expires_in: Duration::from_secs(minecraft.expires_in),
         })
     }

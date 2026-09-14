@@ -1,0 +1,1 @@
+`test-only-chat-key.pk8` is a locally generated, synthetic 2048-bit RSA PKCS#8 key used only by tests. It has no account or Mojang certificate and is intentionally public. Never use it for production authentication. The tests synthesize the accompanying public key and an explicitly invalid issuer signature; verification against Mojang is outside these unit fixtures.

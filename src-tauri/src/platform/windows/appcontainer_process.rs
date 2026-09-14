@@ -59,6 +59,7 @@ pub struct SpawnedAppContainerProcess {
     sandbox_drive: Option<SandboxDrive>,
     cursor_broker: Option<Arc<CursorBroker>>,
     cleanup_directory: Option<PathBuf>,
+    auth_broker: Option<crate::auth::broker::channel::BrokerGuard>,
     pub token_info: ProcessTokenInfo,
 }
 
@@ -81,6 +82,10 @@ impl SpawnedAppContainerProcess {
 
     pub fn retain_cursor_broker(&mut self, broker: Arc<CursorBroker>) {
         self.cursor_broker = Some(broker);
+    }
+
+    pub(crate) fn retain_auth_broker(&mut self, broker: crate::auth::broker::channel::BrokerGuard) {
+        self.auth_broker = Some(broker);
     }
 
     pub fn retain_cleanup_directory(&mut self, directory: PathBuf) {
@@ -133,6 +138,7 @@ impl Drop for SpawnedAppContainerProcess {
         if primary_was_running {
             let _ = self.wait();
         }
+        self.auth_broker.take();
         self.cursor_broker.take();
         self.sandbox_drive.take();
         if let Some(directory) = self.cleanup_directory.take() {
@@ -205,6 +211,7 @@ pub(crate) fn launch_with_policy(
     arguments: &[OsString],
     current_directory: &Path,
     policy: &crate::sandbox::SandboxPolicy,
+    broker: Option<&crate::auth::broker::channel::PreparedBroker>,
 ) -> Result<SpawnedAppContainerProcess, AppContainerProcessError> {
     // Validate the shared policy before assigning explicit network capabilities.
     policy
@@ -216,6 +223,7 @@ pub(crate) fn launch_with_policy(
         arguments,
         current_directory,
         policy.network == crate::sandbox::NetworkAccess::Internet,
+        broker,
     )
 }
 
@@ -231,15 +239,17 @@ pub fn launch_in_appcontainer(
         arguments,
         current_directory,
         false,
+        None,
     )
 }
 
-fn launch_with_network(
+pub(crate) fn launch_with_network(
     profile_name: &str,
     executable: &Path,
     arguments: &[OsString],
     current_directory: &Path,
     network: bool,
+    broker: Option<&crate::auth::broker::channel::PreparedBroker>,
 ) -> Result<SpawnedAppContainerProcess, AppContainerProcessError> {
     if executable.as_os_str().is_empty() {
         return Err(AppContainerProcessError::EmptyExecutablePath);
@@ -289,8 +299,12 @@ fn launch_with_network(
 
     let stdout_pipe = Pipe::new()?;
     let stderr_pipe = Pipe::new()?;
-    let inherited_handles = [stdout_pipe.write_handle(), stderr_pipe.write_handle()];
-    // SAFETY: both handles are valid, explicitly inheritable pipe write ends. The array remains
+    let mut inherited_handles = vec![stdout_pipe.write_handle(), stderr_pipe.write_handle()];
+    if let Some(broker) = broker {
+        use std::os::windows::io::AsRawHandle;
+        inherited_handles.push(HANDLE(broker.child_handle().as_raw_handle()));
+    }
+    // SAFETY: all handles are valid, explicitly inheritable child pipe endpoints. The array remains
     // alive until CreateProcessW returns and prevents unrelated inheritable parent handles from
     // crossing the AppContainer boundary.
     unsafe {
@@ -299,7 +313,7 @@ fn launch_with_network(
             0,
             PROC_THREAD_ATTRIBUTE_HANDLE_LIST as usize,
             Some(inherited_handles.as_ptr().cast_mut().cast()),
-            size_of_val(&inherited_handles),
+            size_of_val(inherited_handles.as_slice()),
             None,
             None,
         )?;
@@ -374,6 +388,7 @@ fn launch_with_network(
         sandbox_drive: None,
         cursor_broker: None,
         cleanup_directory: None,
+        auth_broker: None,
         token_info,
     })
 }

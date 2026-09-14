@@ -10,14 +10,139 @@ fn main() {
     println!("cargo:rerun-if-changed=java/cursor-agent");
     println!("cargo:rerun-if-changed=java/cursor-agent-smoke");
     println!("cargo:rerun-if-env-changed=MONALAUNCHER_MICROSOFT_CLIENT_ID");
+    println!("cargo:rerun-if-changed=java/auth-bridge");
+    println!("cargo:rerun-if-changed=java/auth-bridge-smoke");
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     if matches!(target_os.as_str(), "windows" | "macos" | "linux") {
         build_narrator_bridge();
+        build_auth_bridge(&target_os);
     }
     if target_os == "windows" {
         build_cursor_agent();
     }
     tauri_build::build()
+}
+
+fn build_auth_bridge(target_os: &str) {
+    let output = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR is set"));
+    let classes = output.join("auth-bridge-classes");
+    std::fs::create_dir_all(&classes).expect("create auth bridge classes");
+    let java = Command::new("java")
+        .args(["-XshowSettings:properties", "-version"])
+        .output()
+        .expect("Java development kit required");
+    let settings = String::from_utf8_lossy(&java.stderr);
+    let java_home = settings
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("java.home = "))
+        .map(PathBuf::from)
+        .expect("Java home is available");
+    let sources = [
+        "AuthAgent.java",
+        "AuthBridge.java",
+        "MethodAdapter.java",
+        "NativeIO.java",
+        "RemotePrivateKey.java",
+        "RemoteProvider.java",
+        "RemoteSignature.java",
+    ];
+    let status = Command::new("javac")
+        .args(["--release", "21", "-d"])
+        .arg(&classes)
+        .args(sources.map(|name| format!("java/auth-bridge/me/aomona/auth/{name}")))
+        .status()
+        .expect("compile authentication adapter");
+    assert!(
+        status.success(),
+        "authentication adapter compilation failed"
+    );
+    let manifest = output.join("auth-bridge-manifest.mf");
+    std::fs::write(
+        &manifest,
+        "Manifest-Version: 1.0\nPremain-Class: me.aomona.auth.AuthAgent\n\n",
+    )
+    .unwrap();
+    assert!(Command::new("jar")
+        .arg("cfm")
+        .arg(output.join("auth-bridge.jar"))
+        .arg(manifest)
+        .arg("-C")
+        .arg(&classes)
+        .arg("me/aomona/auth/AuthAgent.class")
+        .arg("-C")
+        .arg(&classes)
+        .arg("me/aomona/auth/AuthAgent$1.class")
+        .arg("-C")
+        .arg(&classes)
+        .arg("me/aomona/auth/MethodAdapter.class")
+        .status()
+        .unwrap()
+        .success());
+    assert!(Command::new("jar")
+        .arg("cf")
+        .arg(output.join("auth-bootstrap.jar"))
+        .arg("-C")
+        .arg(&classes)
+        .arg("me/aomona/auth/AuthBridge.class")
+        .arg("-C")
+        .arg(&classes)
+        .arg("me/aomona/auth/NativeIO.class")
+        .arg("-C")
+        .arg(&classes)
+        .arg("me/aomona/auth/RemotePrivateKey.class")
+        .arg("-C")
+        .arg(&classes)
+        .arg("me/aomona/auth/RemoteProvider.class")
+        .arg("-C")
+        .arg(&classes)
+        .arg("me/aomona/auth/RemoteSignature.class")
+        .status()
+        .unwrap()
+        .success());
+    let mut compiler = cc::Build::new();
+    compiler.include(java_home.join("include"));
+    compiler.include(java_home.join("include").join(if target_os == "windows" {
+        "win32"
+    } else if target_os == "macos" {
+        "darwin"
+    } else {
+        "linux"
+    }));
+    let tool = compiler.get_compiler();
+    let mut command = tool.to_command();
+    let native = if target_os == "windows" {
+        "auth-bridge.dll"
+    } else if target_os == "macos" {
+        "libauth-bridge.dylib"
+    } else {
+        "libauth-bridge.so"
+    };
+    if tool.is_like_msvc() {
+        command
+            .arg("/LD")
+            .arg("java/auth-bridge/native.c")
+            .arg(format!("/Fe:{}", output.join(native).display()));
+    } else {
+        command
+            .args([
+                "-shared",
+                "-fPIC",
+                "-Wall",
+                "-Wextra",
+                "-Werror",
+                "java/auth-bridge/native.c",
+                "-o",
+            ])
+            .arg(output.join(native));
+    }
+    assert!(
+        command
+            .status()
+            .expect("compile authentication IPC bridge")
+            .success(),
+        "authentication IPC bridge compilation failed"
+    );
+    println!("cargo:rustc-env=MONALAUNCHER_AUTH_NATIVE={native}");
 }
 
 fn build_cursor_agent() {

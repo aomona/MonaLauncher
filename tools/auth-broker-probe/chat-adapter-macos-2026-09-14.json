@@ -1,0 +1,80 @@
+{
+  "schema": 1,
+  "date": "2026-09-14",
+  "scope": "Synthetic token Fabric regression after chat adapter addition; no online server or chat certificate used in these game runs",
+  "observations": [
+    {
+      "agentAdapterPresent": true,
+      "brokerHandshakeCompleted": true,
+      "chatAdapterPresent": true,
+      "completedSurfaces": [
+        "environment",
+        "game_files",
+        "game_object_fields",
+        "jvm_arguments",
+        "live_java_heap_dump",
+        "system_properties",
+        "user_session"
+      ],
+      "credentialKind": "random synthetic canary; no account credentials",
+      "detectedSurfaces": [],
+      "fabricEntrypointRan": true,
+      "heapDumpBytes": 306702666,
+      "liveJavaHeapDumpScanned": true,
+      "minecraft": "1.21.8",
+      "mode": "brokered-network-denied",
+      "objectsVisited": 2229,
+      "platform": "macos",
+      "probeSha256": "f2531cdfea01e0a45fe80c8f8c8c0401eaf44f27cce25be23a6ee455df69418d",
+      "sandboxed": true,
+      "schema": 1,
+      "tokenDetected": false,
+      "unavailableSurfaces": ["process_arguments"],
+      "wholeHeapScanned": false
+    },
+    {
+      "agentAdapterPresent": true,
+      "brokerHandshakeCompleted": true,
+      "chatAdapterPresent": true,
+      "completedSurfaces": [
+        "environment",
+        "game_files",
+        "game_object_fields",
+        "jvm_arguments",
+        "live_java_heap_dump",
+        "system_properties",
+        "user_session"
+      ],
+      "credentialKind": "random synthetic canary; no account credentials",
+      "detectedSurfaces": [],
+      "fabricEntrypointRan": true,
+      "heapDumpBytes": 308766327,
+      "liveJavaHeapDumpScanned": true,
+      "minecraft": "26.2",
+      "mode": "brokered-network-denied",
+      "objectsVisited": 1852,
+      "platform": "macos",
+      "probeSha256": "f2531cdfea01e0a45fe80c8f8c8c0401eaf44f27cce25be23a6ee455df69418d",
+      "sandboxed": true,
+      "schema": 1,
+      "tokenDetected": false,
+      "unavailableSurfaces": ["process_arguments"],
+      "wholeHeapScanned": false
+    }
+  ],
+  "officialClassChatSmoke": [
+    {
+      "minecraft": "1.21.8",
+      "authlib": "6.0.58",
+      "java": "21.0.12.1",
+      "result": "passed"
+    },
+    {
+      "minecraft": "26.2",
+      "authlib": "9.0.75",
+      "java": "25.0.4.1",
+      "result": "passed"
+    }
+  ],
+  "chatSmokeScope": "Separate JVMs use official PlayerChatMessage, Signer, Crypt and authlib with test-only RSA key and real JNI/Unix IPC; issuer signature invalid; no official service traffic"
+}

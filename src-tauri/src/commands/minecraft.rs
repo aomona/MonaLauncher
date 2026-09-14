@@ -479,6 +479,7 @@ pub async fn launch_minecraft_instance(
         return Err("安全でない通常起動は無効です。インスタンスを再作成してください".to_owned());
     }
     let identity = if !instance.demo && has_microsoft_authorization().await? {
+        let generation = super::auth::authentication_generation(&auth_state);
         emit_launch_progress(
             &app,
             &instance_id,
@@ -486,9 +487,15 @@ pub async fn launch_minecraft_instance(
             "MicrosoftアカウントとMinecraftの所有権を確認しています…",
         );
         let session = acquire_minecraft_session(&auth_state).await?;
+        let broker = instance
+            .permissions
+            .account_authentication
+            .is_brokered()
+            .then(|| super::auth::broker_source(&auth_state, session.uuid.clone(), generation));
         Some(MinecraftIdentity {
             player_name: session.player_name,
             uuid: session.uuid,
+            broker,
         })
     } else {
         None
@@ -775,7 +782,6 @@ fn emit_launch_progress(app: &AppHandle, instance_id: &str, stage: &str, message
 #[cfg(test)]
 mod tests {
     use super::*;
-
     #[test]
     fn shared_installation_blocks_every_other_instance_operation() {
         let state = MinecraftRuntimeState::default();

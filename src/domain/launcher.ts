@@ -2,6 +2,7 @@ export type InstancePermissions = {
   gameWrite: boolean;
   narrator: boolean;
   network: boolean;
+  accountAuthentication: "disabled" | "brokered";
   audioOutput: boolean;
   microphone: boolean;
   clipboard: boolean;
@@ -20,6 +21,7 @@ export type InstancePermissions = {
 export type PermissionSupport = {
   platform: "windows" | "macos" | "linux" | "unsupported";
   editable: boolean;
+  accountAuthentication: boolean;
   audioOutput: boolean;
   microphone: boolean;
   clipboard: boolean;
