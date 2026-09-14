@@ -307,10 +307,11 @@ test("unsaved draft survives failed save and Escape closes one layer", async ({ 
   await expect(row.getByRole("button", { name: "Survivalを編集", exact: true })).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(page.getByRole("dialog", { name: "Survival", exact: true })).toBeVisible();
-  await expect(page.getByRole("tab", { name: "Settings", exact: true })).toHaveAttribute(
+  await expect(page.getByRole("tab", { name: "Overview", exact: true })).toHaveAttribute(
     "aria-selected",
     "true",
   );
+  await page.getByRole("tab", { name: "Settings", exact: true }).click();
   await page.getByLabel("表示名", { exact: false }).fill("Edited name");
   await page.keyboard.press("Escape");
   const guard = page.getByRole("dialog", { name: "未保存の変更があります" });

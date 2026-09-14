@@ -219,7 +219,7 @@ SortはLast Played（初期値）、Name、Created。Sortは各Group内に適用
 
 ### 7.2 Rowと長い文字
 
-標準は64px、Icon40px、Iconと本文の間12px。本文は名前＋補足の2行。右側はPlay、Edit、Menuの順に常設し、必要幅を先に確保する。Editは鉛筆アイコンのボタンとし、対象インスタンスのSettingsタブを直接開く。操作領域は36px以上、Accessible nameには対象名と編集操作を含める。
+標準は64px、Icon40px、Iconと本文の間12px。本文は名前＋補足の2行。右側はPlay、Edit、Menuの順に常設し、必要幅を先に確保する。Editは鉛筆アイコンのボタンとし、対象インスタンスのOverviewタブを直接開く。操作領域は36px以上、Accessible nameには対象名と編集操作を含める。
 
 補足はMinecraft version → Mod Loader → Mod件数 → Last Playedの順。横幅不足ではLast Played、次にMod件数を隠す。VersionとLoaderは可能な限り残す。名前は1行末尾省略し、Hover/FocusのTooltipおよびModalで全文を読めるようにする。文字を小さくして対応しない。
 

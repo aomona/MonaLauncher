@@ -64,7 +64,7 @@ export function InstanceList({
               className="icon-button"
               aria-label={`${item.name}を編集`}
               title="Edit"
-              onClick={() => openInstance(item, "Settings")}
+              onClick={() => openInstance(item, "Overview")}
             >
               <Pencil size={16} aria-hidden="true" />
             </Button>

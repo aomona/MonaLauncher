@@ -105,7 +105,7 @@ grid grid-cols-1 gap-4 @gallery-2:grid-cols-2 @gallery-3:grid-cols-3 @gallery-4:
 | -------------- | -------------------------------------------------------------------------------------------------------------------- |
 | Shell          | Sidebar240px、Main左揃え32px、900px未満はDrawerと16px。標準OSタイトルバー。4章                                       |
 | Home           | Now Playing → Recent Instances → Screenshots → News。Heroや統計Cardを追加しない。6章                                 |
-| Instances      | Row64px以上、Icon40px、Play・Edit・Menuを常設。EditはSettingsを開く。Group内Sort、Group間移動にはMenu代替を用意。7章 |
+| Instances      | Row64px以上、Icon40px、Play・Edit・Menuを常設。EditはOverviewを開く。Group内Sort、Group間移動にはMenu代替を用意。7章 |
 | Instance Modal | 周囲32px/狭幅16px、最大幅1200px、Header/Tabs/Footer固定、本文だけScroll。全11Tabへキーボード到達。8章                |
 | Modal / 編集   | Escは1イベント1レイヤー、Focusを閉じ込めて戻す。未保存Draftの保存/破棄ガード。9〜10章                                |
 | 処理           | Modal FooterとSidebarは同じ実状態を参照。閉じても処理取消にしない。架空の%や成功を表示しない。8・13章                |
