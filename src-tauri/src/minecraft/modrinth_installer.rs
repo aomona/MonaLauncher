@@ -11,7 +11,7 @@ use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha512};
 
-use super::file_io::{path_is_link_or_reparse, read_bounded_file, write_atomic};
+use super::file_io::{file_digest, path_is_link_or_reparse, read_bounded_file, write_atomic};
 use super::model::{InstanceManifest, ModLoader};
 use super::modrinth::{
     validate_identifier, ModrinthClient, ModrinthDependency, ModrinthError, ModrinthFile,
@@ -756,7 +756,7 @@ fn validate_file_conflicts(
         });
         if target.is_file()
             && !tracked_target
-            && file_sha512(&target)? != item.file.hashes.sha512.to_ascii_lowercase()
+            && file_digest::<Sha512>(&target)? != item.file.hashes.sha512.to_ascii_lowercase()
         {
             return Err(ModInstallError::FileNameConflict(
                 item.file.filename.clone(),
@@ -891,7 +891,7 @@ fn commit_installation(
                 continue;
             }
             let target = mods_directory.join(&old.file_name);
-            if target.is_file() && file_sha512(&target)? == old.sha512 {
+            if target.is_file() && file_digest::<Sha512>(&target)? == old.sha512 {
                 let backup = backups.join(format!("old-{index}-{}", old.file_name));
                 fs::rename(&target, &backup)?;
                 moved_backups.push((target, backup));
@@ -1010,7 +1010,7 @@ fn validate_tracked_mod_file(
     };
     if !metadata.is_file()
         || metadata.len() != installed.size
-        || file_sha512(path)? != installed.sha512
+        || file_digest::<Sha512>(path)? != installed.sha512
     {
         return Err(ModInstallError::ModifiedTrackedFile(
             installed.file_name.clone(),
@@ -1279,21 +1279,7 @@ fn validate_sha512(value: &str) -> Result<String, ModInstallError> {
 
 fn file_matches(path: &Path, file: &ModrinthFile) -> Result<bool, ModInstallError> {
     Ok(fs::metadata(path)?.len() == file.size
-        && file_sha512(path)? == file.hashes.sha512.to_ascii_lowercase())
-}
-
-fn file_sha512(path: &Path) -> Result<String, ModInstallError> {
-    let mut file = File::open(path)?;
-    let mut hasher = Sha512::new();
-    let mut buffer = [0_u8; 64 * 1024];
-    loop {
-        let count = file.read(&mut buffer)?;
-        if count == 0 {
-            break;
-        }
-        hasher.update(&buffer[..count]);
-    }
-    Ok(format!("{:x}", hasher.finalize()))
+        && file_digest::<Sha512>(path)? == file.hashes.sha512.to_ascii_lowercase())
 }
 
 fn sanitize_text(value: String, maximum: usize) -> String {

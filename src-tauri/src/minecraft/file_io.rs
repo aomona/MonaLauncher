@@ -1,7 +1,10 @@
+use std::fmt::Write as _;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+
+use sha2::digest::Digest;
 
 static TEMPORARY_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -38,6 +41,25 @@ pub fn read_bounded_file(path: &Path, maximum: u64) -> std::io::Result<Vec<u8>> 
         ));
     }
     Ok(bytes)
+}
+
+pub fn file_digest<D: Digest>(path: &Path) -> std::io::Result<String> {
+    let mut file = File::open(path)?;
+    let mut hasher = D::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let count = file.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        hasher.update(&buffer[..count]);
+    }
+    let digest = hasher.finalize();
+    let mut hexadecimal = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        write!(&mut hexadecimal, "{byte:02x}").expect("writing to a String cannot fail");
+    }
+    Ok(hexadecimal)
 }
 
 /// Writes a complete file and atomically publishes it at `path`.
@@ -169,6 +191,20 @@ mod tests {
         assert_eq!(
             read_bounded_file(&target, 4).unwrap_err().kind(),
             std::io::ErrorKind::InvalidData
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn hashes_file_contents() {
+        let directory = temporary_directory();
+        fs::create_dir_all(&directory).unwrap();
+        let target = directory.join("content.bin");
+        fs::write(&target, b"abc").unwrap();
+
+        assert_eq!(
+            file_digest::<sha1::Sha1>(&target).unwrap(),
+            "a9993e364706816aba3e25717850c26c9cd0d89d"
         );
         fs::remove_dir_all(directory).unwrap();
     }

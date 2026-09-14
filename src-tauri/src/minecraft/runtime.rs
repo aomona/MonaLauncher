@@ -11,7 +11,7 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use zip::ZipArchive;
 
-use super::file_io::replace_file_atomic;
+use super::file_io::{file_digest, replace_file_atomic};
 use super::model::InstallProgress;
 use super::paths::MinecraftPaths;
 
@@ -250,7 +250,7 @@ fn download_and_verify(
 ) -> Result<(), RuntimeInstallError> {
     let url = validate_download_url(url)?;
     let expected = validate_sha256(expected)?;
-    if target.is_file() && file_sha256(target)? == expected {
+    if target.is_file() && file_digest::<Sha256>(target)? == expected {
         return Ok(());
     }
 
@@ -290,20 +290,6 @@ fn download_and_verify(
     }
     replace_file_atomic(&part, target)?;
     Ok(())
-}
-
-fn file_sha256(path: &Path) -> Result<String, RuntimeInstallError> {
-    let mut input = File::open(path)?;
-    let mut hasher = Sha256::new();
-    let mut buffer = [0_u8; 64 * 1024];
-    loop {
-        let count = input.read(&mut buffer)?;
-        if count == 0 {
-            break;
-        }
-        hasher.update(&buffer[..count]);
-    }
-    Ok(format!("{:x}", hasher.finalize()))
 }
 
 fn extract_archive(archive: &Path, destination: &Path) -> Result<(), RuntimeInstallError> {

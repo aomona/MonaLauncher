@@ -16,7 +16,7 @@ use sha1::{Digest, Sha1};
 
 use super::fabric::{install_fabric, FabricError};
 use super::file_io::{
-    path_is_link_or_reparse, read_bounded_file, replace_file_atomic, write_atomic,
+    file_digest, path_is_link_or_reparse, read_bounded_file, replace_file_atomic, write_atomic,
 };
 use super::model::{
     rules_allow, AssetIndex, DownloadInfo, InstallProgress, InstanceManifest, ModLoader,
@@ -737,7 +737,7 @@ fn download_file(client: &Client, task: &DownloadTask) -> Result<(), MinecraftIn
 
     if task.target.is_file()
         && fs::metadata(&task.target)?.len() == task.size
-        && file_sha1(&task.target)? == expected_sha1
+        && file_digest::<Sha1>(&task.target)? == expected_sha1
     {
         return Ok(());
     }
@@ -933,24 +933,6 @@ fn verify_bytes_sha1(
     }
 
     Ok(())
-}
-
-fn file_sha1(path: &Path) -> Result<String, MinecraftInstallError> {
-    let mut file = File::open(path)?;
-    let mut hasher = Sha1::new();
-    let mut buffer = [0_u8; 64 * 1024];
-
-    loop {
-        let count = file.read(&mut buffer)?;
-
-        if count == 0 {
-            break;
-        }
-
-        hasher.update(&buffer[..count]);
-    }
-
-    Ok(format!("{:x}", hasher.finalize()))
 }
 
 fn safe_metadata_join(root: &Path, relative: &str) -> Result<PathBuf, MinecraftInstallError> {

@@ -1,14 +1,13 @@
 use std::collections::{BTreeMap, HashMap};
-use std::fs::{self, File};
-use std::io::Read;
+use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 use rayon::prelude::*;
 use serde::Serialize;
-use sha1::{Digest, Sha1};
+use sha1::Sha1;
 
 use super::fabric::{load_fabric_profile, maven_artifact_path, validate_profile};
-use super::file_io::{path_is_link_or_reparse, read_bounded_file};
+use super::file_io::{file_digest, path_is_link_or_reparse, read_bounded_file};
 use super::installer::{load_instance, managed_java_major, MinecraftInstallError};
 use super::model::{rules_allow, AssetIndex, ModLoader, VersionMetadata};
 use super::paths::MinecraftPaths;
@@ -280,7 +279,7 @@ fn check_file(file: &ManagedFile) -> Result<FileState, MinecraftInstallError> {
         }
     }
     if let Some(expected) = &file.sha1 {
-        if file_sha1(&file.path)? != expected.to_ascii_lowercase() {
+        if file_digest::<Sha1>(&file.path)? != expected.to_ascii_lowercase() {
             return Ok(FileState::Corrupt);
         }
     }
@@ -327,20 +326,6 @@ fn validate_asset_hash(hash: &str) -> Result<(), MinecraftInstallError> {
         return Err(MinecraftInstallError::InvalidAssetHash(hash.to_owned()));
     }
     Ok(())
-}
-
-fn file_sha1(path: &Path) -> Result<String, MinecraftInstallError> {
-    let mut file = File::open(path)?;
-    let mut hasher = Sha1::new();
-    let mut buffer = [0_u8; 64 * 1024];
-    loop {
-        let count = file.read(&mut buffer)?;
-        if count == 0 {
-            break;
-        }
-        hasher.update(&buffer[..count]);
-    }
-    Ok(format!("{:x}", hasher.finalize()))
 }
 
 #[cfg(test)]

@@ -10,7 +10,7 @@ use reqwest::{StatusCode, Url};
 use serde::{Deserialize, Serialize};
 use sha1::{Digest, Sha1};
 
-use super::file_io::{read_bounded_file, replace_file_atomic, write_atomic};
+use super::file_io::{file_digest, read_bounded_file, replace_file_atomic, write_atomic};
 use super::model::{Argument, ArgumentValue, Arguments, InstallProgress};
 use super::paths::MinecraftPaths;
 
@@ -538,7 +538,7 @@ fn install_library(
     let target = paths.libraries().join(&relative);
 
     if target.is_file()
-        && file_sha1(&target)? == expected_sha1
+        && file_digest::<Sha1>(&target)? == expected_sha1
         && library
             .size
             .is_none_or(|expected| fs::metadata(&target).is_ok_and(|item| item.len() == expected))
@@ -678,20 +678,6 @@ fn part_path_for(target: &Path) -> PathBuf {
         .unwrap_or_else(|| "fabric-library".into());
     name.push(".part");
     target.with_file_name(name)
-}
-
-fn file_sha1(path: &Path) -> Result<String, FabricError> {
-    let mut file = File::open(path)?;
-    let mut hasher = Sha1::new();
-    let mut buffer = [0_u8; 64 * 1024];
-    loop {
-        let count = file.read(&mut buffer)?;
-        if count == 0 {
-            break;
-        }
-        hasher.update(&buffer[..count]);
-    }
-    Ok(format!("{:x}", hasher.finalize()))
 }
 
 #[cfg(test)]
