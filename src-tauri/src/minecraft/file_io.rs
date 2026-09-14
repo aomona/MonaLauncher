@@ -155,36 +155,23 @@ pub fn path_is_link_or_reparse(path: &Path) -> std::io::Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    fn temporary_directory() -> PathBuf {
-        std::env::temp_dir().join(format!(
-            "monalauncher-file-io-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ))
-    }
 
     #[test]
     fn atomically_replaces_existing_content() {
-        let directory = temporary_directory();
-        fs::create_dir_all(&directory).unwrap();
+        let temporary = tempfile::tempdir().unwrap();
+        let directory = temporary.path();
         let target = directory.join("state.json");
         write_atomic(&target, b"old").unwrap();
         write_atomic(&target, b"new state").unwrap();
 
         assert_eq!(read_bounded_file(&target, 32).unwrap(), b"new state");
-        assert_eq!(fs::read_dir(&directory).unwrap().count(), 1);
-        fs::remove_dir_all(directory).unwrap();
+        assert_eq!(fs::read_dir(directory).unwrap().count(), 1);
     }
 
     #[test]
     fn rejects_files_over_the_limit() {
-        let directory = temporary_directory();
-        fs::create_dir_all(&directory).unwrap();
+        let temporary = tempfile::tempdir().unwrap();
+        let directory = temporary.path();
         let target = directory.join("large.bin");
         fs::write(&target, b"12345").unwrap();
 
@@ -192,13 +179,12 @@ mod tests {
             read_bounded_file(&target, 4).unwrap_err().kind(),
             std::io::ErrorKind::InvalidData
         );
-        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
     fn hashes_file_contents() {
-        let directory = temporary_directory();
-        fs::create_dir_all(&directory).unwrap();
+        let temporary = tempfile::tempdir().unwrap();
+        let directory = temporary.path();
         let target = directory.join("content.bin");
         fs::write(&target, b"abc").unwrap();
 
@@ -206,6 +192,5 @@ mod tests {
             file_digest::<sha1::Sha1>(&target).unwrap(),
             "a9993e364706816aba3e25717850c26c9cd0d89d"
         );
-        fs::remove_dir_all(directory).unwrap();
     }
 }
