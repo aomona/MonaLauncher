@@ -1,65 +1,68 @@
 # MonaLauncher
 
-Windows AppContainer内でMinecraftを実行する、開発中のランチャーです。ゲームプロセスにはネットワークCapabilityを付与せず、インスタンス専用のファイル領域だけへアクセスを限定します。
+MonaLauncherは、Minecraft Java EditionをOSのサンドボックス内で実行する、開発中のランチャーです。ゲームとModによるファイルアクセスや通信を、インスタンスごとの権限設定で制限します。
 
-macOSではSeatbeltによる実験的な起動にも対応しています。Minecraft 1.21.8デモ版のタイトル画面まで確認済みです。[macOSの起動手順・制限・検証結果](docs/macos-seatbelt.md)を参照してください。
+バックエンドはTauri 2 / Rust、フロントエンドはReact / TypeScript / Viteを使用しています。
 
-## Windowsのセキュリティ境界
+## 主な機能
 
-- MinecraftとModは専用AppContainer SIDで実行し、ネットワークCapabilityを付与しません。そのため、現状はマルチプレイ、Realmsなどゲーム側の通信機能を利用できません。
-- 共有ライブラリ、Java、起動メタデータ、インスタンス設定は読み取り専用です。書き込みを許可するのはゲームデータと起動ごとの一時ディレクトリだけです。
-- ゲームデータ内のジャンクションやシンボリックリンクをホスト側のMod管理に利用できないよう、再解析ポイントを拒否します。
-- 子プロセスはkill-on-close Job Objectへ、停止状態のまま割り当ててから開始します。通常終了だけでなく、ランチャーが異常終了した場合もプロセスツリーを残しません。
-- OAuthのdevice code、更新トークン、MicrosoftアクセストークンはReactやゲーム／Modプロセスへ渡しません。Minecraftアクセストークンとチャット秘密鍵はRust側に保持し、ゲーム／Modには渡しません。インスタンスのPermissionsで「アカウント認証の仲介」をONにすると、ゲームには固定の無効トークンを渡し、必要な認証・署名操作をランチャーが仲介します（既定OFF）。更新トークンはWindows資格情報マネージャーへ保存します。外部応答、アーカイブ、ダウンロード、ローカル設定には件数・サイズ・パス・配布元の検証を行います。
+- **インスタンス管理**: Vanilla・Fabricのインスタンスを作成し、Minecraftを起動できます。
+- **Mod管理**: Fabricインスタンス向けに、ModrinthのModを検索・導入・管理できます。
+- **権限設定**: インスタンスのPermissionsから、ゲームデータへの書き込み、通信、対応OSでの音声・マイク・クリップボードなどを設定できます。
+- **Microsoft認証**: ブラウザーでのサインインと、対応構成でのゲーム認証の仲介を実装しています。
+- **ニュース**: HomeとNewsで記事を閲覧できます。MonaLauncherの記事はアプリ内で開き、取得済みの本文はオフラインでも読めます。
 
-実装上の境界は次のコマンドで回帰確認できます。
+## 対応OSと制限
 
-```powershell
-pnpm check
-cd src-tauri
-cargo test --all-targets --all-features --locked
-cargo clippy --all-targets --all-features --locked -- -D warnings
-cargo run --locked --bin sandbox_probe -- --appcontainer
-cargo run --locked --bin sandbox_probe -- --acl
-```
+| OS      | サンドボックス       | 制限・検証資料                                                                                                             |
+| ------- | -------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| Windows | AppContainer         | [共通ポリシー](docs/sandbox-policy.md)・[CIの確認範囲](docs/ci.md)。通信ON/OFFの実接続は通常CIの対象外です。               |
+| macOS   | Seatbelt             | [起動手順・実機検証記録](docs/macos-seatbelt.md)。実験的な対応で、Windowsと同じプロセス終了保証はありません。              |
+| Linux   | bubblewrap / seccomp | [依存関係・検証手順](tools/linux-validation/README.md)。トークン保存は未対応で、デスクトップ環境によって制限が異なります。 |
 
-## Microsoft認証の開発設定
+権限制御の対象はゲームプロセス全体です。同じゲーム内のModを個別に識別して隔離するものではありません。
 
-MonaLauncherはデスクトップのpublic clientとしてMicrosoft Device Code Flowを使用します。クライアントシークレットは使用しません。
+- ゲーム自身の通信は既定でOFFです。PermissionsからONにできますが、アカウント認証の仲介は別の設定です。通信を許可しただけで、マルチプレイやRealmsが動作するとは限りません。
+- 管理下のJava・ライブラリ・アセットは読み取り専用とし、ゲームデータなどの指定領域に書き込みを限定します。OSの互換動作に必要な追加許可や、音声・クリップボードの制限にはOS差があります。
+- 未対応の権限要求やサンドボックスの起動失敗はエラーにします。非サンドボックス起動へのフォールバックは行いません。
 
-1. Microsoft Entraでアプリを登録し、個人用Microsoftアカウントを対象に含めます。
-2. 「パブリック クライアント フローを許可する」を有効にします。
-3. アプリケーション（クライアント）IDをMonaLauncherの既定IDとして設定します。
+各OSの許可範囲と終了処理の違いは[共通サンドボックスポリシー](docs/sandbox-policy.md)を参照してください。CIや特定環境での検証は、すべてのMinecraft・Mod・OS構成での動作や安全性を保証するものではありません。
 
-```powershell
-$env:MONALAUNCHER_MICROSOFT_CLIENT_ID = "別の開発用クライアントID"
+## 開発環境で起動する
+
+事前に次を用意してください。
+
+- mise（Node.js・pnpmのバージョンは[mise.toml](mise.toml)で固定）。
+- rustup（Rustのバージョンと追加コンポーネントは[rust-toolchain.toml](rust-toolchain.toml)で指定）。
+- JDK 21。`java`・`javac`・`jar`をPATHから実行できる状態にします。ゲーム用とは別に、同梱するJavaブリッジのビルドに必要です。
+- [Tauri 2のOS別ビルド依存関係](https://v2.tauri.app/start/prerequisites/)。Linuxでゲームを起動する場合は、追加の[依存関係とAppArmor設定](tools/linux-validation/README.md)も確認してください。
+
+このリポジトリを取得したディレクトリで実行します。
+
+```sh
+mise install
+mise exec -- pnpm install --frozen-lockfile
 mise run dev
 ```
 
-既定ではMonaLauncher用の公開クライアントID `f8d68570-e721-4aba-9c3e-1052d41e431a` がビルドへ組み込まれているため、環境変数の設定は不要です。環境変数は別のアプリ登録で開発するときの上書き用です。Microsoftのアクセストークン、device code、更新トークンはReactへ返さず、Microsoftアクセストークンはゲーム／Modにも渡しません。Minecraftアクセストークンとチャット秘密鍵はRust側に保持します。「アカウント認証の仲介」がONのインスタンスには固定の無効トークンと起動ごとのIPCを渡し、ランチャーが認証・署名操作を仲介します（既定OFF、デモ・未ログイン時は対象外）。ネットワーク通信は別の権限です。更新トークンはWindowsでは現在のユーザーの資格情報マネージャー、macOSではキーチェーンへ保存します。Linuxのトークン保存は未対応です。
+`mise run dev`はTauriアプリを起動します。`pnpm dev`はフロントエンドの開発サーバーだけを起動します。配布物のビルドには`mise run build`を使います。
 
-ランチャーのアカウント設定からサインインを開始し、表示されたコードをブラウザーのMicrosoft認証画面で入力してください。macOSでは保存・読込・サインアウト時の削除にSecurity.frameworkを使用し、保存先を平文ファイルへ切り替えることはありません。
+Microsoft認証には既定の公開クライアントIDが組み込まれているため、通常は環境変数の設定や独自のアプリ登録は不要です。アカウント設定からサインインを開始し、表示されたコードをブラウザーで入力します。別のクライアントIDを使う場合や認証仲介の制限は[Microsoft認証の開発設定](docs/microsoft-auth.md)を参照してください。
 
-認証プロトコルについては、[Microsoft Device Code Flow](https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-device-code)を参照してください。
-
-Microsoft OAuth、Xbox Live、XSTS、Minecraft Services、Minecraftプロフィール取得までを実装しています。Microsoftアプリ登録がMinecraft Servicesで利用できない場合は、認証時に`Invalid app registration`が返されます。
-
-macOSでの認証接続・保存先の実機確認:
+## 検証
 
 ```sh
-cargo test --manifest-path src-tauri/Cargo.toml --lib --locked auth:: -- --include-ignored
+mise run check
+mise exec -- pnpm exec playwright install chromium
+mise exec -- pnpm test:ui
 ```
 
-この確認はMicrosoftからの認証コード取得とログイン待ち応答、キーチェーンの専用テスト項目の保存・更新・読込・削除を検証します。認証コードやトークンを出力・ファイル保存せず、既存のサインイン情報には触れません。2026-09-12に上記の既定IDとmacOSで成功を確認しました。ユーザーによるサインイン完了とMinecraft Servicesの利用可否は、このテストの確認範囲に含まれません。
+`mise run check`はフロントエンドとRustの整形・静的検査・テスト・フロントエンドビルドを実行します。`pnpm test:ui`はTauriをモックした画面操作の検証です。OS固有のプローブ、配布物と実ゲームの確認は[CIとリリース前の確認](docs/ci.md)を参照してください。
 
-## ニュースとRSS
+## 詳細資料
 
-`news/*.md` にYAML Front Matter付きMarkdownを追加して`dev`へpushすると、GitHub ActionsでRSSと記事HTMLを生成・公開できます。リリースまでは`dev`を公開対象とします。初回のPages設定、記事形式、URLの変更方法は[ニュース配信の手順](docs/news-feed.md)を参照してください。
-
-```sh
-pnpm generate:feed
-```
-
-RSS URL: `https://aomona.github.io/MonaLauncher/rss.xml`
-
-配信された記事はランチャーのHomeとNewsに表示し、MonaLauncherタブで絞り込めます。MonaLauncherの記事はクリックすると本文をモーダルで表示し、取得済み本文はオフラインでも読めます。配信元URLは`news.config.json`で生成側と共有しています。
+- [共通サンドボックスポリシー](docs/sandbox-policy.md)
+- [Microsoft認証の開発設定](docs/microsoft-auth.md)
+- [ニュースとRSSの配信手順](docs/news-feed.md)
+- [フロントエンドアーキテクチャ](docs/frontend-architecture.md)
+- [デザインの実装・検証ガイド](design/README.md)
