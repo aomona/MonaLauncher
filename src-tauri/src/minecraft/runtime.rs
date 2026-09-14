@@ -132,16 +132,6 @@ struct AdoptiumPackage {
     name: String,
 }
 
-pub fn install_java_21_runtime<F>(
-    paths: &MinecraftPaths,
-    progress: F,
-) -> Result<PathBuf, RuntimeInstallError>
-where
-    F: Fn(InstallProgress),
-{
-    install_java_runtime(paths, 21, progress)
-}
-
 pub fn install_java_25_runtime<F>(
     paths: &MinecraftPaths,
     progress: F,
@@ -150,16 +140,6 @@ where
     F: Fn(InstallProgress),
 {
     install_java_runtime(paths, 25, progress)
-}
-
-pub fn install_java_8_runtime<F>(
-    paths: &MinecraftPaths,
-    progress: F,
-) -> Result<PathBuf, RuntimeInstallError>
-where
-    F: Fn(InstallProgress),
-{
-    install_java_runtime(paths, 8, progress)
 }
 
 pub fn install_java_runtime<F>(

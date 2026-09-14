@@ -317,44 +317,6 @@ where
     )
 }
 
-pub fn install_latest_sandbox_demo_instance<F>(
-    paths: &MinecraftPaths,
-    instance_id: &str,
-    instance_name: &str,
-    java_path: &Path,
-    progress: F,
-) -> Result<InstanceManifest, MinecraftInstallError>
-where
-    F: Fn(InstallProgress) + Send + Sync,
-{
-    install_latest_sandbox_instance(paths, instance_id, instance_name, java_path, true, progress)
-}
-
-pub fn install_latest_sandbox_instance<F>(
-    paths: &MinecraftPaths,
-    instance_id: &str,
-    instance_name: &str,
-    java_path: &Path,
-    demo: bool,
-    progress: F,
-) -> Result<InstanceManifest, MinecraftInstallError>
-where
-    F: Fn(InstallProgress) + Send + Sync,
-{
-    install_instance_from_manifest(
-        paths,
-        instance_id,
-        instance_name,
-        java_path,
-        InstanceInstallOptions {
-            requested_version: None,
-            demo,
-            mod_loader: ModLoader::Vanilla,
-        },
-        progress,
-    )
-}
-
 pub fn list_available_versions() -> Result<VersionManifest, MinecraftInstallError> {
     let client = minecraft_client()?;
     let mut manifest = fetch_json(&client, VERSION_MANIFEST_URL)?;
