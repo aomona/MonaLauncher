@@ -82,4 +82,4 @@ cargo run --manifest-path src-tauri/Cargo.toml --locked --example macos_narrator
 - [Adoptium API cookbook](https://github.com/adoptium/api.adoptium.net/blob/main/docs/cookbook.adoc): OS/CPU別ランタイム取得。
 - [ChromiumのGPU用Seatbeltプロファイル](https://chromium.googlesource.com/chromium/src/+/main/sandbox/policy/mac/gpu.sb): MetalコンパイラのXPCサービス指定。今回の追加はローカルの拒否ログとクラッシュスタックでも裏付けた。
 - [Chromiumの音声用Seatbeltプロファイル](https://raw.githubusercontent.com/chromium/chromium/main/sandbox/policy/mac/audio.sb): HAL・AudioComponentRegistrar・AudioIO共有メモリの指定を参照。マイクや画面収録の許可は採用していない。
-- [先行した独立検証](../tools/sandbox-lab/README.md): 今回はそこでのJava/LWJGL確認をランチャーへ組み込んだ。
+- [先行した独立検証のアーカイブ](../tools/sandbox-lab/README.md): そこで確認したJava/LWJGL経路をランチャーへ組み込んだ。旧runnerは本番コードを使うprobeへ置き換え済み。
