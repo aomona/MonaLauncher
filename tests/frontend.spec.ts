@@ -298,8 +298,19 @@ test("light/dark, navigation and narrow reflow", async ({ page }) => {
 
 test("unsaved draft survives failed save and Escape closes one layer", async ({ page }) => {
   await mockDesktop(page);
-  await openSurvival(page);
-  await page.getByRole("tab", { name: "Settings", exact: true }).click();
+  await page.getByRole("button", { name: "Instances", exact: true }).click();
+  const row = page
+    .locator(".instance-row")
+    .filter({ has: page.getByRole("button", { name: "Survival", exact: true }) });
+  await row.getByRole("button", { name: "Play", exact: true }).focus();
+  await page.keyboard.press("Tab");
+  await expect(row.getByRole("button", { name: "Survivalを編集", exact: true })).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("dialog", { name: "Survival", exact: true })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "Settings", exact: true })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
   await page.getByLabel("表示名", { exact: false }).fill("Edited name");
   await page.keyboard.press("Escape");
   const guard = page.getByRole("dialog", { name: "未保存の変更があります" });
@@ -503,7 +514,10 @@ test("late Mod search results cannot leak into another instance", async ({ page 
   await expect(page.getByRole("dialog", { name: "Add mods", exact: true })).toBeVisible();
   await page.keyboard.press("Escape");
   await page.keyboard.press("Escape");
-  await page.getByRole("button", { name: /^とても長い日本語/ }).click();
+  await page
+    .locator(".instance-name")
+    .filter({ hasText: /^とても長い日本語/ })
+    .click();
   await page.getByRole("tab", { name: "Mods", exact: true }).click();
   await page.evaluate(() => {
     (

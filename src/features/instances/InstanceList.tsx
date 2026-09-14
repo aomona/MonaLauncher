@@ -1,4 +1,4 @@
-import { Box, MoreHorizontal, Play } from "lucide-react";
+import { Box, MoreHorizontal, Pencil, Play } from "lucide-react";
 import type { Launcher } from "../../app/useLauncher";
 import { Button } from "../../components/Button";
 import type { MinecraftInstance } from "../../domain/launcher";
@@ -58,6 +58,15 @@ export function InstanceList({
                   Play
                 </>
               )}
+            </Button>
+            <Button
+              tone="ghost"
+              className="icon-button"
+              aria-label={`${item.name}を編集`}
+              title="Edit"
+              onClick={() => openInstance(item, "Settings")}
+            >
+              <Pencil size={16} aria-hidden="true" />
             </Button>
             <details className="relative">
               <summary
