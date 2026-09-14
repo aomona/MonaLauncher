@@ -78,21 +78,27 @@ pub(crate) fn assert_brokered_startup(installed_root: &Path, version: &str) {
         broker: Some(Arc::new(NoAccount)),
     };
     let reached = Cell::new(false);
-    let result = spawn_instance_with_factory(&paths, id, Some(&identity), |_, uuid, actual| {
-        reached.set(true);
-        assert_eq!(uuid, identity.uuid);
-        assert!(matches!(
-            (actual, schema),
-            (
-                UserAttributesSchema::Authlib6,
-                UserAttributesSchema::Authlib6
-            ) | (
-                UserAttributesSchema::Authlib9,
-                UserAttributesSchema::Authlib9
-            )
-        ));
-        Err(BrokerError::Unsupported)
-    });
+    let result = spawn_instance_with_factory(
+        &paths,
+        id,
+        Some(&identity),
+        LaunchMode::Default,
+        |_, uuid, actual| {
+            reached.set(true);
+            assert_eq!(uuid, identity.uuid);
+            assert!(matches!(
+                (actual, schema),
+                (
+                    UserAttributesSchema::Authlib6,
+                    UserAttributesSchema::Authlib6
+                ) | (
+                    UserAttributesSchema::Authlib9,
+                    UserAttributesSchema::Authlib9
+                )
+            ));
+            Err(BrokerError::Unsupported)
+        },
+    );
     let error = match result {
         Err(error) => error,
         Ok(_) => panic!("the sentinel factory must prevent process creation"),

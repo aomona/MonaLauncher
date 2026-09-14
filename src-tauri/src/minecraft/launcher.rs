@@ -259,16 +259,56 @@ impl Drop for SandboxLayout {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum LaunchMode {
+    #[default]
+    Default,
+    Offline,
+    Demo,
+}
+
+impl LaunchMode {
+    pub fn uses_microsoft_account(self, saved_demo: bool) -> bool {
+        self == Self::Default && !saved_demo
+    }
+
+    fn apply(self, instance: &mut InstanceManifest) {
+        match self {
+            Self::Default => {}
+            Self::Offline => instance.demo = false,
+            Self::Demo => instance.demo = true,
+        }
+    }
+}
+
 pub fn spawn_instance(
     paths: &MinecraftPaths,
     instance_id: &str,
     identity: Option<&MinecraftIdentity>,
 ) -> Result<SpawnedMinecraft, MinecraftLaunchError> {
-    spawn_instance_with_factory(paths, instance_id, identity, |source, uuid, schema| {
-        crate::auth::broker::service::OfficialOperations::new(source, uuid, schema).map(
-            |operations| Box::new(operations) as Box<dyn crate::auth::broker::service::Operations>,
-        )
-    })
+    spawn_instance_in_mode(paths, instance_id, identity, LaunchMode::Default)
+}
+
+pub fn spawn_instance_in_mode(
+    paths: &MinecraftPaths,
+    instance_id: &str,
+    identity: Option<&MinecraftIdentity>,
+    mode: LaunchMode,
+) -> Result<SpawnedMinecraft, MinecraftLaunchError> {
+    spawn_instance_with_factory(
+        paths,
+        instance_id,
+        identity,
+        mode,
+        |source, uuid, schema| {
+            crate::auth::broker::service::OfficialOperations::new(source, uuid, schema).map(
+                |operations| {
+                    Box::new(operations) as Box<dyn crate::auth::broker::service::Operations>
+                },
+            )
+        },
+    )
 }
 
 // Kept inside the Rust crate; tests can substitute synthetic operations without adding a
@@ -277,6 +317,7 @@ pub(crate) fn spawn_instance_with_factory(
     paths: &MinecraftPaths,
     instance_id: &str,
     identity: Option<&MinecraftIdentity>,
+    mode: LaunchMode,
     create_operations: impl FnOnce(
         Arc<dyn crate::auth::broker::service::SessionSource>,
         String,
@@ -286,7 +327,9 @@ pub(crate) fn spawn_instance_with_factory(
         crate::auth::broker::protocol::BrokerError,
     >,
 ) -> Result<SpawnedMinecraft, MinecraftLaunchError> {
-    let instance = load_instance(paths, instance_id)?;
+    let mut instance = load_instance(paths, instance_id)?;
+    let identity = identity.filter(|_| mode.uses_microsoft_account(instance.demo));
+    mode.apply(&mut instance);
     if !instance.sandboxed {
         return Err(MinecraftLaunchError::SandboxRequired);
     }
@@ -1444,6 +1487,36 @@ mod tests {
     }
     use super::*;
     use crate::minecraft::model::{Rule, RuleOs};
+
+    #[test]
+    fn launch_mode_overrides_are_temporary_and_never_request_account_authentication() {
+        for saved_demo in [false, true] {
+            let saved = InstanceManifest {
+                id: "source".into(),
+                name: "Original".into(),
+                version_id: "1.21.8".into(),
+                java_path: "managed-java".into(),
+                game_directory: "game".into(),
+                demo: saved_demo,
+                sandboxed: true,
+                mod_loader: ModLoader::Vanilla,
+                permissions: Default::default(),
+            };
+            for (mode, expected_demo, expected_auth) in [
+                (LaunchMode::Default, saved_demo, !saved_demo),
+                (LaunchMode::Offline, false, false),
+                (LaunchMode::Demo, true, false),
+            ] {
+                let mut launched = saved.clone();
+                mode.apply(&mut launched);
+                assert_eq!(launched.demo, expected_demo);
+                assert_eq!(mode.uses_microsoft_account(saved.demo), expected_auth);
+                assert_eq!(launched.permissions, saved.permissions);
+                assert_eq!(saved.demo, saved_demo);
+            }
+        }
+        assert!(serde_json::from_str::<LaunchMode>("\"unsupported\"").is_err());
+    }
 
     #[test]
     fn game_arguments_never_receive_the_broker_credential() {

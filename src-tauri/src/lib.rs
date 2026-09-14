@@ -47,6 +47,7 @@ pub fn run() {
             commands::auth::refresh_minecraft_account,
             commands::auth::sign_out_microsoft,
             commands::minecraft::delete_minecraft_instance,
+            commands::minecraft::duplicate_minecraft_instance,
             commands::minecraft::diagnose_minecraft_instance,
             commands::minecraft::install_sandbox_instance,
             commands::minecraft::install_modrinth_mod,

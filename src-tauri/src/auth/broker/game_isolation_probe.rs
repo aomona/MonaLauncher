@@ -185,13 +185,19 @@ fn launch(
         uuid: super::chat::tests::ACCOUNT.into(),
         broker: Some(Arc::new(SyntheticSession)),
     };
-    let spawned = launcher::spawn_instance_with_factory(paths, id, Some(&identity), |_, _, _| {
-        Ok(Box::new(AuditedFixture {
-            inner: Fixture(ChatKeys::default()),
-            audit,
-            valid,
-        }))
-    })
+    let spawned = launcher::spawn_instance_with_factory(
+        paths,
+        id,
+        Some(&identity),
+        launcher::LaunchMode::Default,
+        |_, _, _| {
+            Ok(Box::new(AuditedFixture {
+                inner: Fixture(ChatKeys::default()),
+                audit,
+                valid,
+            }))
+        },
+    )
     .unwrap();
     let failed = Arc::new(AtomicBool::new(false));
     let readers = [spawned.stdout, spawned.stderr]

@@ -18,7 +18,9 @@ use crate::minecraft::{
         rename_instance, validate_instance_id, validate_instance_name,
         validate_metadata_identifier, version_java_major,
     },
-    launcher::{read_lines, spawn_instance, MinecraftIdentity, MinecraftProcess},
+    launcher::{
+        read_lines, spawn_instance_in_mode, LaunchMode, MinecraftIdentity, MinecraftProcess,
+    },
     model::{InstanceManifest, ModLoader, VersionManifest},
     modrinth::{ModSearchResponse, ModrinthClient},
     modrinth_installer::{
@@ -295,6 +297,32 @@ pub async fn delete_minecraft_instance(
 }
 
 #[tauri::command]
+pub async fn duplicate_minecraft_instance(
+    app: AppHandle,
+    state: State<'_, MinecraftRuntimeState>,
+    instance_id: String,
+    new_instance_id: String,
+    name: String,
+) -> Result<InstanceManifest, String> {
+    let source_operation = reserve_instance_operation(&state, &instance_id, false)?;
+    let destination_operation = reserve_instance_operation(&state, &new_instance_id, false)?;
+    let paths = minecraft_paths(&app)?;
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        // Keep reservations alive even if the awaiting IPC task is cancelled.
+        let _operations = (source_operation, destination_operation);
+        crate::minecraft::duplicate::duplicate_instance(
+            &paths,
+            &instance_id,
+            &new_instance_id,
+            &name,
+        )
+    })
+    .await
+    .map_err(|e| format!("複製処理への参加に失敗しました: {e}"))?;
+    result
+}
+
+#[tauri::command]
 pub async fn list_minecraft_versions() -> Result<VersionManifest, String> {
     tauri::async_runtime::spawn_blocking(list_available_versions)
         .await
@@ -470,7 +498,9 @@ pub async fn launch_minecraft_instance(
     state: State<'_, MinecraftRuntimeState>,
     auth_state: State<'_, MicrosoftAuthState>,
     instance_id: String,
+    mode: Option<LaunchMode>,
 ) -> Result<u32, String> {
+    let mode = mode.unwrap_or_default();
     let operation = reserve_instance_operation(&state, &instance_id, false)?;
 
     let paths = minecraft_paths(&app)?;
@@ -478,28 +508,29 @@ pub async fn launch_minecraft_instance(
     if !instance.sandboxed {
         return Err("安全でない通常起動は無効です。インスタンスを再作成してください".to_owned());
     }
-    let identity = if !instance.demo && has_microsoft_authorization().await? {
-        let generation = super::auth::authentication_generation(&auth_state);
-        emit_launch_progress(
-            &app,
-            &instance_id,
-            "authenticating",
-            "MicrosoftアカウントとMinecraftの所有権を確認しています…",
-        );
-        let session = acquire_minecraft_session(&auth_state).await?;
-        let broker = instance
-            .permissions
-            .account_authentication
-            .is_brokered()
-            .then(|| super::auth::broker_source(&auth_state, session.uuid.clone(), generation));
-        Some(MinecraftIdentity {
-            player_name: session.player_name,
-            uuid: session.uuid,
-            broker,
-        })
-    } else {
-        None
-    };
+    let identity =
+        if mode.uses_microsoft_account(instance.demo) && has_microsoft_authorization().await? {
+            let generation = super::auth::authentication_generation(&auth_state);
+            emit_launch_progress(
+                &app,
+                &instance_id,
+                "authenticating",
+                "MicrosoftアカウントとMinecraftの所有権を確認しています…",
+            );
+            let session = acquire_minecraft_session(&auth_state).await?;
+            let broker = instance
+                .permissions
+                .account_authentication
+                .is_brokered()
+                .then(|| super::auth::broker_source(&auth_state, session.uuid.clone(), generation));
+            Some(MinecraftIdentity {
+                player_name: session.player_name,
+                uuid: session.uuid,
+                broker,
+            })
+        } else {
+            None
+        };
     emit_launch_progress(
         &app,
         &instance_id,
@@ -508,7 +539,7 @@ pub async fn launch_minecraft_instance(
     );
     let launch_instance_id = instance_id.clone();
     let spawned = tauri::async_runtime::spawn_blocking(move || {
-        spawn_instance(&paths, &launch_instance_id, identity.as_ref())
+        spawn_instance_in_mode(&paths, &launch_instance_id, identity.as_ref(), mode)
             .map_err(|error| error.to_string())
     })
     .await

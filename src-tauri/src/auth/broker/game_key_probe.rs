@@ -235,11 +235,14 @@ fn actual_fabric_private_key_heap_comparison() {
         if result_path.exists() {
             fs::remove_file(&result_path).unwrap();
         }
-        let mut spawned =
-            launcher::spawn_instance_with_factory(&paths, &id, Some(&identity), |_, _, _| {
-                Ok(Box::new(Fixture(ChatKeys::default())))
-            })
-            .unwrap();
+        let mut spawned = launcher::spawn_instance_with_factory(
+            &paths,
+            &id,
+            Some(&identity),
+            launcher::LaunchMode::Default,
+            |_, _, _| Ok(Box::new(Fixture(ChatKeys::default()))),
+        )
+        .unwrap();
         let failed = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let stdout_failed = Arc::clone(&failed);
         let stderr_failed = Arc::clone(&failed);
