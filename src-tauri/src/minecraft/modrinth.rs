@@ -415,7 +415,7 @@ fn sanitize_service_message(message: String) -> String {
     sanitize_text(&message, 256)
 }
 
-fn sanitize_text(value: &str, maximum: usize) -> String {
+pub(super) fn sanitize_text(value: &str, maximum: usize) -> String {
     value
         .chars()
         .filter(|character| !character.is_control())

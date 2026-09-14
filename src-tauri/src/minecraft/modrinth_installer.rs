@@ -14,8 +14,8 @@ use sha2::{Digest, Sha512};
 use super::file_io::{file_digest, path_is_link_or_reparse, read_bounded_file, write_atomic};
 use super::model::{InstanceManifest, ModLoader};
 use super::modrinth::{
-    validate_identifier, ModrinthClient, ModrinthDependency, ModrinthError, ModrinthFile,
-    ModrinthProject, ModrinthVersion,
+    sanitize_text, validate_identifier, ModrinthClient, ModrinthDependency, ModrinthError,
+    ModrinthFile, ModrinthProject, ModrinthVersion,
 };
 use super::paths::MinecraftPaths;
 
@@ -848,8 +848,8 @@ fn commit_installation(
         let installed = InstalledMod {
             project_id: item.project.id,
             version_id: item.version.id,
-            title: sanitize_text(item.project.title, 120),
-            version_number: sanitize_text(item.version.version_number, 80),
+            title: sanitize_text(&item.project.title, 120),
+            version_number: sanitize_text(&item.version.version_number, 80),
             file_name: item.file.filename,
             sha512: item.file.hashes.sha512.to_ascii_lowercase(),
             size: item.file.size,
@@ -1155,8 +1155,8 @@ fn load_registry(
         validate_identifier(&installed.project_id)?;
         validate_identifier(&installed.version_id)?;
         validate_file_name(&installed.file_name)?;
-        installed.title = sanitize_text(std::mem::take(&mut installed.title), 120);
-        installed.version_number = sanitize_text(std::mem::take(&mut installed.version_number), 80);
+        installed.title = sanitize_text(&installed.title, 120);
+        installed.version_number = sanitize_text(&installed.version_number, 80);
         installed.sha512 = validate_sha512(&installed.sha512)?;
         if installed.size > MAX_MOD_SIZE {
             return Err(ModInstallError::FileTooLarge {
@@ -1280,14 +1280,6 @@ fn validate_sha512(value: &str) -> Result<String, ModInstallError> {
 fn file_matches(path: &Path, file: &ModrinthFile) -> Result<bool, ModInstallError> {
     Ok(fs::metadata(path)?.len() == file.size
         && file_digest::<Sha512>(path)? == file.hashes.sha512.to_ascii_lowercase())
-}
-
-fn sanitize_text(value: String, maximum: usize) -> String {
-    value
-        .chars()
-        .filter(|character| !character.is_control())
-        .take(maximum)
-        .collect()
 }
 
 #[cfg(test)]
