@@ -202,6 +202,7 @@ pub struct MinecraftIdentity {
 
 impl MinecraftIdentity {
     pub fn offline(username: &str) -> Result<Self, String> {
+        use md5::{Digest, Md5};
         if username.is_empty()
             || username.len() > 16
             || !username
@@ -212,10 +213,13 @@ impl MinecraftIdentity {
                 "ユーザー名は半角英数字とアンダースコア（_）を1〜16文字で入力してください".into(),
             );
         }
+        // Match Minecraft's UUID.nameUUIDFromBytes("OfflinePlayer:" + name), not an auth hash.
+        let mut uuid = Md5::digest(format!("OfflinePlayer:{username}"));
+        uuid[6] = (uuid[6] & 0x0f) | 0x30;
+        uuid[8] = (uuid[8] & 0x3f) | 0x80;
         Ok(Self {
             player_name: username.to_owned(),
-            // Preserve the existing offline UUID; only the requested display name changes.
-            uuid: "00000000000000000000000000000000".into(),
+            uuid: format!("{uuid:x}"),
             broker: None,
         })
     }
@@ -358,11 +362,9 @@ pub(crate) fn spawn_instance_with_factory(
     } else {
         None
     };
-    let identity = if mode == LaunchMode::Offline {
-        offline_identity.as_ref()
-    } else {
-        identity.filter(|_| mode.uses_microsoft_account(instance.demo))
-    };
+    let identity = offline_identity
+        .as_ref()
+        .or_else(|| identity.filter(|_| mode.uses_microsoft_account(instance.demo)));
     mode.apply(&mut instance);
     if !instance.sandboxed {
         return Err(MinecraftLaunchError::SandboxRequired);
@@ -1547,6 +1549,7 @@ mod tests {
             };
             let substitutions = authentication_substitutions(false, permissions, Some(&identity));
             assert_eq!(substitutions["${auth_player_name}"], name);
+            assert_eq!(substitutions["${auth_uuid}"], identity.uuid);
             assert_eq!(substitutions["${auth_access_token}"], "0");
             assert_eq!(substitutions["${user_type}"], "legacy");
             assert_eq!(
@@ -1558,6 +1561,17 @@ mod tests {
                     ["${auth_player_name}"],
                 "DemoPlayer"
             );
+        }
+    }
+
+    #[test]
+    fn offline_uuid_matches_java_for_distinct_names() {
+        for (name, expected) in [
+            ("Player", "a01e3843e5213998958af459800e4d11"),
+            ("Alex_42", "ed14860d737d3df0b80f772288b25d3e"),
+            ("Steve", "5627dd98e6be3c21b8a8e92344183641"),
+        ] {
+            assert_eq!(MinecraftIdentity::offline(name).unwrap().uuid, expected);
         }
     }
 

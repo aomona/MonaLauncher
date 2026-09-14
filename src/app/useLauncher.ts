@@ -220,7 +220,7 @@ export function useLauncher() {
       const pid = await invoke<number>("launch_minecraft_instance", {
         instanceId: target.id,
         mode,
-        ...(mode === "offline" ? { offlineUsername } : {}),
+        offlineUsername,
       });
       setLogs((current) => [
         ...current,

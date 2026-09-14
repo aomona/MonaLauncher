@@ -166,6 +166,6 @@ Play・Edit・Menuは常設。EditはOverview、Menuは今回限りのオフラ�
 
 検証: macOS上で`pnpm check`、Playwright 46件、Rust 138件（外部環境に依存する9件はignored）、fmt・Clippyが成功。起動モードのIPC指定、通常Playへの復帰、複製・削除・失敗時の維持、Light/Darkと1440px・1024px・320px、200%文字で確認した。ファイル複製はRustの一時ディレクトリで独立性・リンク拒否・失敗時の除去・profilekeysの除外を検証。新メニューからの実ゲーム起動、Windows/Linux実機、実アカウント認証は未検証。
 
-オフライン起動は共通Dialogでユーザー名を入力してから確定する。対象と名前のDraftは一覧内のOfflineLaunchDialogに保持し、名前の検証・Enter/CancelとMenuへのFocus復帰を担当する。初期値はPlayer、半角英数字・_の1〜16文字。確定値だけをuseLauncherからIPCへ渡す。既存Dialog・Button・入力欄とトークンを使い、生成CSSの変更はない。
+オフライン起動は共通Dialogでユーザー名を入力してから確定する。対象はInstanceList、名前のDraftはOfflineLaunchDialogに保持する。Dialogは名前の検証・Enter/Cancelを担当し、MenuへのFocus復帰にはuseIdで生成した要素IDを使う。初期値はPlayer、半角英数字・_の1〜16文字。確定値だけをuseLauncherからIPCへ渡す。既存Dialog・Button・入力欄とトークンを使い、生成CSSの変更はない。
 
 ユーザー名入力の追加後は`pnpm check`、Playwright 47件、Rust 139件（9件ignored）、fmt・Clippyが成功。入力確定前の未起動、指定名のIPC伝達、空欄・不正文字の拒否、Enter起動、Cancel/EscでのFocus復帰、Light/Dark・320px・200%文字を確認した。Rustでは名前の検証と起動引数への展開・認証仲介なしを検証。実ゲーム内の名前表示とWindows/Linux実機は未確認。

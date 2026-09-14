@@ -1,16 +1,15 @@
 import { useId, useState } from "react";
 import { Button } from "../../components/Button";
 import { Dialog } from "../../components/Dialog";
-import type { MinecraftInstance } from "../../domain/launcher";
 
 export function OfflineLaunchDialog({
-  instance,
+  instanceName,
   disabled,
   onLaunch,
   onClose,
   finalFocus,
 }: {
-  instance: MinecraftInstance;
+  instanceName: string;
   disabled: boolean;
   onLaunch: (username: string) => void;
   onClose: () => void;
@@ -42,7 +41,7 @@ export function OfflineLaunchDialog({
           if (!disabled && valid) onLaunch(username);
         }}
       >
-        <p className="mb-4 wrap-anywhere font-medium">{instance.name}</p>
+        <p className="mb-4 wrap-anywhere font-medium">{instanceName}</p>
         <label className="field">
           ユーザー名
           <input
