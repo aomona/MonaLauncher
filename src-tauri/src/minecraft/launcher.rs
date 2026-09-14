@@ -200,6 +200,27 @@ pub struct MinecraftIdentity {
     pub broker: Option<Arc<dyn crate::auth::broker::service::SessionSource>>,
 }
 
+impl MinecraftIdentity {
+    pub fn offline(username: &str) -> Result<Self, String> {
+        if username.is_empty()
+            || username.len() > 16
+            || !username
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+        {
+            return Err(
+                "ユーザー名は半角英数字とアンダースコア（_）を1〜16文字で入力してください".into(),
+            );
+        }
+        Ok(Self {
+            player_name: username.to_owned(),
+            // Preserve the existing offline UUID; only the requested display name changes.
+            uuid: "00000000000000000000000000000000".into(),
+            broker: None,
+        })
+    }
+}
+
 fn authentication_substitutions(
     demo: bool,
     permissions: super::permissions::InstancePermissions,
@@ -328,7 +349,20 @@ pub(crate) fn spawn_instance_with_factory(
     >,
 ) -> Result<SpawnedMinecraft, MinecraftLaunchError> {
     let mut instance = load_instance(paths, instance_id)?;
-    let identity = identity.filter(|_| mode.uses_microsoft_account(instance.demo));
+    // Offline launches use only the validated name, never a supplied account UUID or broker.
+    let offline_identity = if mode == LaunchMode::Offline {
+        Some(
+            MinecraftIdentity::offline(identity.map_or("Player", |identity| &identity.player_name))
+                .map_err(MinecraftLaunchError::Sandbox)?,
+        )
+    } else {
+        None
+    };
+    let identity = if mode == LaunchMode::Offline {
+        offline_identity.as_ref()
+    } else {
+        identity.filter(|_| mode.uses_microsoft_account(instance.demo))
+    };
     mode.apply(&mut instance);
     if !instance.sandboxed {
         return Err(MinecraftLaunchError::SandboxRequired);
@@ -1487,6 +1521,45 @@ mod tests {
     }
     use super::*;
     use crate::minecraft::model::{Rule, RuleOs};
+
+    #[test]
+    fn offline_names_are_validated_before_becoming_launch_arguments() {
+        for invalid in [
+            "",
+            " ",
+            "has space",
+            "日本語",
+            "a\nb",
+            "--username",
+            "abcdefghijklmnopq",
+        ] {
+            assert!(
+                MinecraftIdentity::offline(invalid).is_err(),
+                "accepted {invalid:?}"
+            );
+        }
+        for name in ["A", "Alex_42", "abcdefghijklmnop"] {
+            let identity = MinecraftIdentity::offline(name).unwrap();
+            assert!(identity.broker.is_none());
+            let permissions = super::super::permissions::InstancePermissions {
+                account_authentication: super::super::permissions::AccountAuthentication::Brokered,
+                ..Default::default()
+            };
+            let substitutions = authentication_substitutions(false, permissions, Some(&identity));
+            assert_eq!(substitutions["${auth_player_name}"], name);
+            assert_eq!(substitutions["${auth_access_token}"], "0");
+            assert_eq!(substitutions["${user_type}"], "legacy");
+            assert_eq!(
+                substitute("--username ${auth_player_name}", &substitutions),
+                format!("--username {name}")
+            );
+            assert_eq!(
+                authentication_substitutions(true, permissions, Some(&identity))
+                    ["${auth_player_name}"],
+                "DemoPlayer"
+            );
+        }
+    }
 
     #[test]
     fn launch_mode_overrides_are_temporary_and_never_request_account_authentication() {

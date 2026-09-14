@@ -200,7 +200,11 @@ export function useLauncher() {
     }
   };
 
-  const launch = async (target = selected, mode: LaunchMode = "default") => {
+  const launch = async (
+    target = selected,
+    mode: LaunchMode = "default",
+    offlineUsername?: string,
+  ) => {
     if (!target || busy || mods.modOperationActive || runningIds.has(target.id)) return;
     setSelectedId(target.id);
     setError(null);
@@ -216,6 +220,7 @@ export function useLauncher() {
       const pid = await invoke<number>("launch_minecraft_instance", {
         instanceId: target.id,
         mode,
+        ...(mode === "offline" ? { offlineUsername } : {}),
       });
       setLogs((current) => [
         ...current,

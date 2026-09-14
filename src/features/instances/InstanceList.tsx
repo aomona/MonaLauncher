@@ -1,10 +1,12 @@
 import { Box, MoreHorizontal, Pencil, Play } from "lucide-react";
+import { useRef, useState } from "react";
 import type { Launcher } from "../../app/useLauncher";
 import { Button } from "../../components/Button";
 import { Menu, MenuItem } from "../../components/Menu";
 import type { MinecraftInstance } from "../../domain/launcher";
 
 import { instanceVersionLabel } from "./instance-label";
+import { OfflineLaunchDialog } from "./OfflineLaunchDialog";
 
 type InstanceListModel = Pick<
   Launcher,
@@ -21,6 +23,8 @@ export function InstanceList({
   openInstance: OpenInstance;
 }) {
   const { runningIds, busy } = launcher;
+  const [offlineInstance, setOfflineInstance] = useState<MinecraftInstance | null>(null);
+  const menuTriggers = useRef(new Map<string, HTMLButtonElement>());
   return (
     <div aria-label="Minecraftインスタンス">
       {items.map((item) => (
@@ -71,7 +75,15 @@ export function InstanceList({
             </Button>
             <Menu
               trigger={
-                <Button tone="ghost" className="icon-button" aria-label={`${item.name}の操作`}>
+                <Button
+                  tone="ghost"
+                  className="icon-button"
+                  aria-label={`${item.name}の操作`}
+                  ref={(node) => {
+                    if (node) menuTriggers.current.set(item.id, node);
+                    else menuTriggers.current.delete(item.id);
+                  }}
+                >
                   <MoreHorizontal size={18} aria-hidden="true" />
                 </Button>
               }
@@ -84,8 +96,7 @@ export function InstanceList({
                   !item.sandboxed
                 }
                 onClick={() => {
-                  launcher.setSettingsName(item.name);
-                  void launcher.launch(item, "offline");
+                  setOfflineInstance(item);
                 }}
               >
                 オフラインモードで起動
@@ -129,6 +140,21 @@ export function InstanceList({
           </div>
         </div>
       ))}
+      {offlineInstance && (
+        <OfflineLaunchDialog
+          instance={offlineInstance}
+          disabled={
+            Boolean(busy) || launcher.modOperationActive || runningIds.has(offlineInstance.id)
+          }
+          finalFocus={() => menuTriggers.current.get(offlineInstance.id) ?? null}
+          onClose={() => setOfflineInstance(null)}
+          onLaunch={(username) => {
+            launcher.setSettingsName(offlineInstance.name);
+            void launcher.launch(offlineInstance, "offline", username);
+            setOfflineInstance(null);
+          }}
+        />
+      )}
     </div>
   );
 }

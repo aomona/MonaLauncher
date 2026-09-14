@@ -499,8 +499,12 @@ pub async fn launch_minecraft_instance(
     auth_state: State<'_, MicrosoftAuthState>,
     instance_id: String,
     mode: Option<LaunchMode>,
+    offline_username: Option<String>,
 ) -> Result<u32, String> {
     let mode = mode.unwrap_or_default();
+    if mode != LaunchMode::Offline && offline_username.is_some() {
+        return Err("ユーザー名の指定はオフライン起動でのみ利用できます".into());
+    }
     let operation = reserve_instance_operation(&state, &instance_id, false)?;
 
     let paths = minecraft_paths(&app)?;
@@ -508,29 +512,34 @@ pub async fn launch_minecraft_instance(
     if !instance.sandboxed {
         return Err("安全でない通常起動は無効です。インスタンスを再作成してください".to_owned());
     }
-    let identity =
-        if mode.uses_microsoft_account(instance.demo) && has_microsoft_authorization().await? {
-            let generation = super::auth::authentication_generation(&auth_state);
-            emit_launch_progress(
-                &app,
-                &instance_id,
-                "authenticating",
-                "MicrosoftアカウントとMinecraftの所有権を確認しています…",
-            );
-            let session = acquire_minecraft_session(&auth_state).await?;
-            let broker = instance
-                .permissions
-                .account_authentication
-                .is_brokered()
-                .then(|| super::auth::broker_source(&auth_state, session.uuid.clone(), generation));
-            Some(MinecraftIdentity {
-                player_name: session.player_name,
-                uuid: session.uuid,
-                broker,
-            })
-        } else {
-            None
-        };
+    let identity = if mode == LaunchMode::Offline {
+        Some(MinecraftIdentity::offline(
+            offline_username
+                .as_deref()
+                .ok_or("オフライン起動のユーザー名を入力してください")?,
+        )?)
+    } else if mode.uses_microsoft_account(instance.demo) && has_microsoft_authorization().await? {
+        let generation = super::auth::authentication_generation(&auth_state);
+        emit_launch_progress(
+            &app,
+            &instance_id,
+            "authenticating",
+            "MicrosoftアカウントとMinecraftの所有権を確認しています…",
+        );
+        let session = acquire_minecraft_session(&auth_state).await?;
+        let broker = instance
+            .permissions
+            .account_authentication
+            .is_brokered()
+            .then(|| super::auth::broker_source(&auth_state, session.uuid.clone(), generation));
+        Some(MinecraftIdentity {
+            player_name: session.player_name,
+            uuid: session.uuid,
+            broker,
+        })
+    } else {
+        None
+    };
     emit_launch_progress(
         &app,
         &instance_id,

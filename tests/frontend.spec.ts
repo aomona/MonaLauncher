@@ -82,6 +82,7 @@ async function mockDesktop(
       const state = {
         calls: [] as string[],
         launches: [] as { instanceId: string; mode: string }[],
+        offlineUsernames: [] as string[],
         failDuplicate: false,
         newsFeed: {
           entries: [] as {
@@ -223,6 +224,11 @@ async function mockDesktop(
                 return { ...item };
               }
               case "launch_minecraft_instance":
+                if (args.mode === "offline") {
+                  if (!/^[A-Za-z0-9_]{1,16}$/.test(String(args.offlineUsername ?? "")))
+                    throw new Error("Invalid offline username");
+                  state.offlineUsernames.push(String(args.offlineUsername));
+                }
                 state.launches.push({
                   instanceId: String(args.instanceId),
                   mode: String(args.mode),
@@ -309,6 +315,25 @@ test("instance menu offers one-shot launch modes and disables actions while runn
     await trigger.click();
     await page.getByRole("menuitem", { name: label, exact: true }).click();
     await expect(page.getByRole("menu")).toHaveCount(0);
+    if (mode === "offline") {
+      const dialog = page.getByRole("dialog", { name: "オフラインモードで起動", exact: true });
+      await expect(dialog.getByRole("textbox", { name: "ユーザー名", exact: true })).toBeFocused();
+      expect(
+        await page.evaluate(
+          () => (window as unknown as { __test: { launches: unknown[] } }).__test.launches,
+        ),
+      ).toEqual([]);
+      await dialog.getByRole("textbox", { name: "ユーザー名", exact: true }).fill("Alex_42");
+      await page.keyboard.press("Enter");
+      await expect(dialog).toHaveCount(0);
+      expect(
+        await page.evaluate(
+          () =>
+            (window as unknown as { __test: { offlineUsernames: string[] } }).__test
+              .offlineUsernames,
+        ),
+      ).toEqual(["Alex_42"]);
+    }
     await expect
       .poll(() =>
         page.evaluate(() =>
@@ -398,6 +423,56 @@ test("failed duplication leaves the original and reports the error", async ({ pa
   await expect(page.getByRole("alert")).toContainText("複製テストエラー");
   await expect(page.locator(".instance-row")).toHaveCount(2);
   await expect(page.getByRole("dialog")).toHaveCount(0);
+});
+
+test("offline name dialog validates input, cancels without launching and reflows", async ({
+  page,
+}) => {
+  await mockDesktop(page);
+  await page.getByRole("button", { name: "Instances", exact: true }).click();
+  const trigger = page.getByRole("button", { name: "Survivalの操作", exact: true });
+  await trigger.click();
+  await page.getByRole("menuitem", { name: "オフラインモードで起動", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "オフラインモードで起動", exact: true });
+  const input = dialog.getByRole("textbox", { name: "ユーザー名", exact: true });
+  const launch = dialog.getByRole("button", { name: "起動", exact: true });
+  await expect(dialog).toContainText("Survival");
+  await expect(input).toHaveValue("Player");
+  for (const invalid of ["", "has space", "日本語", "--name"]) {
+    await input.fill(invalid);
+    await expect(input).toHaveAttribute("aria-invalid", "true");
+    await expect(launch).toBeDisabled();
+    await page.keyboard.press("Enter");
+    await expect(dialog).toBeVisible();
+  }
+  await input.fill("My_Player");
+  await expect(launch).toBeEnabled();
+  await page.screenshot({ path: "test-results/offline-name-light.png" });
+  await page.setViewportSize({ width: 320, height: 640 });
+  await page.evaluate(() => {
+    document.documentElement.dataset.theme = "dark";
+  });
+  await expect(input).toBeInViewport({ ratio: 1 });
+  await expect(launch).toBeInViewport({ ratio: 1 });
+  await page.screenshot({ path: "test-results/offline-name-dark-320.png" });
+  await page.setViewportSize({ width: 1024, height: 640 });
+  await page.evaluate(() => {
+    document.documentElement.style.fontSize = "200%";
+  });
+  await expect(launch).toBeInViewport({ ratio: 1 });
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+  await trigger.click();
+  await page.getByRole("menuitem", { name: "オフラインモードで起動", exact: true }).click();
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+  expect(
+    await page.evaluate(
+      () => (window as unknown as { __test: { launches: unknown[] } }).__test.launches,
+    ),
+  ).toEqual([]);
 });
 
 test("instance menu stays reachable across themes, narrow widths and large text", async ({
