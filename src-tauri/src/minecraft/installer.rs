@@ -935,7 +935,10 @@ fn verify_bytes_sha1(
     Ok(())
 }
 
-fn safe_metadata_join(root: &Path, relative: &str) -> Result<PathBuf, MinecraftInstallError> {
+pub(super) fn safe_metadata_join(
+    root: &Path,
+    relative: &str,
+) -> Result<PathBuf, MinecraftInstallError> {
     let path = Path::new(relative);
 
     if path.is_absolute()
@@ -1082,7 +1085,7 @@ fn managed_java_path_and_major(
     Ok((java, major.unwrap_or_default()))
 }
 
-fn validate_asset_hash(hash: &str) -> Result<(), MinecraftInstallError> {
+pub(super) fn validate_asset_hash(hash: &str) -> Result<(), MinecraftInstallError> {
     if hash.len() != 40 || !hash.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return Err(MinecraftInstallError::InvalidAssetHash(hash.to_owned()));
     }

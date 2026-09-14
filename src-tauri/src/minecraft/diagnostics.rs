@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 use rayon::prelude::*;
 use serde::Serialize;
@@ -8,7 +8,10 @@ use sha1::Sha1;
 
 use super::fabric::{load_fabric_profile, maven_artifact_path, validate_profile};
 use super::file_io::{file_digest, path_is_link_or_reparse, read_bounded_file};
-use super::installer::{load_instance, managed_java_major, MinecraftInstallError};
+use super::installer::{
+    load_instance, managed_java_major, safe_metadata_join as safe_join, validate_asset_hash,
+    MinecraftInstallError,
+};
 use super::model::{rules_allow, AssetIndex, ModLoader, VersionMetadata};
 use super::paths::MinecraftPaths;
 
@@ -302,30 +305,6 @@ fn push_file_check(checks: &mut Vec<DiagnosticCheck>, id: &str, label: &str, sum
         },
         repairable: issues != 0,
     });
-}
-
-fn safe_join(root: &Path, relative: &str) -> Result<PathBuf, MinecraftInstallError> {
-    let path = Path::new(relative);
-    if path.is_absolute()
-        || path.components().any(|component| {
-            matches!(
-                component,
-                Component::ParentDir | Component::RootDir | Component::Prefix(_)
-            )
-        })
-    {
-        return Err(MinecraftInstallError::InvalidMetadataPath(
-            relative.to_owned(),
-        ));
-    }
-    Ok(root.join(path))
-}
-
-fn validate_asset_hash(hash: &str) -> Result<(), MinecraftInstallError> {
-    if hash.len() != 40 || !hash.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return Err(MinecraftInstallError::InvalidAssetHash(hash.to_owned()));
-    }
-    Ok(())
 }
 
 #[cfg(test)]
