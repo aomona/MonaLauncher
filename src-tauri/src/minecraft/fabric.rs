@@ -5,12 +5,13 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use reqwest::blocking::{Client, Response};
+use reqwest::blocking::Client;
 use reqwest::{StatusCode, Url};
 use serde::{Deserialize, Serialize};
 use sha1::{Digest, Sha1};
 
 use super::file_io::{file_digest, read_bounded_file, replace_file_atomic, write_atomic};
+use super::http::read_bounded;
 use super::model::{Argument, ArgumentValue, Arguments, InstallProgress};
 use super::paths::MinecraftPaths;
 
@@ -218,7 +219,11 @@ pub fn list_loader_versions(
     let url = loader_versions_url(minecraft_version)?;
     let response = client.get(url).send()?;
     let status = response.status();
-    let bytes = read_bounded(response, MAX_META_RESPONSE_SIZE)?;
+    let bytes = read_bounded(
+        response,
+        MAX_META_RESPONSE_SIZE,
+        FabricError::ResponseTooLarge,
+    )?;
     let entries = parse_loader_response(status, &bytes)?;
     if entries.len() > MAX_LOADER_VERSIONS {
         return Err(FabricError::ResponseTooLarge);
@@ -584,25 +589,7 @@ fn validate_checksum(checksum: &str) -> Result<String, FabricError> {
 
 fn fetch_bounded(client: &Client, url: Url, maximum: u64) -> Result<Vec<u8>, FabricError> {
     let response = client.get(url).send()?.error_for_status()?;
-    read_bounded(response, maximum)
-}
-
-fn read_bounded(mut response: Response, maximum: u64) -> Result<Vec<u8>, FabricError> {
-    if response
-        .content_length()
-        .is_some_and(|length| length > maximum)
-    {
-        return Err(FabricError::ResponseTooLarge);
-    }
-    let mut bytes = Vec::new();
-    response
-        .by_ref()
-        .take(maximum + 1)
-        .read_to_end(&mut bytes)?;
-    if bytes.len() as u64 > maximum {
-        return Err(FabricError::ResponseTooLarge);
-    }
-    Ok(bytes)
+    read_bounded(response, maximum, FabricError::ResponseTooLarge)
 }
 
 fn download_library(

@@ -5,13 +5,14 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use reqwest::blocking::{Client, Response};
+use reqwest::blocking::Client;
 use reqwest::Url;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use zip::ZipArchive;
 
 use super::file_io::{file_digest, replace_file_atomic};
+use super::http::read_bounded;
 use super::model::InstallProgress;
 use super::paths::MinecraftPaths;
 
@@ -231,8 +232,11 @@ fn fetch_runtime_package(
             continue;
         }
         let response = response.error_for_status()?;
-        let assets: Vec<AdoptiumAsset> =
-            serde_json::from_slice(&read_bounded(response, MAX_RUNTIME_METADATA_SIZE)?)?;
+        let assets: Vec<AdoptiumAsset> = serde_json::from_slice(&read_bounded(
+            response,
+            MAX_RUNTIME_METADATA_SIZE,
+            RuntimeInstallError::ResponseTooLarge,
+        )?)?;
 
         if let Some(asset) = assets.into_iter().next() {
             return Ok(asset.binary.package);
@@ -459,24 +463,6 @@ fn runtime_client() -> Result<Client, RuntimeInstallError> {
         .redirect(redirect_policy)
         .user_agent(concat!("MonaLauncher/", env!("CARGO_PKG_VERSION")))
         .build()?)
-}
-
-fn read_bounded(mut response: Response, maximum: u64) -> Result<Vec<u8>, RuntimeInstallError> {
-    if response
-        .content_length()
-        .is_some_and(|length| length > maximum)
-    {
-        return Err(RuntimeInstallError::ResponseTooLarge);
-    }
-    let mut bytes = Vec::new();
-    response
-        .by_ref()
-        .take(maximum + 1)
-        .read_to_end(&mut bytes)?;
-    if bytes.len() as u64 > maximum {
-        return Err(RuntimeInstallError::ResponseTooLarge);
-    }
-    Ok(bytes)
 }
 
 fn validate_runtime_package(

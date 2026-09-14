@@ -3,6 +3,7 @@ mod chat_cache;
 pub mod diagnostics;
 pub mod fabric;
 pub(crate) mod file_io;
+mod http;
 pub mod installer;
 pub mod launcher;
 pub mod model;

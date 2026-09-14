@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use rayon::prelude::*;
-use reqwest::blocking::{Client, Response};
+use reqwest::blocking::Client;
 use reqwest::Url;
 use serde::de::DeserializeOwned;
 use sha1::{Digest, Sha1};
@@ -18,6 +18,7 @@ use super::fabric::{install_fabric, FabricError};
 use super::file_io::{
     file_digest, path_is_link_or_reparse, read_bounded_file, replace_file_atomic, write_atomic,
 };
+use super::http::read_bounded;
 use super::model::{
     rules_allow, AssetIndex, DownloadInfo, InstallProgress, InstanceManifest, ModLoader,
     VersionManifest, VersionMetadata,
@@ -819,26 +820,11 @@ fn fetch_bytes(client: &Client, url: &str) -> Result<Vec<u8>, MinecraftInstallEr
         .get(validate_https_url(url)?)
         .send()?
         .error_for_status()?;
-    read_bounded(response, MAX_METADATA_RESPONSE_SIZE)
-}
-
-fn read_bounded(mut response: Response, maximum: u64) -> Result<Vec<u8>, MinecraftInstallError> {
-    if response
-        .content_length()
-        .is_some_and(|length| length > maximum)
-    {
-        return Err(MinecraftInstallError::ResponseTooLarge);
-    }
-
-    let mut bytes = Vec::new();
-    response
-        .by_ref()
-        .take(maximum + 1)
-        .read_to_end(&mut bytes)?;
-    if bytes.len() as u64 > maximum {
-        return Err(MinecraftInstallError::ResponseTooLarge);
-    }
-    Ok(bytes)
+    read_bounded(
+        response,
+        MAX_METADATA_RESPONSE_SIZE,
+        MinecraftInstallError::ResponseTooLarge,
+    )
 }
 
 fn minecraft_client() -> Result<Client, MinecraftInstallError> {
