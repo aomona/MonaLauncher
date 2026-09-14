@@ -5,6 +5,7 @@ import type {
   InstallProgress,
   InstanceDiagnosis,
   InstancePermissions,
+  LaunchMode,
   LogLine,
   MinecraftInstance,
   MinecraftLaunchProgress,
@@ -45,6 +46,7 @@ export function useLauncher() {
     | "rename"
     | "permissions"
     | "delete"
+    | "duplicate"
     | "diagnose"
     | "repair"
     | null
@@ -198,8 +200,8 @@ export function useLauncher() {
     }
   };
 
-  const launch = async (target = selected) => {
-    if (!target || busy || runningIds.has(target.id)) return;
+  const launch = async (target = selected, mode: LaunchMode = "default") => {
+    if (!target || busy || mods.modOperationActive || runningIds.has(target.id)) return;
     setSelectedId(target.id);
     setError(null);
     setBusy("launch");
@@ -213,6 +215,7 @@ export function useLauncher() {
     try {
       const pid = await invoke<number>("launch_minecraft_instance", {
         instanceId: target.id,
+        mode,
       });
       setLogs((current) => [
         ...current,
@@ -330,6 +333,28 @@ export function useLauncher() {
     }
   };
 
+  const duplicate = async (target: MinecraftInstance) => {
+    if (busy || mods.modOperationActive || runningIds.has(target.id)) return;
+    setSelectedId(target.id);
+    setError(null);
+    setBusy("duplicate");
+    try {
+      const copied = await invoke<MinecraftInstance>("duplicate_minecraft_instance", {
+        instanceId: target.id,
+        newInstanceId: `instance-${crypto.randomUUID().replace(/-/g, "")}`,
+        name: `${Array.from(target.name).slice(0, 75).join("")} (複製)`,
+      });
+      setInstances((current) =>
+        [...current, copied].sort((a, b) => a.name.localeCompare(b.name, "ja")),
+      );
+      return copied;
+    } catch (cause) {
+      setError(String(cause));
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const deleteSelected = async () => {
     if (!selected) return;
     const deletedId = selected.id;
@@ -394,6 +419,7 @@ export function useLauncher() {
     renameSelected,
     saveSelectedPermissions,
     deleteSelected,
+    duplicate,
   };
 }
 export type Launcher = ReturnType<typeof useLauncher>;

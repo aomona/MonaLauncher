@@ -100,6 +100,7 @@ export default function App() {
           key={launcher.selected.id}
           launcher={launcher}
           initialTab={dialog.initialTab}
+          initialAction={dialog.initialAction}
           rememberTab={dialog.rememberTab}
           scrollMemory={dialog.scrollMemory}
           onClose={dialog.closeInstance}

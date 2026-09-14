@@ -30,13 +30,15 @@ export function InstanceLaunchControls({
       ? l.launchProgress.message
       : (l.progress?.message ??
         l.currentModInstallProgress?.message ??
-        (l.busy === "stop"
-          ? "Stopping Minecraft…"
-          : l.busy === "diagnose"
-            ? "ファイルを検証しています…"
-            : l.isRunning
-              ? "Running"
-              : ""));
+        (l.busy === "duplicate"
+          ? "インスタンスを複製しています…"
+          : l.busy === "stop"
+            ? "Stopping Minecraft…"
+            : l.busy === "diagnose"
+              ? "ファイルを検証しています…"
+              : l.isRunning
+                ? "Running"
+                : ""));
   return (
     <>
       <output className="footer-status min-w-0 flex-1">

@@ -159,3 +159,9 @@ LinuxのPermissionsも同じ保存APIとSwitchを使用する。Wayland優先と
 ## アカウント認証の仲介（2026-09-13）
 
 Permissionsの「通信とデスクトップ」に既存Switchで表示する。保存値は `accountAuthentication: disabled | brokered`、初期値はdisabled。旧 `accessToken` のboolも読み込み、trueはbrokered、falseはdisabledとして保存し直す。新旧フィールドの重複は拒否する。ONでは実トークンをRust側で保持して限定認証APIを仲介し、ゲームには固定の無効なトークン値だけを渡す。通信許可とは独立して保存し、デモ・未ログイン時は仲介しない。すべてのModが起動中は許可済み認証操作を利用できることを説明する。Windowsでも専用IPCの実装によりSwitchを有効にする。現在の試験対応バージョン、署名鍵をゲームに渡さないこと、実アカウントのオンライン接続はmacOSで検証済み・Windows/Linuxでは未検証であることを表示する。失敗時の元の設定・再試行・成功Toastを維持する。原本8.2を更新し、色・寸法は既存Switchを使うためトークンJSON・生成設定は変更しない。
+
+## インスタンス一覧の操作メニュー（2026-09-14）
+
+Play・Edit・Menuは常設。EditはOverview、Menuは今回限りのオフライン起動・デモ起動・複製・削除を提供する。共通MenuはBase UIで実装し、既存トークンの寸法・配色を使うためトークンJSONの追加はない。複製・起動・削除の非同期処理はuseLauncherが担当する。削除はSettings内の既存確認Dialogで対象名の入力を必須とする。起動モードの指定で保存済みの権限やデモ設定は書き換えない。
+
+検証: macOS上で`pnpm check`、Playwright 46件、Rust 138件（外部環境に依存する9件はignored）、fmt・Clippyが成功。起動モードのIPC指定、通常Playへの復帰、複製・削除・失敗時の維持、Light/Darkと1440px・1024px・320px、200%文字で確認した。ファイル複製はRustの一時ディレクトリで独立性・リンク拒否・失敗時の除去・profilekeysの除外を検証。新メニューからの実ゲーム起動、Windows/Linux実機、実アカウント認証は未検証。

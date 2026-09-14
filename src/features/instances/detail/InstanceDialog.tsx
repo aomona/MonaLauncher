@@ -35,19 +35,21 @@ const instanceTabs = [
 export function InstanceDialog({
   launcher: l,
   initialTab,
+  initialAction,
   rememberTab,
   scrollMemory,
   onClose,
 }: {
   launcher: Launcher;
   initialTab: string;
+  initialAction?: "delete";
   rememberTab: (tab: string) => void;
   scrollMemory: Record<string, number>;
   onClose: () => void;
 }) {
   const instance = l.selected!;
   const [tab, setTab] = useState(initialTab);
-  const [confirm, setConfirm] = useState<InstanceAction | null>(null);
+  const [confirm, setConfirm] = useState<InstanceAction | null>(initialAction ?? null);
   const body = useRef<HTMLDivElement>(null);
   const { toasts, saveWithToast } = useInstanceSaveToast();
   const editor = useInstanceEditor(l, () =>

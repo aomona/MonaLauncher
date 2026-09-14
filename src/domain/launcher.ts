@@ -29,6 +29,8 @@ export type PermissionSupport = {
   graphicsCache: boolean;
 };
 
+export type LaunchMode = "default" | "offline" | "demo";
+
 export type MinecraftInstance = {
   id: string;
   name: string;

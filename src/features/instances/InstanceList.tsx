@@ -1,15 +1,16 @@
 import { Box, MoreHorizontal, Pencil, Play } from "lucide-react";
 import type { Launcher } from "../../app/useLauncher";
 import { Button } from "../../components/Button";
+import { Menu, MenuItem } from "../../components/Menu";
 import type { MinecraftInstance } from "../../domain/launcher";
 
 import { instanceVersionLabel } from "./instance-label";
 
 type InstanceListModel = Pick<
   Launcher,
-  "busy" | "launch" | "modOperationActive" | "runningIds" | "setSettingsName"
+  "busy" | "launch" | "duplicate" | "modOperationActive" | "runningIds" | "setSettingsName"
 >;
-export type OpenInstance = (instance: MinecraftInstance, tab?: string) => void;
+export type OpenInstance = (instance: MinecraftInstance, tab?: string, action?: "delete") => void;
 export function InstanceList({
   items,
   launcher,
@@ -68,26 +69,63 @@ export function InstanceList({
             >
               <Pencil size={16} aria-hidden="true" />
             </Button>
-            <details className="relative">
-              <summary
-                className="button button-ghost icon-button list-none"
-                aria-label={`${item.name}の操作`}
-              >
-                <MoreHorizontal size={18} />
-              </summary>
-              <div className="absolute right-0 z-10 mt-1 min-w-(--mona-layout-sidebar-width) rounded-menu border border-border-subtle bg-background-floating p-1 shadow-floating">
-                <Button
-                  tone="ghost"
-                  className="w-full justify-start"
-                  onClick={(event) => {
-                    event.currentTarget.closest("details")?.removeAttribute("open");
-                    openInstance(item, "Settings");
-                  }}
-                >
-                  インスタンス設定
+            <Menu
+              trigger={
+                <Button tone="ghost" className="icon-button" aria-label={`${item.name}の操作`}>
+                  <MoreHorizontal size={18} aria-hidden="true" />
                 </Button>
-              </div>
-            </details>
+              }
+            >
+              <MenuItem
+                disabled={
+                  Boolean(busy) ||
+                  launcher.modOperationActive ||
+                  runningIds.has(item.id) ||
+                  !item.sandboxed
+                }
+                onClick={() => {
+                  launcher.setSettingsName(item.name);
+                  void launcher.launch(item, "offline");
+                }}
+              >
+                オフラインモードで起動
+              </MenuItem>
+              <MenuItem
+                disabled={
+                  Boolean(busy) ||
+                  launcher.modOperationActive ||
+                  runningIds.has(item.id) ||
+                  !item.sandboxed
+                }
+                onClick={() => {
+                  launcher.setSettingsName(item.name);
+                  void launcher.launch(item, "demo");
+                }}
+              >
+                デモモードで起動
+              </MenuItem>
+              <MenuItem
+                disabled={
+                  Boolean(busy) ||
+                  launcher.modOperationActive ||
+                  runningIds.has(item.id) ||
+                  !item.sandboxed
+                }
+                onClick={() => {
+                  void launcher.duplicate(item).then((copied) => {
+                    if (copied) openInstance(copied, "Overview");
+                  });
+                }}
+              >
+                複製
+              </MenuItem>
+              <MenuItem
+                disabled={Boolean(busy) || launcher.modOperationActive || runningIds.has(item.id)}
+                onClick={() => openInstance(item, "Settings", "delete")}
+              >
+                削除
+              </MenuItem>
+            </Menu>
           </div>
         </div>
       ))}

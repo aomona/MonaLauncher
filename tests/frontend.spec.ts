@@ -81,6 +81,8 @@ async function mockDesktop(
         instances.push({ ...instances[0], id: `fixture-${i}`, name: `Instance ${i}` });
       const state = {
         calls: [] as string[],
+        launches: [] as { instanceId: string; mode: string }[],
+        failDuplicate: false,
         newsFeed: {
           entries: [] as {
             id: string;
@@ -221,12 +223,30 @@ async function mockDesktop(
                 return { ...item };
               }
               case "launch_minecraft_instance":
+                state.launches.push({
+                  instanceId: String(args.instanceId),
+                  mode: String(args.mode),
+                });
                 state.emit("minecraft-status", {
                   instanceId: args.instanceId,
                   status: "running",
                   exitCode: null,
                 });
                 return 123;
+              case "duplicate_minecraft_instance": {
+                if (state.failDuplicate) throw new Error("複製テストエラー");
+                if (!/^[a-zA-Z0-9_-]{1,41}$/.test(String(args.newInstanceId)))
+                  throw new Error("Invalid instance ID");
+                const original = instances.find((item) => item.id === args.instanceId)!;
+                const copied = {
+                  ...structuredClone(original),
+                  id: String(args.newInstanceId),
+                  name: String(args.name),
+                  gameDirectory: `C:\\Minecraft\\${args.newInstanceId}`,
+                };
+                instances.push(copied);
+                return copied;
+              }
               case "stop_minecraft_instance":
                 if (state.failStop) throw new Error("終了テストエラー");
                 return;
@@ -265,6 +285,156 @@ async function openSurvival(page: Page) {
   await page.getByRole("button", { name: "Survival", exact: true }).click();
   await expect(page.getByRole("dialog", { name: "Survival", exact: true })).toBeVisible();
 }
+
+test("instance menu offers one-shot launch modes and disables actions while running", async ({
+  page,
+}) => {
+  await mockDesktop(page);
+  await page.getByRole("button", { name: "Instances", exact: true }).click();
+  const trigger = page.getByRole("button", { name: "Survivalの操作", exact: true });
+  await trigger.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("menuitem")).toHaveText([
+    "オフラインモードで起動",
+    "デモモードで起動",
+    "複製",
+    "削除",
+  ]);
+  await page.keyboard.press("Escape");
+  await expect(trigger).toBeFocused();
+  for (const [label, mode] of [
+    ["オフラインモードで起動", "offline"],
+    ["デモモードで起動", "demo"],
+  ]) {
+    await trigger.click();
+    await page.getByRole("menuitem", { name: label, exact: true }).click();
+    await expect(page.getByRole("menu")).toHaveCount(0);
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          (
+            window as unknown as { __test: { launches: { instanceId: string; mode: string }[] } }
+          ).__test.launches.at(-1),
+        ),
+      )
+      .toEqual({ instanceId: "survival", mode });
+    await trigger.click();
+    await expect(page.getByRole("menuitem")).toHaveCount(4);
+    for (const item of await page.getByRole("menuitem").all())
+      await expect(item).toHaveAttribute("aria-disabled", "true");
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("menu")).toHaveCount(0);
+    await page.evaluate(() =>
+      (
+        window as unknown as { __test: { emit: (event: string, payload: unknown) => void } }
+      ).__test.emit("minecraft-status", { instanceId: "survival", status: "stopped", exitCode: 0 }),
+    );
+    await expect(
+      page
+        .locator(".instance-row")
+        .filter({ has: trigger })
+        .getByRole("button", { name: "Play", exact: true }),
+    ).toBeVisible();
+  }
+  await page
+    .locator(".instance-row")
+    .filter({ has: trigger })
+    .getByRole("button", { name: "Play", exact: true })
+    .click();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as unknown as { __test: { launches: { mode: string }[] } }).__test.launches.at(-1)
+            ?.mode,
+      ),
+    )
+    .toBe("default");
+});
+
+test("instance menu duplicates the selected row and requires exact name to delete the copy", async ({
+  page,
+}) => {
+  await mockDesktop(page);
+  await page.getByRole("button", { name: "Instances", exact: true }).click();
+  const sourceName =
+    "とても長い日本語のインスタンス名で折り返しと操作ボタンへの到達性を確認する環境";
+  await page.getByRole("button", { name: `${sourceName}の操作`, exact: true }).click();
+  await page.getByRole("menuitem", { name: "複製", exact: true }).click();
+  const copyName = `${sourceName} (複製)`;
+  await expect(page.getByRole("dialog", { name: copyName, exact: true })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "Overview", exact: true })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(page.getByRole("dialog")).toContainText("1.20.4");
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".instance-row")).toHaveCount(3);
+  await page.getByRole("button", { name: `${copyName}の操作`, exact: true }).click();
+  await page.getByRole("menuitem", { name: "削除", exact: true }).click();
+  const confirmation = page.getByRole("dialog", {
+    name: "インスタンスを削除しますか？",
+    exact: true,
+  });
+  await expect(confirmation).toContainText(copyName);
+  await expect(
+    confirmation.getByRole("button", { name: "完全に削除", exact: true }),
+  ).toBeDisabled();
+  await confirmation.getByLabel("確認のためインスタンス名を入力").fill(copyName);
+  await confirmation.getByRole("button", { name: "完全に削除", exact: true }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(page.locator(".instance-row")).toHaveCount(2);
+  await expect(page.getByRole("button", { name: sourceName, exact: true })).toBeVisible();
+});
+
+test("failed duplication leaves the original and reports the error", async ({ page }) => {
+  await mockDesktop(page);
+  await page.evaluate(() => {
+    (window as unknown as { __test: { failDuplicate: boolean } }).__test.failDuplicate = true;
+  });
+  await page.getByRole("button", { name: "Instances", exact: true }).click();
+  await page.getByRole("button", { name: "Survivalの操作", exact: true }).click();
+  await page.getByRole("menuitem", { name: "複製", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText("複製テストエラー");
+  await expect(page.locator(".instance-row")).toHaveCount(2);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+});
+
+test("instance menu stays reachable across themes, narrow widths and large text", async ({
+  page,
+}) => {
+  await mockDesktop(page);
+  await page.getByRole("button", { name: "Instances", exact: true }).click();
+  for (const theme of ["light", "dark"]) {
+    await page.evaluate((value) => {
+      document.documentElement.dataset.theme = value;
+    }, theme);
+    for (const width of [1440, 1024, 320]) {
+      await page.setViewportSize({ width, height: 640 });
+      const trigger = page.getByRole("button", { name: "Survivalの操作", exact: true });
+      await trigger.click();
+      await expect(page.getByRole("menuitem")).toHaveCount(4);
+      for (const item of await page.getByRole("menuitem").all())
+        await expect(item).toBeInViewport({ ratio: 1 });
+      expect(
+        await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+      ).toBeTruthy();
+      await page.screenshot({ path: `test-results/instance-menu-${theme}-${width}.png` });
+      await page.keyboard.press("Escape");
+      await expect(page.getByRole("menu")).toHaveCount(0);
+      await expect(trigger).toBeFocused();
+    }
+  }
+  await page.setViewportSize({ width: 1024, height: 640 });
+  await page.evaluate(() => {
+    document.documentElement.style.fontSize = "200%";
+  });
+  await page.emulateMedia({ forcedColors: "active", reducedMotion: "reduce" });
+  await page.getByRole("button", { name: "Survivalの操作", exact: true }).click();
+  await expect(page.getByRole("menuitem", { name: "削除", exact: true })).toBeInViewport({
+    ratio: 1,
+  });
+});
 
 test("light/dark, navigation and narrow reflow", async ({ page }) => {
   await mockDesktop(page);
