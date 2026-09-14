@@ -116,6 +116,15 @@ test("duplicate slugs, malformed front matter and unsafe Markdown fail explicitl
   }
 });
 
+test("parses CRLF front matter without gray-matter", async (t) => {
+  const f = await fixture();
+  t.after(() => rm(f.dir, { recursive: true, force: true }));
+  await writeFile(join(f.sourceDir, "windows.md"), article().replaceAll("\n", "\r\n"));
+  const result = await generateFeed(f);
+  assert.equal(result.articles[0]?.title, "Test");
+  assert.match(result.articles[0]?.content ?? "", /<strong>本文<\/strong>/);
+});
+
 test("empty feeds are deterministic and preserve project paths", async (t) => {
   const f = await fixture();
   t.after(() => rm(f.dir, { recursive: true, force: true }));

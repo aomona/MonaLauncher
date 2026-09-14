@@ -2,12 +2,15 @@ import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Feed } from "feed";
-import matter from "gray-matter";
 import { Marked } from "marked";
 import { parse as parseYaml } from "yaml";
-import { feedConfig } from "./feed-config.ts";
+import config from "../news.config.json" with { type: "json" };
 
 const root = fileURLToPath(new URL("../", import.meta.url));
+const feedConfig = {
+  ...config,
+  siteUrl: process.env.NEWS_SITE_URL ?? config.siteUrl,
+};
 const isoDate =
   /^\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])(?:T(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d(?:\.\d{1,9})?)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d))?$/;
 
@@ -104,13 +107,14 @@ export async function generateFeed({
       const source = await readFile(file, "utf8");
       if (!source.startsWith("---\n") && !source.startsWith("---\r\n"))
         throw new Error("YAML Front Matter is required (--- on its own line)");
-      if (!/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/.test(source))
-        throw new Error("YAML Front Matter must end with --- on its own line");
+      const frontMatter = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(source);
+      if (!frontMatter) throw new Error("YAML Front Matter must end with --- on its own line");
       // YAML 1.2 leaves dates as strings, so invalid calendar dates cannot be silently normalized.
-      const parsed = matter(source, {
-        engines: { yaml: (input: string) => parseYaml(input, { uniqueKeys: true }) },
-      });
-      const data: Record<string, unknown> = parsed.data;
+      const data = (parseYaml(frontMatter[1], { uniqueKeys: true }) ?? {}) as Record<
+        string,
+        unknown
+      >;
+      const body = source.slice(frontMatter[0].length);
       const title = text(data.title, "title");
       const description = text(data.description, "description");
       const date = dateValue(data.date);
@@ -141,8 +145,8 @@ export async function generateFeed({
           }
         },
       });
-      text(parsed.content, "body");
-      const content = renderer.parse(parsed.content, { async: false });
+      text(body, "body");
+      const content = renderer.parse(body, { async: false });
       if (content) text(content, "body");
       articles.push({ file, slug, title, description, date, author, url, content });
     } catch (error) {

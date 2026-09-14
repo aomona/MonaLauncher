@@ -28,7 +28,7 @@ author: 記事の著者名
 
 ## 設定と公開先
 
-設定は `news.config.json` にまとめ、`scripts/feed-config.ts`とランチャーのRSS取得処理で共有する。サイトURLは `NEWS_SITE_URL` で上書き可能。ランチャー側にはRustビルド時に反映されるため、配信URLを変えた場合はアプリも再ビルドする。その他のtitle・description・language・copyrightもJSONで変更する。
+設定は `news.config.json` にまとめ、生成スクリプトとランチャーのRSS取得処理で共有する。サイトURLは `NEWS_SITE_URL` で上書き可能。ランチャー側にはRustビルド時に反映されるため、配信URLを変えた場合はアプリも再ビルドする。その他のtitle・description・language・copyrightもJSONで変更する。
 
 既定の公開URL:
 
@@ -76,7 +76,7 @@ pnpm test:ui
 
 `node:test`でメタデータの検証・並び順・決定性・タイムゾーン独立性・重複・失敗時の既存出力保持を検査する。既存のPlaywrightテストではブラウザのXMLパーサーを使い、RSS 2.0、名前空間、各itemの主要値、日本語とHTMLを確認する。
 
-追加したライブラリはビルド用の`feed`・`gray-matter`・`marked`・`yaml`のみ。`yaml`は日付を文字列として読み、YAMLの自動日付変換で不正な日付が補正されるのを防ぐために使用する。専用SSG、TS実行用ランタイム、RSS用Webサーバーは不要。
+追加したライブラリはビルド用の`feed`・`marked`・`yaml`のみ。front matterの区切りは生成スクリプトで分離し、`yaml`は日付を文字列として読み、YAMLの自動日付変換で不正な日付が補正されるのを防ぐために使用する。専用SSG、TS実行用ランタイム、RSS用Webサーバーは不要。
 
 ## ランチャー内の表示
 
