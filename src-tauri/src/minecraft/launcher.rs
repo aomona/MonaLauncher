@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
 use std::ffi::OsString;
 use std::fmt;
@@ -21,9 +21,7 @@ use super::file_io::read_bounded_file;
 use super::installer::{
     load_instance as load_instance_manifest, managed_java_major as installed_java_major,
 };
-use super::model::{
-    rules_allow, Argument, ArgumentValue, InstanceManifest, ModLoader, VersionMetadata,
-};
+use super::model::{rules_allow, Argument, InstanceManifest, ModLoader, VersionMetadata};
 use super::paths::MinecraftPaths;
 
 const MAX_NATIVE_ARCHIVE_ENTRIES: usize = 10_000;
@@ -533,7 +531,7 @@ pub(crate) fn spawn_instance_with_factory(
         ),
     ]);
 
-    let features = HashMap::from([
+    let features = BTreeMap::from([
         ("is_demo_user".to_owned(), instance.demo),
         ("has_custom_resolution".to_owned(), false),
         ("has_quick_plays_support".to_owned(), false),
@@ -579,12 +577,12 @@ pub(crate) fn spawn_instance_with_factory(
             classpath.clone(),
         ]
     } else {
-        expand_arguments(&version.arguments.jvm, &features, &substitutions)
+        expand_arguments(&version.arguments.jvm, &features, &substitutions)?
     };
     arguments.extend(jvm_arguments.into_iter().map(OsString::from));
     if let Some(profile) = &fabric {
         arguments.extend(
-            expand_arguments(&profile.arguments.jvm, &features, &substitutions)
+            expand_arguments(&profile.arguments.jvm, &features, &substitutions)?
                 .into_iter()
                 .map(OsString::from),
         );
@@ -650,22 +648,21 @@ pub(crate) fn spawn_instance_with_factory(
             .map(|profile| profile.main_class.as_str())
             .unwrap_or(&version.main_class),
     ));
-    let mut game_arguments = version
-        .minecraft_arguments
-        .as_deref()
-        .map(|value| {
-            value
-                .split_whitespace()
-                .map(|argument| substitute(argument, &substitutions))
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_else(|| expand_arguments(&version.arguments.game, &features, &substitutions));
+    let mut game_arguments = if let Some(legacy) = &version.minecraft_arguments {
+        let arguments: Vec<_> = legacy
+            .split_whitespace()
+            .map(|value| Argument::Plain(value.to_owned()))
+            .collect();
+        expand_arguments(&arguments, &features, &substitutions)?
+    } else {
+        expand_arguments(&version.arguments.game, &features, &substitutions)?
+    };
     if let Some(profile) = &fabric {
         game_arguments.extend(expand_arguments(
             &profile.arguments.game,
             &features,
             &substitutions,
-        ));
+        )?);
     }
     arguments.extend(game_arguments.into_iter().map(OsString::from));
 
@@ -1076,7 +1073,7 @@ fn extract_native_libraries(
     destination: &Path,
 ) -> Result<(), MinecraftLaunchError> {
     for library in &version.libraries {
-        if !rules_allow(library.rules.as_deref(), &HashMap::new()) {
+        if !rules_allow(library.rules.as_deref(), &BTreeMap::new())? {
             continue;
         }
         let Some(native) = library.platform_native() else {
@@ -1376,7 +1373,7 @@ fn build_classpath(
     demo: bool,
     fabric: Option<&FabricProfile>,
 ) -> Result<Vec<PathBuf>, MinecraftLaunchError> {
-    let features = HashMap::from([("is_demo_user".to_owned(), demo)]);
+    let features = BTreeMap::from([("is_demo_user".to_owned(), demo)]);
     let mut classpath = Vec::new();
 
     for library in &version.libraries {
@@ -1388,7 +1385,7 @@ fn build_classpath(
         }) {
             continue;
         }
-        if !rules_allow(library.rules.as_deref(), &features) {
+        if !rules_allow(library.rules.as_deref(), &features)? {
             continue;
         }
 
@@ -1430,29 +1427,14 @@ fn same_library_artifact(left: &str, right: &str) -> bool {
 
 fn expand_arguments(
     arguments: &[Argument],
-    features: &HashMap<String, bool>,
+    features: &BTreeMap<String, bool>,
     substitutions: &HashMap<&str, String>,
-) -> Vec<String> {
-    let mut expanded = Vec::new();
-
-    for argument in arguments {
-        match argument {
-            Argument::Plain(value) => expanded.push(substitute(value, substitutions)),
-            Argument::Conditional { rules, value } if rules_allow(Some(rules), features) => {
-                match value {
-                    ArgumentValue::One(value) => {
-                        expanded.push(substitute(value, substitutions));
-                    }
-                    ArgumentValue::Many(values) => {
-                        expanded.extend(values.iter().map(|value| substitute(value, substitutions)))
-                    }
-                }
-            }
-            Argument::Conditional { .. } => {}
-        }
-    }
-
-    expanded
+) -> Result<Vec<String>, MinecraftLaunchError> {
+    Ok(enderpin::runtime::arguments(arguments, features)
+        .map_err(std::io::Error::other)?
+        .iter()
+        .map(|value| substitute(value, substitutions))
+        .collect())
 }
 
 fn substitute(value: &str, substitutions: &HashMap<&str, String>) -> String {
@@ -1522,7 +1504,7 @@ mod tests {
         assert_eq!(native[2], args[0]);
     }
     use super::*;
-    use crate::minecraft::model::{Rule, RuleOs};
+    use crate::minecraft::model::{ArgumentValue, Rule, RuleOs};
 
     #[test]
     fn offline_names_are_validated_before_becoming_launch_arguments() {
@@ -1651,7 +1633,7 @@ mod tests {
             (false, allowed, None, "0"),
         ] {
             let substitutions = authentication_substitutions(demo, permissions, identity);
-            let expanded = expand_arguments(&arguments, &HashMap::new(), &substitutions);
+            let expanded = expand_arguments(&arguments, &BTreeMap::new(), &substitutions).unwrap();
             assert_eq!(expanded[1], expected);
             assert!(!expanded.join(" ").contains("test-minecraft-secret"));
             assert_eq!(expanded[3], if expected == "0" { "legacy" } else { "msa" });
@@ -1694,11 +1676,38 @@ mod tests {
         assert_eq!(
             expand_arguments(
                 &arguments,
-                &HashMap::new(),
+                &BTreeMap::new(),
                 &HashMap::from([("${name}", "DemoPlayer".to_owned())])
-            ),
+            )
+            .unwrap(),
             ["--name", "DemoPlayer", "--windows"]
         );
+    }
+
+    #[test]
+    fn enderpin_rejects_invalid_launch_rules_and_arguments() {
+        let invalid_rules: Vec<Vec<Rule>> = vec![
+            serde_json::from_str(r#"[{"action":"unknown"}]"#).unwrap(),
+            serde_json::from_value(serde_json::json!([{
+                "action": "allow", "os": {"name": super::super::model::platform_os(), "version": ".*"}
+            }])).unwrap(),
+        ];
+        for rules in invalid_rules {
+            // Installer, diagnostics and native/classpath selection share this boundary.
+            assert!(rules_allow(Some(&rules), &BTreeMap::new()).is_err());
+            let argument = Argument::Conditional {
+                rules,
+                value: ArgumentValue::One("--demo".into()),
+            };
+            assert!(expand_arguments(&[argument], &BTreeMap::new(), &HashMap::new()).is_err());
+        }
+        for arguments in [
+            vec![Argument::Plain("bad\0argument".into())],
+            vec![Argument::Plain("x".repeat(16384))],
+            vec![Argument::Plain("--demo".into()); 4097],
+        ] {
+            assert!(expand_arguments(&arguments, &BTreeMap::new(), &HashMap::new()).is_err());
+        }
     }
 
     #[test]

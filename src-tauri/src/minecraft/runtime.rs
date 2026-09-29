@@ -12,7 +12,7 @@ use sha2::{Digest, Sha256};
 use zip::ZipArchive;
 
 use super::file_io::{file_digest, replace_file_atomic};
-use super::http::read_bounded;
+use super::http::{distribution_response, read_bounded};
 use super::model::InstallProgress;
 use super::paths::MinecraftPaths;
 
@@ -178,7 +178,7 @@ where
         1,
         &format!("Java {major}をダウンロードしています"),
     );
-    download_and_verify(&client, &package.link, &package.checksum, &archive)?;
+    download_and_verify(&package.link, &package.checksum, &archive)?;
 
     let temporary = paths
         .runtimes()
@@ -247,7 +247,6 @@ fn fetch_runtime_package(
 }
 
 fn download_and_verify(
-    client: &Client,
     url: &str,
     expected: &str,
     target: &Path,
@@ -259,7 +258,7 @@ fn download_and_verify(
     }
 
     let part = target.with_extension("zip.part");
-    let mut response = client.get(url).send()?.error_for_status()?;
+    let mut response = distribution_response(&url, runtime_download_url_allowed)?;
     if response
         .content_length()
         .is_some_and(|length| length > MAX_RUNTIME_ARCHIVE_SIZE)

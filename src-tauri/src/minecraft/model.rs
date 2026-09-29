@@ -1,4 +1,6 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
+
+pub use enderpin::runtime::{Argument, ArgumentValue, Arguments, Rule, RuleOs};
 
 use serde::{Deserialize, Serialize};
 
@@ -126,43 +128,6 @@ pub struct DownloadInfo {
     pub url: String,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct Arguments {
-    pub game: Vec<Argument>,
-    pub jvm: Vec<Argument>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(untagged)]
-pub enum Argument {
-    Plain(String),
-    Conditional {
-        rules: Vec<Rule>,
-        value: ArgumentValue,
-    },
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(untagged)]
-pub enum ArgumentValue {
-    One(String),
-    Many(Vec<String>),
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct Rule {
-    pub action: String,
-    pub os: Option<RuleOs>,
-    pub features: Option<HashMap<String, bool>>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct RuleOs {
-    pub name: Option<String>,
-    pub arch: Option<String>,
-    pub version: Option<String>,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InstanceManifest {
@@ -199,58 +164,11 @@ pub struct InstallProgress {
     pub message: String,
 }
 
-pub fn rules_allow(rules: Option<&[Rule]>, features: &HashMap<String, bool>) -> bool {
-    let Some(rules) = rules else {
-        return true;
-    };
-
-    let mut allowed = false;
-
-    for rule in rules {
-        if rule_matches(rule, features) {
-            allowed = rule.action == "allow";
-        }
-    }
-
-    allowed
-}
-
-fn rule_matches(rule: &Rule, features: &HashMap<String, bool>) -> bool {
-    if let Some(os) = &rule.os {
-        if os.name.as_deref().is_some_and(|name| name != platform_os()) {
-            return false;
-        }
-
-        if os
-            .arch
-            .as_deref()
-            .is_some_and(|arch| !architecture_matches(arch))
-        {
-            return false;
-        }
-
-        // OSバージョン正規表現を指定する旧バージョンは、MVPでは対象外にする。
-        if os.version.is_some() {
-            return false;
-        }
-    }
-
-    if let Some(required_features) = &rule.features {
-        for (name, required_value) in required_features {
-            if features.get(name).copied().unwrap_or(false) != *required_value {
-                return false;
-            }
-        }
-    }
-
-    true
-}
-
-fn architecture_matches(expected: &str) -> bool {
-    matches!(
-        (std::env::consts::ARCH, expected),
-        ("x86_64", "x86_64") | ("x86", "x86") | ("aarch64", "arm64" | "aarch64")
-    )
+pub fn rules_allow(
+    rules: Option<&[Rule]>,
+    features: &BTreeMap<String, bool>,
+) -> std::io::Result<bool> {
+    enderpin::runtime::rules_allow(rules, features).map_err(std::io::Error::other)
 }
 
 #[cfg(test)]
@@ -259,7 +177,7 @@ mod tests {
 
     #[test]
     fn allows_items_without_rules() {
-        assert!(rules_allow(None, &HashMap::new()));
+        assert!(rules_allow(None, &BTreeMap::new()).unwrap());
     }
 
     #[test]
@@ -327,17 +245,15 @@ mod tests {
         let rule = Rule {
             action: "allow".to_owned(),
             os: None,
-            features: Some(HashMap::from([("is_demo_user".to_owned(), true)])),
+            features: Some(BTreeMap::from([("is_demo_user".to_owned(), true)])),
         };
 
-        assert!(!rules_allow(
-            Some(std::slice::from_ref(&rule)),
-            &HashMap::new()
-        ));
+        assert!(!rules_allow(Some(std::slice::from_ref(&rule)), &BTreeMap::new()).unwrap());
         assert!(rules_allow(
             Some(&[rule]),
-            &HashMap::from([("is_demo_user".to_owned(), true)]),
-        ));
+            &BTreeMap::from([("is_demo_user".to_owned(), true)]),
+        )
+        .unwrap());
     }
 
     #[test]
@@ -352,7 +268,7 @@ mod tests {
             features: None,
         };
 
-        assert!(!rules_allow(Some(&[rule]), &HashMap::new()));
+        assert!(!rules_allow(Some(&[rule]), &BTreeMap::new()).unwrap());
     }
 
     #[test]
