@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::ffi::OsString;
 use std::fmt;
@@ -6,10 +6,8 @@ use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::Duration;
 
 use rayon::prelude::*;
-use reqwest::blocking::Client;
 use reqwest::Url;
 use serde::de::DeserializeOwned;
 use sha1::{Digest, Sha1};
@@ -18,7 +16,7 @@ use super::fabric::{install_fabric, FabricError};
 use super::file_io::{
     file_digest, path_is_link_or_reparse, read_bounded_file, replace_file_atomic, write_atomic,
 };
-use super::http::read_bounded;
+use super::http::{distribution_response, read_bounded};
 use super::model::{
     rules_allow, AssetIndex, DownloadInfo, InstallProgress, InstanceManifest, ModLoader,
     VersionManifest, VersionMetadata,
@@ -319,23 +317,21 @@ where
 }
 
 pub fn list_available_versions() -> Result<VersionManifest, MinecraftInstallError> {
-    let client = minecraft_client()?;
-    let mut manifest = fetch_json(&client, VERSION_MANIFEST_URL)?;
+    let mut manifest = fetch_json(VERSION_MANIFEST_URL)?;
     validate_version_manifest(&mut manifest)?;
     Ok(manifest)
 }
 
 pub fn version_java_major(version_id: &str) -> Result<u32, MinecraftInstallError> {
     validate_version_identifier(version_id)?;
-    let client = minecraft_client()?;
-    let mut manifest: VersionManifest = fetch_json(&client, VERSION_MANIFEST_URL)?;
+    let mut manifest: VersionManifest = fetch_json(VERSION_MANIFEST_URL)?;
     validate_version_manifest(&mut manifest)?;
     let selected = manifest
         .versions
         .into_iter()
         .find(|version| version.id == version_id)
         .ok_or_else(|| MinecraftInstallError::VersionMissing(version_id.to_owned()))?;
-    let version_bytes = fetch_bytes(&client, &selected.url)?;
+    let version_bytes = fetch_bytes(&selected.url)?;
     verify_bytes_sha1(&version_bytes, &selected.sha1, PathBuf::from(version_id))?;
     let version =
         serde_json::from_slice::<VersionMetadata>(&version_bytes)?.for_current_platform()?;
@@ -381,10 +377,8 @@ where
 
     create_base_directories(paths)?;
 
-    let client = minecraft_client()?;
-
     progress_event(&progress, "metadata", 0, 1, "Fetching version manifest");
-    let mut manifest: VersionManifest = fetch_json(&client, VERSION_MANIFEST_URL)?;
+    let mut manifest: VersionManifest = fetch_json(VERSION_MANIFEST_URL)?;
     validate_version_manifest(&mut manifest)?;
     let release_id = options
         .requested_version
@@ -409,7 +403,7 @@ where
         1,
         &format!("Fetching Minecraft {release_id} metadata"),
     );
-    let version_bytes = fetch_bytes(&client, &release.url)?;
+    let version_bytes = fetch_bytes(&release.url)?;
     verify_bytes_sha1(
         &version_bytes,
         &release.sha1,
@@ -431,17 +425,17 @@ where
     write_atomic(&paths.version_json(&version.id), &version_bytes)?;
 
     progress_event(&progress, "client", 0, 1, "Downloading Minecraft client");
-    download_file(
-        &client,
-        &DownloadTask::from_info(&version.downloads.client, paths.version_jar(&version.id)),
-    )?;
+    download_file(&DownloadTask::from_info(
+        &version.downloads.client,
+        paths.version_jar(&version.id),
+    ))?;
     progress_event(&progress, "client", 1, 1, "Minecraft client ready");
 
-    let features = HashMap::from([("is_demo_user".to_owned(), options.demo)]);
+    let features = BTreeMap::from([("is_demo_user".to_owned(), options.demo)]);
     let mut library_tasks = BTreeMap::<PathBuf, DownloadTask>::new();
 
     for library in &version.libraries {
-        if !rules_allow(library.rules.as_deref(), &features) {
+        if !rules_allow(library.rules.as_deref(), &features)? {
             continue;
         }
 
@@ -465,14 +459,13 @@ where
     }
 
     download_tasks(
-        &client,
         library_tasks.into_values().collect(),
         "libraries",
         &progress,
     )?;
 
     progress_event(&progress, "assets-index", 0, 1, "Downloading asset index");
-    let asset_index_bytes = fetch_bytes(&client, &version.asset_index.url)?;
+    let asset_index_bytes = fetch_bytes(&version.asset_index.url)?;
     verify_bytes_sha1(
         &asset_index_bytes,
         &version.asset_index.sha1,
@@ -507,12 +500,7 @@ where
         });
     }
 
-    download_tasks(
-        &client,
-        asset_tasks.into_values().collect(),
-        "assets",
-        &progress,
-    )?;
+    download_tasks(asset_tasks.into_values().collect(), "assets", &progress)?;
 
     let game_directory = paths.instance_game_directory(instance_id);
     fs::create_dir_all(&game_directory)?;
@@ -685,7 +673,6 @@ fn create_base_directories(paths: &MinecraftPaths) -> Result<(), MinecraftInstal
 }
 
 fn download_tasks<F>(
-    client: &Client,
     tasks: Vec<DownloadTask>,
     stage: &str,
     progress: &F,
@@ -714,7 +701,7 @@ where
     );
 
     tasks.par_iter().try_for_each(|task| {
-        download_file(client, task)?;
+        download_file(task)?;
         let current = completed.fetch_add(1, Ordering::Relaxed) + 1;
         progress_event(
             progress,
@@ -729,7 +716,7 @@ where
     Ok(())
 }
 
-fn download_file(client: &Client, task: &DownloadTask) -> Result<(), MinecraftInstallError> {
+fn download_file(task: &DownloadTask) -> Result<(), MinecraftInstallError> {
     let url = validate_https_url(&task.url)?;
     let expected_sha1 = validate_sha1(&task.sha1)?;
     if task.size > MAX_DOWNLOAD_SIZE {
@@ -748,7 +735,7 @@ fn download_file(client: &Client, task: &DownloadTask) -> Result<(), MinecraftIn
     }
 
     let part_path = part_path_for(&task.target);
-    let mut response = client.get(url).send()?.error_for_status()?;
+    let mut response = distribution_response(&url, minecraft_download_url_allowed)?;
     if let Some(actual) = response.content_length() {
         if actual != task.size || actual > MAX_DOWNLOAD_SIZE {
             return Err(MinecraftInstallError::SizeMismatch {
@@ -811,38 +798,18 @@ fn download_file(client: &Client, task: &DownloadTask) -> Result<(), MinecraftIn
     Ok(())
 }
 
-fn fetch_json<T: DeserializeOwned>(client: &Client, url: &str) -> Result<T, MinecraftInstallError> {
-    Ok(serde_json::from_slice(&fetch_bytes(client, url)?)?)
+fn fetch_json<T: DeserializeOwned>(url: &str) -> Result<T, MinecraftInstallError> {
+    Ok(serde_json::from_slice(&fetch_bytes(url)?)?)
 }
 
-fn fetch_bytes(client: &Client, url: &str) -> Result<Vec<u8>, MinecraftInstallError> {
-    let response = client
-        .get(validate_https_url(url)?)
-        .send()?
-        .error_for_status()?;
+fn fetch_bytes(url: &str) -> Result<Vec<u8>, MinecraftInstallError> {
+    let response =
+        distribution_response(&validate_https_url(url)?, minecraft_download_url_allowed)?;
     read_bounded(
         response,
         MAX_METADATA_RESPONSE_SIZE,
         MinecraftInstallError::ResponseTooLarge,
     )
-}
-
-fn minecraft_client() -> Result<Client, MinecraftInstallError> {
-    let redirect_policy = reqwest::redirect::Policy::custom(|attempt| {
-        if attempt.previous().len() >= 10 {
-            attempt.error("too many redirects")
-        } else if !minecraft_download_url_allowed(attempt.url()) {
-            attempt.error("download redirect must use an approved Minecraft HTTPS host")
-        } else {
-            attempt.follow()
-        }
-    });
-    Ok(Client::builder()
-        .connect_timeout(Duration::from_secs(10))
-        .timeout(Duration::from_secs(5 * 60))
-        .redirect(redirect_policy)
-        .user_agent(concat!("MonaLauncher/", env!("CARGO_PKG_VERSION")))
-        .build()?)
 }
 
 fn validate_https_url(value: &str) -> Result<Url, MinecraftInstallError> {
@@ -1240,6 +1207,49 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "downloads official Minecraft metadata and one library over HTTPS"]
+    fn live_enderpin_metadata_and_verified_download() {
+        let catalog = list_available_versions().unwrap();
+        let summary = catalog
+            .versions
+            .iter()
+            .find(|entry| entry.id == "1.21.8")
+            .unwrap();
+        let bytes = fetch_bytes(&summary.url).unwrap();
+        verify_bytes_sha1(&bytes, &summary.sha1, PathBuf::from("1.21.8.json")).unwrap();
+        let version: VersionMetadata = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(version.id, "1.21.8");
+        assert_eq!(version_java_major(&version.id).unwrap(), 21);
+        let artifact = version
+            .libraries
+            .iter()
+            .find(|library| library.name.starts_with("com.mojang:authlib:"))
+            .unwrap()
+            .downloads
+            .artifact
+            .as_ref()
+            .unwrap();
+        let temporary = tempfile::tempdir().unwrap();
+        let target = temporary.path().join("authlib.jar");
+        let task = DownloadTask::from_info(artifact, target.clone());
+        download_file(&task).unwrap();
+        assert_eq!(file_digest::<Sha1>(&target).unwrap(), artifact.sha1);
+        fs::write(&target, b"corrupted library").unwrap();
+        download_file(&task).unwrap();
+        assert_eq!(file_digest::<Sha1>(&target).unwrap(), artifact.sha1);
+        let invalid = DownloadTask {
+            sha1: "0".repeat(40),
+            ..task
+        };
+        assert!(matches!(
+            download_file(&invalid),
+            Err(MinecraftInstallError::HashMismatch { .. })
+        ));
+        assert_eq!(file_digest::<Sha1>(&target).unwrap(), artifact.sha1);
+        assert!(!part_path_for(&target).exists());
+    }
+
+    #[test]
     fn rejects_parent_directory_from_metadata() {
         let result = safe_metadata_join(Path::new("libraries"), "../secret.jar");
         assert!(matches!(
@@ -1364,14 +1374,13 @@ mod tests {
 
     #[test]
     fn rejects_oversized_download_plans_before_network_access() {
-        let client = minecraft_client().unwrap();
         let task = DownloadTask {
             url: "https://piston-data.mojang.com/file".to_owned(),
             sha1: "a".repeat(40),
             size: MAX_DOWNLOAD_PLAN_SIZE,
             target: PathBuf::from("unused"),
         };
-        let result = download_tasks(&client, vec![task.clone(), task], "test", &|_| {});
+        let result = download_tasks(vec![task.clone(), task], "test", &|_| {});
 
         assert!(matches!(
             result,

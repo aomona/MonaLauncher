@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -137,7 +137,7 @@ pub fn diagnose_instance(
         repairable: !java_ok,
     });
 
-    let features = HashMap::from([("is_demo_user".to_owned(), instance.demo)]);
+    let features = BTreeMap::from([("is_demo_user".to_owned(), instance.demo)]);
     let mut core_files = vec![ManagedFile {
         path: paths.version_jar(&instance.version_id),
         size: Some(version.downloads.client.size),
@@ -145,7 +145,7 @@ pub fn diagnose_instance(
     }];
     let mut library_files = BTreeMap::new();
     for library in &version.libraries {
-        if !rules_allow(library.rules.as_deref(), &features) {
+        if !rules_allow(library.rules.as_deref(), &features)? {
             continue;
         }
         for download in [

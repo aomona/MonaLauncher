@@ -1,5 +1,11 @@
-use reqwest::blocking::Response;
+use reqwest::{blocking::Response, Url};
 use std::io::{self, Read};
+
+/// Preserve the distribution allowlist at every hop; Enderpin handles HTTPS,
+/// DNS pinning, public-address checks, connection reuse, timeouts and redirects.
+pub(super) fn distribution_response(url: &Url, allowed: fn(&Url) -> bool) -> io::Result<Response> {
+    enderpin::registry::response_with_policy(url.as_str(), allowed).map_err(io::Error::other)
+}
 
 /// Keep each caller's size limit and error while bounding responses with or without a length.
 pub(super) fn read_bounded<E: From<io::Error>>(
@@ -30,6 +36,17 @@ mod tests {
         thread,
         time::Duration,
     };
+
+    #[test]
+    fn enderpin_transport_keeps_caller_allowlists_and_rejects_private_addresses() {
+        let url = Url::parse("https://not-resolved.invalid/file").unwrap();
+        let denied = distribution_response(&url, |_| false).unwrap_err();
+        assert!(denied.to_string().contains("caller policy"));
+        // Even an overly broad caller policy cannot opt out of Enderpin's network boundary.
+        for raw in ["http://127.0.0.1/file", "https://127.0.0.1/file"] {
+            assert!(distribution_response(&Url::parse(raw).unwrap(), |_| true).is_err());
+        }
+    }
 
     #[test]
     fn preserves_size_limits_and_read_errors() {

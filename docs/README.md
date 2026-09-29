@@ -9,6 +9,7 @@
 | Reactの責務・状態・IPC呼び出し  | [フロントエンドアーキテクチャ](frontend-architecture.md)                                                                                 |
 | UI・CSS・共通部品・トークン     | [デザイン実装ガイド](../design/README.md) → デザイン定義の該当章・18章                                                                   |
 | 権限・ゲーム起動・終了          | [共通ポリシー](sandbox-policy.md) → [macOS](macos-seatbelt.md) / [Linux](../tools/linux-validation/README.md) / [Windowsを含むCI](ci.md) |
+| Minecraftの取得・起動ルール     | [Enderpin連携](enderpin.md)                                                                                                              |
 | Microsoftログイン・トークン保存 | [認証の開発設定](microsoft-auth.md)                                                                                                      |
 | ゲームへの認証・署名の仲介      | [実装状況と計画](auth-broker-plan.md) → [プローブの手順と検証記録](../tools/auth-broker-probe/README.md)                                 |
 | ニュース取得・表示・RSS・記事   | [ニュースとRSS](news-feed.md)                                                                                                            |

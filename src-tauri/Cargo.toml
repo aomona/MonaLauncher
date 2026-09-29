@@ -20,6 +20,7 @@ tauri-build = { version = "2", features = [] }
 cc = "1"
 
 [dependencies]
+enderpin = { git = "https://github.com/aomona/enderpin.git", rev = "6c4bc59402bc3f19f34b120234d1ee5aaa32d5d2" }
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }

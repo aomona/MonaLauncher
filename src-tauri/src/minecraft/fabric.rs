@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use sha1::{Digest, Sha1};
 
 use super::file_io::{file_digest, read_bounded_file, replace_file_atomic, write_atomic};
-use super::http::read_bounded;
+use super::http::{distribution_response, read_bounded};
 use super::model::{Argument, ArgumentValue, Arguments, InstallProgress};
 use super::paths::MinecraftPaths;
 
@@ -550,7 +550,7 @@ fn install_library(
     {
         return Ok(fs::metadata(&target)?.len());
     }
-    download_library(client, url, &target, &expected_sha1, library.size)
+    download_library(url, &target, &expected_sha1, library.size)
 }
 
 fn maven_artifact_url(relative: &Path) -> Result<Url, FabricError> {
@@ -593,7 +593,6 @@ fn fetch_bounded(client: &Client, url: Url, maximum: u64) -> Result<Vec<u8>, Fab
 }
 
 fn download_library(
-    client: &Client,
     url: Url,
     target: &Path,
     expected_sha1: &str,
@@ -606,7 +605,7 @@ fn download_library(
         fs::create_dir_all(parent)?;
     }
     let part = part_path_for(target);
-    let mut response = client.get(url).send()?.error_for_status()?;
+    let mut response = distribution_response(&url, fabric_download_url_allowed)?;
     if response
         .content_length()
         .is_some_and(|size| size > MAX_LIBRARY_SIZE)

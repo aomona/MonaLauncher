@@ -2,7 +2,7 @@
 
 MonaLauncherは、Minecraft Java EditionをOSのサンドボックス内で実行する、開発中のランチャーです。ゲームとModによるファイルアクセスや通信を、インスタンスごとの権限設定で制限します。
 
-バックエンドはTauri 2 / Rust、フロントエンドはReact / TypeScript / Viteを使用しています。
+バックエンドはTauri 2 / Rust、フロントエンドはReact / TypeScript / Viteを使用しています。Minecraftの配布ファイル取得と起動メタデータの評価には[Enderpin](https://github.com/aomona/enderpin)のRustライブラリを組み込んでいます。利用範囲は[Enderpin連携](docs/enderpin.md)を参照してください。
 
 ## 主な機能
 
