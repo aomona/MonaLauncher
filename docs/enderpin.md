@@ -10,6 +10,14 @@ MonaLauncherはEnderpinのRustライブラリを直接リンクする。ユー�
 
 Enderpinは不明なルールaction、対象OSに対する未対応のOSバージョン条件、NULを含む引数、過大な引数をエラーにする。エラーは導入・診断・起動の呼び出し元へ返し、旧評価器や非サンドボックス起動へ切り替えない。
 
+## 共通の認証ブリッジ資産
+
+`enderpin::auth::bridge` の `AGENT` / `BOOTSTRAP` / `NATIVE` と `ASSETS` から、ビルド済みのJava Agent JAR・bootstrap JAR・対象OS向けJNIライブラリの名前とバイト列を取得する。MonaLauncherの起動準備と認証プローブはこの同じ資産を使用する。重複していた7つのJavaソース・native.cとMonaLauncher側の認証ブリッジビルドは削除し、ナレーター・Windows cursor agent・検証用Javaソースは引き続きMonaLauncherでビルドする。
+
+資産APIはファイルの配置・権限設定・認証開始を行わない。MonaLauncherは従来の検証済みlaunch rootへ配置し、sandbox内のパスへ変換して起動する。bootstrap JARはJNIライブラリと同じディレクトリへ置く。Java資産のbytecodeはEnderpinのJava 17ターゲットで共通化されるが、MonaLauncherのゲーム互換表（Java 21 / 25、Vanilla / Fabric）は変更しない。ネイティブ資産はCargoの対象OS・アーキテクチャ用なので、クロスコンパイルには対象用Cコンパイラーと `ENDERPIN_TARGET_JDK` のJNIヘッダーが必要。
+
+Rustの認証仲介・通信権限・アカウント失効・互換性判定はMonaLauncher側に残す。EnderpinのRustブローカーや起動ポリシーを取り込む変更ではない。
+
 ## MonaLauncherが管理するもの
 
 `instance.json`、保存先、既存のワールド・Mod管理、Javaの選択・展開、プラットフォーム固有のnative補正、権限設定、認証仲介、ナレーター、OSサンドボックス、プロセスの監視・終了は既存のMonaLauncher実装を使う。IPCとフロントエンドの型は変更しない。
@@ -23,6 +31,8 @@ mise run rust-format
 mise run rust-lint
 mise run rust-test
 ```
+
+Unixの通常テストは、共通資産を実JVMへ読み込み、JNI経由でMonaLauncherのモック操作に接続して通信権限ON/OFFを確認する（アカウント・外部認証サービス・OSサンドボックスは使わない）。Windowsの既存AppContainer JVMプローブと公式クラス署名プローブも共通資産を使用する。
 
 通常テストはEnderpinを通る引数展開、認証用プレースホルダー、ルールエラー、URL拒否、応答サイズ制限と既存の権限・認証・プロセス管理を検証する。次の追加テストは公式HTTPS配布元へ接続し、Minecraft 1.21.8のメタデータと小さなライブラリを取得して破損修復・ハッシュ不一致時の保持を確認する。アカウントは使用しない。
 

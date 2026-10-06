@@ -543,24 +543,11 @@ pub(crate) fn spawn_instance_with_factory(
     let mut arguments = vec![OsString::from("-Xms512M"), OsString::from("-Xmx2G")];
     if broker.is_some() {
         let layout = sandbox.as_ref().expect("sandbox prepared");
-        let agent = layout.launch_root.join("auth-bridge.jar");
-        fs::write(
-            layout.launch_root.join("auth-bootstrap.jar"),
-            include_bytes!(concat!(env!("OUT_DIR"), "/auth-bootstrap.jar")),
-        )?;
-        let native = layout.launch_root.join(env!("MONALAUNCHER_AUTH_NATIVE"));
-        fs::write(
-            &agent,
-            include_bytes!(concat!(env!("OUT_DIR"), "/auth-bridge.jar")),
-        )?;
-        fs::write(
-            &native,
-            include_bytes!(concat!(
-                env!("OUT_DIR"),
-                "/",
-                env!("MONALAUNCHER_AUTH_NATIVE")
-            )),
-        )?;
+        let agent = layout.launch_root.join(enderpin::auth::bridge::AGENT.name);
+        let native = layout.launch_root.join(enderpin::auth::bridge::NATIVE.name);
+        for asset in enderpin::auth::bridge::ASSETS {
+            fs::write(layout.launch_root.join(asset.name), asset.bytes)?;
+        }
         arguments.push(OsString::from(format!(
             "-javaagent:{}={}",
             sandbox_alias(layout, &agent)?.display(),

@@ -26,6 +26,10 @@ macOSの1.21.8・26.2とLinux ARM64検証VMの26.2では、合成鍵を使った
 
 Windowsの専用IPCも実装。接続済みoverlapped named pipeの子側HANDLEを対象AppContainerだけに明示継承し、共通Rustブローカーへ接続する。初期OFFと互換表を維持し、対応状況のSwitchを有効化した。Windows CIで実AppContainer JVM/JNIと公式Minecraftクラスによる合成鍵署名を検証する手順を追加。実行結果は検証READMEに記録し、Windowsの実Fabric画面や実アカウント接続の成功とは区別する。
 
+## 共通資産の利用
+
+Java/JNI認証ブリッジの実装とビルドはEnderpinへ集約し、`enderpin::auth::bridge` の組み込み資産を使用する。以下の当初計画にある `src-tauri/java/auth-bridge/` は削除済み。MonaLauncher固有のRustブローカー・権限・失効・互換性判定は維持し、検証用Javaソースは `src-tauri/java/auth-bridge-smoke/` に残す。詳細は[Enderpin連携](enderpin.md#共通の認証ブリッジ資産)。
+
 ## 目的と保証の範囲
 
 MinecraftアクセストークンをRust側のメモリだけで保持し、ゲームには認証結果だけを返す。Javaの起動引数・環境変数・Sessionオブジェクト・Java Agent・ゲームから読めるファイル・IPC応答へ実トークンを入れない。Microsoftアクセストークンと更新トークンも引き続きゲームへ渡さない。
