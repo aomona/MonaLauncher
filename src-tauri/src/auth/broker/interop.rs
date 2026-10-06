@@ -55,27 +55,11 @@ fn official_game_chat_signer_uses_opaque_key_over_real_ipc() {
         .status()
         .unwrap()
         .success());
-    let agent = output.join("auth-bridge.jar");
-    let native = output.join(env!("MONALAUNCHER_AUTH_NATIVE"));
-    std::fs::write(
-        &agent,
-        include_bytes!(concat!(env!("OUT_DIR"), "/auth-bridge.jar")),
-    )
-    .unwrap();
-    std::fs::write(
-        output.join("auth-bootstrap.jar"),
-        include_bytes!(concat!(env!("OUT_DIR"), "/auth-bootstrap.jar")),
-    )
-    .unwrap();
-    std::fs::write(
-        &native,
-        include_bytes!(concat!(
-            env!("OUT_DIR"),
-            "/",
-            env!("MONALAUNCHER_AUTH_NATIVE")
-        )),
-    )
-    .unwrap();
+    let agent = output.join(enderpin::auth::bridge::AGENT.name);
+    let native = output.join(enderpin::auth::bridge::NATIVE.name);
+    for asset in enderpin::auth::bridge::ASSETS {
+        std::fs::write(output.join(asset.name), asset.bytes).unwrap();
+    }
     let mut classpath = vec![
         output.to_path_buf(),
         root.join(format!("versions/{version}/{version}.jar")),

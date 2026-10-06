@@ -18,3 +18,6 @@ mod game_isolation_probe;
 
 #[cfg(all(test, windows))]
 mod windows_smoke;
+
+#[cfg(all(test, unix))]
+mod shared_assets;

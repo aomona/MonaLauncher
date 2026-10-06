@@ -93,21 +93,8 @@ fn appcontainer_java_uses_inherited_auth_channel() {
     let java_home = std::path::PathBuf::from(std::env::var_os("JAVA_HOME").expect("JAVA_HOME"));
     let temporary = tempfile::tempdir().unwrap();
     let root = temporary.path();
-    for (name, bytes) in [
-        (
-            "auth-bridge.jar",
-            include_bytes!(concat!(env!("OUT_DIR"), "/auth-bridge.jar")).as_slice(),
-        ),
-        (
-            "auth-bootstrap.jar",
-            include_bytes!(concat!(env!("OUT_DIR"), "/auth-bootstrap.jar")).as_slice(),
-        ),
-        (
-            "auth-bridge.dll",
-            include_bytes!(concat!(env!("OUT_DIR"), "/auth-bridge.dll")).as_slice(),
-        ),
-    ] {
-        std::fs::write(root.join(name), bytes).unwrap();
+    for asset in enderpin::auth::bridge::ASSETS {
+        std::fs::write(root.join(asset.name), asset.bytes).unwrap();
     }
     assert!(ProcessCommand::new(java_home.join("bin/javac.exe"))
         .args(["--release", "21", "-d"])
@@ -144,8 +131,8 @@ fn appcontainer_java_uses_inherited_auth_channel() {
             .into(),
             format!(
                 "-javaagent:{}={}",
-                root.join("auth-bridge.jar").display(),
-                root.join("auth-bridge.dll").display()
+                root.join(enderpin::auth::bridge::AGENT.name).display(),
+                root.join(enderpin::auth::bridge::NATIVE.name).display()
             )
             .into(),
             "-cp".into(),
